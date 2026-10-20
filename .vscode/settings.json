@@ -1,0 +1,13 @@
+{
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/next-env.d.ts": true,
+    "**/package-lock.json": true,
+    "**/eslint.config.mjs": true,
+    "**/tsconfig.json": true,
+    "**/next.config.ts": true
+  }
+}

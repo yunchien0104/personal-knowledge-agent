@@ -1,0 +1,11 @@
+# Codex Working Rules — Personal Brain
+- Source of truth: root `PERSONAL_BRAIN_CODEX_SPEC.md`; preserve locked ADR-001..005.
+- MVP first; no unsolicited architecture expansion or unrelated refactor.
+- Read only task-relevant spec sections and files; use `rg` before opening files.
+- One vertical slice per task; state impacted paths and test plan in <=8 lines.
+- Use Supabase RLS, private Storage, typed payloads, durable queue, fenced commits.
+- Never initiate paid deep research automatically; reserve budget before paid calls.
+- Cite evidence by immutable revision and locator; never invent source content.
+- Run targeted tests; report results and changed paths in <=12 lines.
+- Update root `IMPLEMENTATION_STATUS.md` with concise state and next action.
+- No destructive migrations or live paid calls without explicit approval.

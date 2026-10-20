@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-brain-worker"
+version = "0.1.0"
+description = "Personal Brain durable job worker baseline"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+personal-brain-worker = "personal_brain.runner:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]

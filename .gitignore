@@ -1,0 +1,30 @@
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+dist/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# System
+.DS_Store
+
+# Supabase local CLI state
+supabase/.temp/
+supabase/.branches/
+
+# Supabase CLI temporary files
+supabase/.temp/
+supabase/.branches/
