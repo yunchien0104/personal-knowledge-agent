@@ -11,6 +11,7 @@ dependencies = ["pypdf==6.21.1"]
 
 [project.scripts]
 personal-brain-worker = "personal_brain.runner:cli"
+personal-brain-worker-web = "personal_brain.http_server:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
