@@ -1,24 +1,15 @@
-import { createBrowserClient, createServerClient } from "@supabase/ssr";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-function configuration() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  if (!url || !publishableKey) {
-    throw new Error("Missing local Supabase public configuration");
-  }
-
-  return { url, publishableKey };
-}
-
-export function createBrowserSupabaseClient() {
-  const { url, publishableKey } = configuration();
-  return createBrowserClient(url, publishableKey);
-}
-
 export async function createServerSupabaseClient() {
-  const { url, publishableKey } = configuration();
+  const url =
+    process.env.SUPABASE_SERVER_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const publishableKey =
+    process.env.SUPABASE_SERVER_PUBLISHABLE_KEY
+    ?? process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !publishableKey) {
+    throw new Error("Missing server Supabase public configuration");
+  }
   const cookieStore = await cookies();
 
   return createServerClient(url, publishableKey, {

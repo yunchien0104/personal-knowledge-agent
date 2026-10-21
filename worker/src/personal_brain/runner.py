@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 import sys
+import time
 from typing import Sequence
 
 from personal_brain.handlers import HealthcheckHandler, JobHandler
@@ -25,15 +28,146 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--list-handlers", action="store_true")
     action.add_argument("--validate-payload", type=Path)
     action.add_argument("--payload", type=Path)
+    action.add_argument("--once", action="store_true")
+    action.add_argument("--poll", action="store_true")
     return parser
+
+
+def build_ingestion_worker():
+    from personal_brain.ingestion import PdfIngestionWorker
+    from personal_brain.supabase_gateway import SupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    return PdfIngestionWorker(
+        SupabaseGateway.from_environment(), worker_id, lease_seconds=lease_seconds
+    )
+
+
+def build_source_note_worker():
+    from personal_brain.source_notes import (
+        LocalExtractiveStructuredNoteModel,
+        OpenAICompatibleStructuredNoteModel,
+        SourceNoteWorker,
+    )
+    from personal_brain.supabase_gateway import SupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    model_mode = os.environ.get("SOURCE_NOTE_MODEL_MODE", "openai-compatible").strip()
+    if model_mode == "local-extractive":
+        model = LocalExtractiveStructuredNoteModel()
+    elif model_mode == "openai-compatible":
+        model = OpenAICompatibleStructuredNoteModel.from_environment()
+    else:
+        raise ValueError(
+            "SOURCE_NOTE_MODEL_MODE must be local-extractive or openai-compatible"
+        )
+    return SourceNoteWorker(
+        SupabaseGateway.from_environment(),
+        model,
+        worker_id,
+        lease_seconds=lease_seconds,
+    )
+
+
+def build_research_worker():
+    from personal_brain.research_agent import LocalExtractiveResearchModel, ResearchAgentWorker
+    from personal_brain.supabase_gateway import SupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    return ResearchAgentWorker(
+        SupabaseGateway.from_environment(),
+        LocalExtractiveResearchModel(),
+        worker_id,
+        lease_seconds=lease_seconds,
+    )
+
+
+def research_suggestions_enabled() -> bool:
+    return os.environ.get("RESEARCH_SUGGESTIONS_ENABLED", "false").strip().lower() == "true"
+
+
+def build_opportunity_worker():
+    if not research_suggestions_enabled():
+        raise ValueError("RESEARCH_SUGGESTIONS_ENABLED must be true for opportunity workers")
+    from personal_brain.opportunities import OpportunityWorker
+    from personal_brain.supabase_gateway import SupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    return OpportunityWorker(
+        SupabaseGateway.from_environment(), worker_id, lease_seconds=lease_seconds
+    )
+
+
+class WorkerDispatcher:
+    def __init__(self, workers):
+        self.workers = workers
+
+    def process_one(self):
+        result = None
+        for worker in self.workers:
+            result = worker.process_one()
+            if result.status != "idle":
+                return result
+        return result
+
+
+def build_queue_worker():
+    capability = os.environ.get("WORKER_CAPABILITY", "pdf").strip()
+    if capability == "pdf":
+        return build_ingestion_worker()
+    if capability == "source_note":
+        return build_source_note_worker()
+    if capability == "research":
+        return build_research_worker()
+    if capability == "opportunity":
+        return build_opportunity_worker()
+    if capability == "all":
+        workers = [
+            build_ingestion_worker(), build_source_note_worker(), build_research_worker()
+        ]
+        if research_suggestions_enabled():
+            workers.append(build_opportunity_worker())
+        return WorkerDispatcher(workers)
+    raise ValueError(
+        "WORKER_CAPABILITY must be pdf, source_note, research, opportunity, or all"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.list_handlers:
-            print(json.dumps(sorted(build_registry())))
+            print(json.dumps(sorted([
+                *build_registry(), "ingest_pdf", "generate_source_note", "execute_research",
+                "rank_opportunities"
+            ])))
             return 0
+
+        if args.once:
+            print(json.dumps(asdict(build_queue_worker().process_one()), separators=(",", ":")))
+            return 0
+        if args.poll:
+            interval = float(os.environ.get("JOB_POLL_INTERVAL_SECONDS", "2"))
+            if interval <= 0 or interval > 60:
+                raise ValueError("JOB_POLL_INTERVAL_SECONDS must be between 0 and 60")
+            worker = build_queue_worker()
+            while True:
+                result = worker.process_one()
+                print(json.dumps(asdict(result), separators=(",", ":")), flush=True)
+                if result.status == "idle":
+                    time.sleep(interval)
 
         payload_path = args.validate_payload or args.payload
         payload = load_payload(payload_path)
@@ -50,6 +184,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "result": handler(payload),
         }
         print(json.dumps(result, separators=(",", ":")))
+        return 0
+    except KeyboardInterrupt:
         return 0
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"worker error: {error}", file=sys.stderr)

@@ -1,4 +1,4 @@
-# Phase 1 / Task 2 Migration Rollback
+# Personal Brain Migration Rollback
 
 These migrations create user-owned content tables, RLS policies, and the private
 `asset-private` Storage bucket. Rollback is destructive and must never be run

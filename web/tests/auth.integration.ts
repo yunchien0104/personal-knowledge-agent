@@ -85,6 +85,8 @@ before(async () => {
   server = spawn("npm", ["start", "--", "--hostname", "127.0.0.1", "--port", String(port)], {
     env: {
       ...process.env,
+      SUPABASE_SERVER_URL: supabase.API_URL,
+      SUPABASE_SERVER_PUBLISHABLE_KEY: supabase.PUBLISHABLE_KEY,
       NEXT_PUBLIC_SUPABASE_URL: supabase.API_URL,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: supabase.PUBLISHABLE_KEY,
     },
