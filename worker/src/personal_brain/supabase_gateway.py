@@ -99,9 +99,10 @@ class SupabaseGateway:
             raise GatewayError("untrusted_url", "Supabase request target is not trusted", retryable=False)
         headers = {
             "apikey": self._service_key,
-            "authorization": f"Bearer {self._service_key}",
             "content-type": content_type,
         }
+        if not self._service_key.startswith("sb_secret_"):
+            headers["authorization"] = f"Bearer {self._service_key}"
         headers.update(extra_headers or {})
         request = Request(url, data=body, headers=headers, method=method)
         try:
