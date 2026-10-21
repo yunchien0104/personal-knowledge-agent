@@ -443,3 +443,69 @@
   apply the migration to Cloud Staging, run the new pgTAP protocol plus linked DB
   lint, then add authenticated Opportunity list/feedback API routes and the minimal
   suggestion UI while keeping Manual Research start an explicit user action.
+
+## V6 UI migration to Next.js App Router (2026-10-22)
+
+- Ported Login, Home, Library, Explore, Ask, Research, and the shared AppShell into
+  `web/src/app/(workspace)` and `web/src/components/personal-brain`.
+- Replaced React Router navigation with Next.js App Router routes while preserving
+  the existing application API, Supabase, Worker, and database contracts.
+- Wired Supabase Auth for sign-in, sign-up, email verification/resend, password
+  recovery/reset, and sign-out. Demo credentials and fake sessions were removed.
+- Connected the UI to real Assets, Notes, Retrieval, Research Opportunities,
+  Research Runs, citations, and PDF upload flows.
+- Topics, notifications, URL/text capture, answer synthesis, and standalone
+  save-as-note remain explicitly marked as not connected; no mock records are
+  presented as real data.
+- No `.env`, migration, deployment configuration, Worker, or database logic was
+  changed. No deployment or push was performed.
+- PASS: `cd web && npm run typecheck`.
+- PASS: `cd web && npm run build` (with the existing external package-lock/output
+  tracing warning only).
+
+## Library PDF deletion diagnosis (2026-10-22)
+
+- BLOCKED BY REQUIRED SCHEMA/PERMISSION CHANGE: the V6 Library has no delete
+  action, the existing upload DELETE route is limited to two-hour upload cleanup,
+  and `asset-private` explicitly denies authenticated Storage DELETE operations.
+- The Web runtime has no configured server-only Service Role client. Deleting the
+  Asset first would also make its private Storage object inaccessible and orphaned.
+- A protected owner-scoped deletion workflow must coordinate citation invalidation,
+  Storage object removal, and Asset deletion before the UI can safely expose the
+  action. No migration, permission, application code, or real data was changed.
+
+## Asset deletion lifecycle implementation (2026-10-22)
+
+- Added owner-scoped, idempotent `remove_original` and `purge_all` lifecycle
+  requests with forced-RLS status records, immediate Retrieval/Publication
+  fencing, active lease cancellation, citation invalidation, and Queue jobs.
+- Added the Render Worker deletion capability. It uses the existing server-only
+  Service Role gateway to recursively remove the exact Asset Storage prefix,
+  then commits the fenced database cleanup; retries safely resume after partial
+  Storage success.
+- `remove_original` preserves the Asset, generated Notes/Claims, summaries, and
+  Research history while removing the original PDF and disabling verification.
+  `purge_all` removes source-owned revisions, artifacts, Evidence, source Notes,
+  Claims, links, and Storage objects while preserving cross-source Research with
+  invalidated snapshots for only the deleted source.
+- Library and legacy Inbox now expose confirmation, pending/deleting/completed/
+  failed states, retry entry points, and backup/audit retention disclosure.
+- PASS: deletion Worker/Gateway/runner unit tests 9/9; PDF Inbox tests 2/2;
+  TypeScript; Production Build; Python compile.
+- BLOCKED: the new pgTAP protocol was not executed because local Supabase/Docker
+  is unavailable. Linked dry-run made no changes but found pre-existing migration
+  history drift: remote-only `20261021173539` and local-only `20261021145113`.
+  Compare those migrations and repair history before applying
+  `20261021193156_asset_deletion_lifecycle.sql`, then run the pgTAP protocol.
+- No Cloud migration, real-data deletion, environment/deployment change, deploy,
+  or push was performed.
+
+## Supabase migration history drift reconciliation (2026-10-22)
+
+- Confirmed Cloud migration `20261021173539_research_suggestion_engine` stores
+  SQL byte-identical to the former local `20261021145113` file; the live tables,
+  constraints, indexes, RLS policies, grants, triggers, and function bodies match.
+- Renamed the local migration to `20261021173539_research_suggestion_engine.sql`
+  so local history aligns with Cloud without repairing or mutating remote history.
+- The later `20261021173759_fix_opportunity_enqueue_auth_user_access` remains
+  aligned. Next action: deploy only `20261021193156_asset_deletion_lifecycle`.

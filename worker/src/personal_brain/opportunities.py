@@ -8,7 +8,7 @@ import re
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from personal_brain.ingestion import LeaseLostError, ProcessResult, _LeaseGuard
+from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 
@@ -217,7 +217,7 @@ class OpportunityWorker:
         try:
             if job.payload.job_type != "rank_opportunities":
                 raise OpportunityError("invalid_claim", "Worker received an unsupported Job")
-            with _LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
+            with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
                 context = self.gateway.opportunity_context(job, self.worker_id)
                 if context is None:
                     raise LeaseLostError("Worker lease is no longer valid")

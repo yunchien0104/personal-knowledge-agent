@@ -37,7 +37,10 @@ export async function GET(request: Request) {
     const run = await getResearchRun(auth.supabase, parsed.data);
     if (!run) return jsonError(404, "NOT_FOUND", "Research run was not found.");
     const urls = new Map<string, string>();
-    await Promise.all([...new Set(run.citations.map((item) => item.assetId))].map(async (assetId) => {
+    const verifiableAssetIds = run.citations
+      .filter((item) => item.validityStatus === "valid")
+      .map((item) => item.assetId);
+    await Promise.all([...new Set(verifiableAssetIds)].map(async (assetId) => {
       const signed = await auth.supabase.storage
         .from(PDF_BUCKET)
         .createSignedUrl(pdfObjectPath(auth.user.id, assetId), 300);

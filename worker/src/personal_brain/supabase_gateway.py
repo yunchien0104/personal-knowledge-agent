@@ -45,13 +45,23 @@ class ClaimedJob:
         if payload.job_id != job_id or payload.user_id != user_id:
             raise GatewayError("invalid_claim", "Claimed Job identity is inconsistent", retryable=False)
         if payload.job_type not in {
-            "ingest_pdf", "generate_source_note", "execute_research", "rank_opportunities"
+            "ingest_pdf", "generate_source_note", "execute_research", "rank_opportunities",
+            "delete_asset",
         }:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
-        if payload.job_type in {"execute_research", "rank_opportunities"}:
-            required = "researchRunId" if payload.job_type == "execute_research" else "rankingDate"
+        if payload.job_type in {"execute_research", "rank_opportunities", "delete_asset"}:
+            required = {
+                "execute_research": "researchRunId",
+                "rank_opportunities": "rankingDate",
+                "delete_asset": "deletionId",
+            }[payload.job_type]
             if asset_id is not None or not isinstance(payload.input.get(required), str):
                 raise GatewayError("invalid_claim", "Job input is inconsistent", retryable=False)
+            if payload.job_type == "delete_asset" and (
+                not isinstance(payload.input.get("assetId"), str)
+                or payload.input.get("mode") not in {"remove_original", "purge_all"}
+            ):
+                raise GatewayError("invalid_claim", "Deletion input is inconsistent", retryable=False)
         elif payload.input.get("assetId") != asset_id:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
         if payload.job_type == "generate_source_note" and not isinstance(
@@ -212,6 +222,100 @@ class SupabaseGateway:
         return self._request(
             "GET", f"storage/v1/object/{PDF_BUCKET}/{quote(object_path, safe='/')}"
         )
+
+    def asset_deletion_context(
+        self, job: ClaimedJob, worker_id: str
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "get_asset_deletion_context",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def list_storage_objects(self, prefix: str) -> list[str]:
+        if not prefix or ".." in prefix.split("/"):
+            raise GatewayError("invalid_storage_path", "Storage prefix is invalid", retryable=False)
+        pending = [prefix.rstrip("/")]
+        objects: list[str] = []
+        while pending:
+            current = pending.pop()
+            offset = 0
+            while True:
+                raw = self._request(
+                    "POST",
+                    f"storage/v1/object/list/{PDF_BUCKET}",
+                    body=json.dumps({
+                        "prefix": current,
+                        "limit": 100,
+                        "offset": offset,
+                        "sortBy": {"column": "name", "order": "asc"},
+                    }, separators=(",", ":")).encode(),
+                )
+                try:
+                    rows = json.loads(raw)
+                except json.JSONDecodeError as error:
+                    raise GatewayError(
+                        "invalid_supabase_response",
+                        "Storage returned an invalid listing",
+                        retryable=True,
+                    ) from error
+                if not isinstance(rows, list):
+                    raise GatewayError(
+                        "invalid_supabase_response",
+                        "Storage returned an invalid listing",
+                        retryable=True,
+                    )
+                for row in rows:
+                    if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+                        raise GatewayError(
+                            "invalid_supabase_response",
+                            "Storage returned an invalid object",
+                            retryable=True,
+                        )
+                    path = f"{current}/{row['name']}"
+                    if path != prefix and not path.startswith(prefix.rstrip("/") + "/"):
+                        raise GatewayError(
+                            "invalid_storage_path", "Storage listing escaped its prefix", retryable=False
+                        )
+                    if row.get("id") is None:
+                        pending.append(path)
+                    else:
+                        objects.append(path)
+                    if len(objects) + len(pending) > 10000:
+                        raise GatewayError(
+                            "storage_listing_too_large",
+                            "Asset Storage listing exceeds the deletion limit",
+                            retryable=False,
+                        )
+                if len(rows) < 100:
+                    break
+                offset += len(rows)
+        return objects
+
+    def remove_storage_objects(self, paths: list[str]) -> None:
+        for offset in range(0, len(paths), 100):
+            self._request(
+                "DELETE",
+                f"storage/v1/object/{PDF_BUCKET}",
+                body=json.dumps({"prefixes": paths[offset:offset + 100]}, separators=(",", ":")).encode(),
+            )
+
+    def complete_asset_deletion(
+        self, job: ClaimedJob, worker_id: str
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "complete_asset_deletion",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+            },
+        )
+        return result if isinstance(result, dict) else None
 
     def upload_immutable(self, object_path: str, content: bytes, content_hash: str) -> None:
         path = f"storage/v1/object/{PDF_BUCKET}/{quote(object_path, safe='/')}"

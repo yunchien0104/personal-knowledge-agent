@@ -5,6 +5,8 @@ import { connection } from "next/server";
 import { loadPdfInbox } from "@/lib/pdf-inbox";
 import { createServerSupabaseClient } from "@/lib/supabase";
 
+import { InboxDeleteControl } from "./inbox-delete-control";
+
 export const instant = false;
 
 const STATUS_LABELS: Record<string, string> = {
@@ -54,6 +56,12 @@ export default async function InboxPage() {
               {item.ingestionStatus === "completed" ? (
                 <p><Link href={`/assets/${item.id}/source-note`}>Source Note</Link></p>
               ) : null}
+              <InboxDeleteControl
+                assetId={item.id}
+                fileName={item.fileName}
+                sourceStatus={item.sourceStatus}
+                initialDeletion={item.deletion}
+              />
             </li>
           ))}
         </ul>

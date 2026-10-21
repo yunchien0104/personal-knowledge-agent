@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 from typing import Any, Mapping, Protocol
 
-from personal_brain.ingestion import ProcessResult
+from personal_brain.queue_runtime import ProcessResult
 from personal_brain.runner import build_queue_worker
 
 

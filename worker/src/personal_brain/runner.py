@@ -110,6 +110,19 @@ def build_opportunity_worker():
     )
 
 
+def build_deletion_worker():
+    from personal_brain.deletion import AssetDeletionWorker
+    from personal_brain.supabase_gateway import SupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    return AssetDeletionWorker(
+        SupabaseGateway.from_environment(), worker_id, lease_seconds=lease_seconds
+    )
+
+
 class WorkerDispatcher:
     def __init__(self, workers):
         self.workers = workers
@@ -133,15 +146,18 @@ def build_queue_worker():
         return build_research_worker()
     if capability == "opportunity":
         return build_opportunity_worker()
+    if capability == "deletion":
+        return build_deletion_worker()
     if capability == "all":
         workers = [
-            build_ingestion_worker(), build_source_note_worker(), build_research_worker()
+            build_deletion_worker(), build_ingestion_worker(), build_source_note_worker(),
+            build_research_worker()
         ]
         if research_suggestions_enabled():
             workers.append(build_opportunity_worker())
         return WorkerDispatcher(workers)
     raise ValueError(
-        "WORKER_CAPABILITY must be pdf, source_note, research, opportunity, or all"
+        "WORKER_CAPABILITY must be pdf, source_note, research, opportunity, deletion, or all"
     )
 
 
@@ -151,7 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.list_handlers:
             print(json.dumps(sorted([
                 *build_registry(), "ingest_pdf", "generate_source_note", "execute_research",
-                "rank_opportunities"
+                "rank_opportunities", "delete_asset"
             ])))
             return 0
 

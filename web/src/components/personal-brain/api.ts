@@ -1,0 +1,79 @@
+import type { Asset, KnowledgeItem, KnowledgeStatus, Note, SourceKind } from "./types";
+
+type ApiEnvelope<T> = {
+  data: T | null;
+  error?: { message?: string };
+  meta?: { total?: number };
+};
+
+export async function getApi<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: "no-store", ...init });
+  const payload = await response.json() as ApiEnvelope<T>;
+  if (!response.ok || payload.data === null) {
+    throw new Error(payload.error?.message ?? "資料讀取失敗，請稍後再試。");
+  }
+  return payload.data;
+}
+
+function sourceKind(type: Asset["source_type"]): SourceKind {
+  if (type === "pdf") return "PDF";
+  if (type === "instagram_reel") return "IG";
+  return "TH";
+}
+
+function statusLabel(status: string): KnowledgeStatus {
+  if (status === "deleting") return "刪除中";
+  if (status === "deletion_failed") return "刪除失敗";
+  if (status === "source_removed") return "原檔已移除";
+  if (["ready", "completed"].includes(status)) return "已完成";
+  if (["processing", "running"].includes(status)) return "處理中";
+  if (["failed", "unsupported", "cancelled"].includes(status)) return "失敗";
+  return "待檢視";
+}
+
+function pdfName(value: string | null) {
+  const match = value?.match(/^pdf:[0-9a-f-]{36}:\d+:(.+)$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+export function assetTitle(asset: Asset) {
+  if (asset.source_type === "pdf") return pdfName(asset.source_external_id) ?? `PDF ${asset.id.slice(0, 8)}`;
+  if (asset.source_url) {
+    try {
+      return new URL(asset.source_url).hostname.replace(/^www\./, "");
+    } catch {
+      return asset.source_url;
+    }
+  }
+  return asset.source_type === "instagram_reel" ? "Instagram Reel" : "Threads 收藏";
+}
+
+export function toKnowledgeItems(assets: Asset[], notes: Note[]): KnowledgeItem[] {
+  const sources = assets.map((asset): KnowledgeItem => ({
+    id: asset.id,
+    kind: sourceKind(asset.source_type),
+    category: "source",
+    title: assetTitle(asset),
+    meta: `${new Date(asset.created_at).toLocaleDateString("zh-TW")} · ${asset.status}`,
+    status: statusLabel(asset.status),
+    excerpt: asset.active_revision_id ? "來源已建立可追溯版本。" : "來源已保存，尚未建立可閱讀摘要。",
+    updatedAt: asset.updated_at,
+    sourceStatus: asset.status,
+  }));
+  const noteItems = notes.map((note): KnowledgeItem => ({
+    id: note.id,
+    kind: "NOTE",
+    category: "note",
+    title: note.title || "未命名筆記",
+    meta: `${new Date(note.updated_at).toLocaleDateString("zh-TW")} · ${note.note_type}`,
+    status: note.publication_state === "draft" ? "待檢視" : "已完成",
+    excerpt: note.body.trim() || "這則筆記目前沒有內容。",
+    updatedAt: note.updated_at,
+  }));
+  return [...sources, ...noteItems].toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}

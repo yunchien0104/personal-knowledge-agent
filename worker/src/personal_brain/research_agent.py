@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 from typing import Any, Mapping, Protocol
 
-from personal_brain.ingestion import LeaseLostError, ProcessResult, _LeaseGuard
+from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.source_notes import ModelError, _text
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
@@ -228,7 +228,7 @@ class ResearchAgentWorker:
             question = job.payload.input.get("question")
             if not isinstance(question, str):
                 raise GatewayError("invalid_research_context", "Research question is unavailable", retryable=False)
-            with _LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
+            with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
                 plan = validate_plan(self.model.plan(question), question)
                 lease.pulse()
                 context = self.gateway.research_context(job, self.worker_id, plan)
