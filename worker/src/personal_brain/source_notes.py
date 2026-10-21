@@ -152,8 +152,7 @@ class OpenAICompatibleStructuredNoteModel:
     def generate(self, document: Mapping[str, Any]) -> Mapping[str, Any]:
         body = json.dumps({
             "model": self.model_name,
-            "temperature": 0,
-            "max_tokens": self._max_output_tokens,
+            "max_completion_tokens": self._max_output_tokens,
             "messages": [
                 {
                     "role": "system",
