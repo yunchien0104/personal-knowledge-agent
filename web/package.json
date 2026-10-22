@@ -15,7 +15,8 @@
     "test:pdf-inbox": "node --experimental-strip-types --test tests/pdf-inbox.test.ts",
     "test:source-notes": "node --experimental-strip-types --test tests/source-notes.test.ts",
     "test:retrieval": "node --experimental-strip-types --test tests/retrieval.test.ts",
-    "test:research": "node --experimental-strip-types --test tests/research.test.ts"
+    "test:research": "node --experimental-strip-types --test tests/research.test.ts",
+    "test:threads": "node --experimental-strip-types --test tests/threads-ingestion.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

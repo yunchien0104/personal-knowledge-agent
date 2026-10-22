@@ -5,6 +5,7 @@ import { PDF_BUCKET, pdfObjectPath } from "./pdf.ts";
 export type SourceNoteCitation = {
   evidenceId: string;
   page: number | null;
+  sourceUrl: string | null;
   quote: string;
   validityStatus: string;
 };
@@ -32,6 +33,7 @@ export type SourceNoteWorkspace = {
     promptVersion: string;
     revisionId: string;
     pdfUrl: string | null;
+    sourceUrl: string | null;
     claims: SourceNoteClaim[];
   } | null;
 };
@@ -46,10 +48,22 @@ export function safeSourceNoteError(code: string | null) {
   const messages: Record<string, string> = {
     invalid_model_output: "模型輸出格式不正確，未建立筆記。",
     unsupported_claim: "模型引用無法由原文支持，未建立筆記。",
+    invalid_evidence_id: "模型引用了不存在的 Evidence，未建立筆記。",
+    quote_mismatch: "模型引文與 Evidence 原文不符，未建立筆記。",
+    duplicate_evidence_id: "同一 Claim 重複引用相同 Evidence，未建立筆記。",
     source_mismatch: "來源版本已變更，請重新產生筆記。",
     source_too_large: "文件超出目前的理解處理上限。",
   };
   return code ? messages[code] ?? "Source Note 產生失敗，請稍後再試。" : null;
+}
+
+export function sourceNoteDisplayState(workspace: SourceNoteWorkspace | null) {
+  if (workspace?.note) return "completed" as const;
+  if (["failed", "cancelled"].includes(workspace?.job?.status ?? "")) return "failed" as const;
+  if (["queued", "running", "retry_wait", "completed"].includes(workspace?.job?.status ?? "")) {
+    return "generating" as const;
+  }
+  return "idle" as const;
 }
 
 export async function loadSourceNoteWorkspace(
@@ -59,9 +73,10 @@ export async function loadSourceNoteWorkspace(
 ): Promise<SourceNoteWorkspace | null> {
   const { data: asset, error: assetError } = await supabase
     .from("assets")
-    .select("id,status,active_revision_id")
+    .select("id,status,active_revision_id,source_type,source_url")
     .eq("id", assetId)
-    .eq("source_type", "pdf")
+    .eq("user_id", userId)
+    .in("source_type", ["pdf", "threads"])
     .maybeSingle();
   if (assetError) throw new Error("Source Note Asset could not be loaded.");
   if (!asset) return null;
@@ -70,6 +85,7 @@ export async function loadSourceNoteWorkspace(
     .from("jobs")
     .select("id,status,last_error_code,created_at")
     .eq("asset_id", assetId)
+    .eq("user_id", userId)
     .eq("job_type", "generate_source_note")
     .order("created_at", { ascending: false })
     .limit(1);
@@ -88,6 +104,7 @@ export async function loadSourceNoteWorkspace(
     .from("source_note_generations")
     .select("note_id,source_revision_id_snapshot,model_provider,model_name,prompt_version,created_at")
     .eq("asset_id_snapshot", assetId)
+    .eq("user_id", userId)
     .eq("source_revision_id_snapshot", asset.active_revision_id)
     .order("created_at", { ascending: false })
     .limit(1);
@@ -105,6 +122,7 @@ export async function loadSourceNoteWorkspace(
     .from("notes")
     .select("id,title,body,body_revision,updated_at")
     .eq("id", generation.note_id)
+    .eq("user_id", userId)
     .eq("note_type", "source_note")
     .maybeSingle();
   if (noteError || !note) throw new Error("Source Note could not be loaded.");
@@ -112,6 +130,7 @@ export async function loadSourceNoteWorkspace(
     .from("claims")
     .select("id,text,claim_type,verification_status,needs_review,created_at")
     .eq("note_id", note.id)
+    .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (claimsError) throw new Error("Source Note Claims could not be loaded.");
   const claimIds = (claimRows ?? []).map((claim) => claim.id);
@@ -119,6 +138,7 @@ export async function loadSourceNoteWorkspace(
     ? await supabase
       .from("claim_evidence")
       .select("claim_id,evidence_id,evidence_id_snapshot,locator_json,supporting_quote,validity_status")
+      .eq("user_id", userId)
       .in("claim_id", claimIds)
       .order("created_at", { ascending: true })
     : { data: [], error: null };
@@ -130,14 +150,15 @@ export async function loadSourceNoteWorkspace(
     values.push({
       evidenceId: citation.evidence_id_snapshot,
       page: pdfPageFromLocator(citation.locator_json),
+      sourceUrl: asset.source_type === "threads" ? asset.source_url : null,
       quote: citation.supporting_quote,
       validityStatus: citation.evidence_id ? citation.validity_status : "source_deleted",
     });
     citationsByClaim.set(citation.claim_id, values);
   }
-  const signed = await supabase.storage
-    .from(PDF_BUCKET)
-    .createSignedUrl(pdfObjectPath(userId, assetId), 300);
+  const signed = asset.source_type === "pdf"
+    ? await supabase.storage.from(PDF_BUCKET).createSignedUrl(pdfObjectPath(userId, assetId), 300)
+    : null;
 
   return {
     asset: { id: asset.id, status: asset.status, activeRevisionId: asset.active_revision_id },
@@ -152,7 +173,8 @@ export async function loadSourceNoteWorkspace(
       modelName: generation.model_name,
       promptVersion: generation.prompt_version,
       revisionId: generation.source_revision_id_snapshot,
-      pdfUrl: signed.error ? null : signed.data.signedUrl,
+      pdfUrl: signed && !signed.error ? signed.data.signedUrl : null,
+      sourceUrl: asset.source_type === "threads" ? asset.source_url : null,
       claims: (claimRows ?? []).map((claim) => ({
         id: claim.id,
         text: claim.text,

@@ -40,12 +40,26 @@ export async function GET(request: Request) {
     const verifiableAssetIds = run.citations
       .filter((item) => item.validityStatus === "valid")
       .map((item) => item.assetId);
-    await Promise.all([...new Set(verifiableAssetIds)].map(async (assetId) => {
-      const signed = await auth.supabase.storage
-        .from(PDF_BUCKET)
-        .createSignedUrl(pdfObjectPath(auth.user.id, assetId), 300);
-      if (!signed.error) urls.set(assetId, signed.data.signedUrl);
-    }));
+    const uniqueAssetIds = [...new Set(verifiableAssetIds)];
+    if (uniqueAssetIds.length) {
+      const { data: assets, error: assetError } = await auth.supabase
+        .from("assets")
+        .select("id,source_type,source_url")
+        .in("id", uniqueAssetIds);
+      if (assetError) throw new Error("Research source URLs could not be loaded.");
+      await Promise.all((assets ?? []).map(async (asset) => {
+        if (asset.source_type === "threads" && asset.source_url) {
+          urls.set(asset.id, asset.source_url);
+          return;
+        }
+        if (asset.source_type === "pdf") {
+          const signed = await auth.supabase.storage
+            .from(PDF_BUCKET)
+            .createSignedUrl(pdfObjectPath(auth.user.id, asset.id), 300);
+          if (!signed.error) urls.set(asset.id, signed.data.signedUrl);
+        }
+      }));
+    }
     return jsonSuccess({
       ...run,
       citations: run.citations.map((citation) => ({

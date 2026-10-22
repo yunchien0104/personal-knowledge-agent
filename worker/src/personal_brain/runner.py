@@ -46,6 +46,19 @@ def build_ingestion_worker():
     )
 
 
+def build_threads_worker():
+    from personal_brain.supabase_gateway import SupabaseGateway
+    from personal_brain.threads_ingestion import ThreadsIngestionWorker
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    return ThreadsIngestionWorker(
+        SupabaseGateway.from_environment(), worker_id, lease_seconds=lease_seconds
+    )
+
+
 def build_source_note_worker():
     from personal_brain.source_notes import (
         LocalExtractiveStructuredNoteModel,
@@ -140,6 +153,8 @@ def build_queue_worker():
     capability = os.environ.get("WORKER_CAPABILITY", "pdf").strip()
     if capability == "pdf":
         return build_ingestion_worker()
+    if capability == "threads":
+        return build_threads_worker()
     if capability == "source_note":
         return build_source_note_worker()
     if capability == "research":
@@ -150,14 +165,14 @@ def build_queue_worker():
         return build_deletion_worker()
     if capability == "all":
         workers = [
-            build_deletion_worker(), build_ingestion_worker(), build_source_note_worker(),
+            build_deletion_worker(), build_ingestion_worker(), build_threads_worker(), build_source_note_worker(),
             build_research_worker()
         ]
         if research_suggestions_enabled():
             workers.append(build_opportunity_worker())
         return WorkerDispatcher(workers)
     raise ValueError(
-        "WORKER_CAPABILITY must be pdf, source_note, research, opportunity, deletion, or all"
+        "WORKER_CAPABILITY must be pdf, threads, source_note, research, opportunity, deletion, or all"
     )
 
 
@@ -166,7 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.list_handlers:
             print(json.dumps(sorted([
-                *build_registry(), "ingest_pdf", "generate_source_note", "execute_research",
+                *build_registry(), "ingest_pdf", "ingest_threads", "generate_source_note", "execute_research",
                 "rank_opportunities", "delete_asset"
             ])))
             return 0

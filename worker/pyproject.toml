@@ -7,7 +7,7 @@ name = "personal-brain-worker"
 version = "0.1.0"
 description = "Personal Brain durable job worker baseline"
 requires-python = ">=3.13"
-dependencies = ["pypdf==6.21.1"]
+dependencies = ["playwright==1.56.0", "pypdf==6.21.1"]
 
 [project.scripts]
 personal-brain-worker = "personal_brain.runner:cli"

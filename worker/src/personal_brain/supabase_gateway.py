@@ -33,6 +33,7 @@ class ClaimedJob:
     asset_id: str | None
     lease_generation: int
     payload: JobPayloadV1
+    created_at: str | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> ClaimedJob:
@@ -45,7 +46,7 @@ class ClaimedJob:
         if payload.job_id != job_id or payload.user_id != user_id:
             raise GatewayError("invalid_claim", "Claimed Job identity is inconsistent", retryable=False)
         if payload.job_type not in {
-            "ingest_pdf", "generate_source_note", "execute_research", "rank_opportunities",
+            "ingest_pdf", "ingest_threads", "generate_source_note", "execute_research", "rank_opportunities",
             "delete_asset",
         }:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
@@ -70,7 +71,15 @@ class ClaimedJob:
             raise GatewayError("invalid_claim", "Claimed Job Revision is invalid", retryable=False)
         if type(lease_generation) is not int or lease_generation < 1:
             raise GatewayError("invalid_claim", "Claimed Job lease is invalid", retryable=False)
-        return cls(job_id, user_id, asset_id, lease_generation, payload)
+        created_at = row.get("created_at")
+        return cls(
+            job_id,
+            user_id,
+            asset_id,
+            lease_generation,
+            payload,
+            created_at if isinstance(created_at, str) else None,
+        )
 
 
 class SupabaseGateway:
@@ -364,6 +373,34 @@ class SupabaseGateway:
                 "p_artifact_sha256": artifact_hash,
                 "p_artifact_size_bytes": artifact_size,
                 "p_pages": pages,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def publish_threads(
+        self,
+        job: ClaimedJob,
+        worker_id: str,
+        *,
+        source_hash: str,
+        processor_version: str,
+        object_path: str,
+        artifact_hash: str,
+        artifact_size: int,
+        segments: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "publish_threads_ingestion",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_source_hash": source_hash,
+                "p_processor_version": processor_version,
+                "p_object_key": object_path,
+                "p_artifact_sha256": artifact_hash,
+                "p_artifact_size_bytes": artifact_size,
+                "p_segments": segments,
             },
         )
         return result if isinstance(result, dict) else None

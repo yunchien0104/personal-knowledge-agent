@@ -31,6 +31,18 @@ function statusLabel(status: string): KnowledgeStatus {
   return "待檢視";
 }
 
+function ingestionMessage(asset: Asset) {
+  const code = asset.ingestion_job?.last_error_code;
+  const messages: Record<string, string> = {
+    threads_content_incomplete: "Threads 只提供截斷預覽，因此未發布不完整內容。",
+    threads_post_inaccessible: "貼文需要登入、已刪除或無法公開讀取；可改用文字或匯出內容。",
+    threads_fetch_timeout: "Threads 暫時逾時，系統會依重試規則再次處理。",
+    threads_fetch_failed: "Threads 暫時無法載入，系統會依重試規則再次處理。",
+    browser_runtime_missing: "處理服務尚未安裝 Threads 瀏覽器執行環境。",
+  };
+  return code ? messages[code] ?? "來源處理失敗；未發布任何不完整版本。" : null;
+}
+
 function pdfName(value: string | null) {
   const match = value?.match(/^pdf:[0-9a-f-]{36}:\d+:(.+)$/);
   if (!match) return null;
@@ -61,9 +73,12 @@ export function toKnowledgeItems(assets: Asset[], notes: Note[]): KnowledgeItem[
     title: assetTitle(asset),
     meta: `${new Date(asset.created_at).toLocaleDateString("zh-TW")} · ${asset.status}`,
     status: statusLabel(asset.status),
-    excerpt: asset.active_revision_id ? "來源已建立可追溯版本。" : "來源已保存，尚未建立可閱讀摘要。",
+    excerpt: ingestionMessage(asset)
+      ?? (asset.active_revision_id ? "來源已建立可追溯版本。" : "來源已保存，尚未建立可閱讀摘要。"),
     updatedAt: asset.updated_at,
     sourceStatus: asset.status,
+    activeRevisionId: asset.active_revision_id,
+    sourceUrl: asset.source_url,
   }));
   const noteItems = notes.map((note): KnowledgeItem => ({
     id: note.id,

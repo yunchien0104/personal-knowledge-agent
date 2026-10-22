@@ -1,7 +1,13 @@
 "use client";
 
-import { Grid2X2, List, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Grid2X2, List, Search, SlidersHorizontal, Sparkles, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+import {
+  safeSourceNoteError,
+  sourceNoteDisplayState,
+  type SourceNoteWorkspace,
+} from "@/lib/source-notes";
 
 import { getApi, toKnowledgeItems } from "./api";
 import { DeleteAssetDialog } from "./DeleteAssetDialog";
@@ -15,6 +21,141 @@ const filters: Array<{ value: FilterType; label: string }> = [{ value: "All", la
 const kindName: Record<SourceKind, string> = { PDF: "PDF 文件", IG: "Instagram", TH: "Threads", NOTE: "個人筆記" };
 const sourceFilterOptions: Array<{ value: SourceFilter; label: string }> = [{ value: "recent", label: "最新加入" }, { value: "IG", label: "IG Reels" }, { value: "TH", label: "Threads" }, { value: "PDF", label: "PDF" }];
 
+function SourceNotePanel({
+  asset,
+  onLibraryRefresh,
+}: {
+  asset: KnowledgeItem;
+  onLibraryRefresh: () => Promise<void>;
+}) {
+  const [workspace, setWorkspace] = useState<SourceNoteWorkspace | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadWorkspace = useCallback(async () => {
+    const value = await getApi<SourceNoteWorkspace>(`/api/assets/${asset.id}/source-note`);
+    setWorkspace(value);
+    setError(null);
+    return value;
+  }, [asset.id]);
+
+  useEffect(() => {
+    let active = true;
+    void getApi<SourceNoteWorkspace>(`/api/assets/${asset.id}/source-note`)
+      .then((value) => {
+        if (!active) return;
+        setWorkspace(value);
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason.message : "AI 筆記讀取失敗。");
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [asset.id]);
+
+  const displayState = sourceNoteDisplayState(workspace);
+  useEffect(() => {
+    if (displayState !== "generating") return;
+    const timer = window.setInterval(() => {
+      void loadWorkspace()
+        .then((value) => { if (value.note) void onLibraryRefresh(); })
+        .catch((reason: unknown) => {
+          setError(reason instanceof Error ? reason.message : "AI 筆記狀態讀取失敗。");
+        });
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [displayState, loadWorkspace, onLibraryRefresh]);
+
+  const sourceReady = asset.sourceStatus === "ready" && Boolean(asset.activeRevisionId);
+
+  async function generate() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await getApi(`/api/assets/${asset.id}/source-note`, { method: "POST" });
+      await loadWorkspace();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "無法建立 AI 筆記工作。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="mt-5 border-t border-line pt-5" aria-label="AI 筆記">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-medium text-muted">AI 筆記</p>
+          <p className="mt-1 text-xs text-faint">Claims 與引用不代表內容已獨立證實。</p>
+        </div>
+        {displayState !== "completed" ? (
+          <button
+            type="button"
+            onClick={generate}
+            disabled={loading || submitting || !sourceReady || displayState === "generating"}
+            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            {displayState === "generating" || submitting
+              ? "生成中…"
+              : displayState === "failed" ? "重新產生 AI 筆記" : "產生 AI 筆記"}
+          </button>
+        ) : <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">已完成</span>}
+      </div>
+
+      {!sourceReady ? <p className="mt-3 text-xs text-amber-700">PDF 解析完成並建立有效 Revision 後才能生成。</p> : null}
+      {displayState === "generating" ? <p role="status" className="mt-3 text-xs text-indigo-700">AI 筆記生成中，完成後會自動更新。</p> : null}
+      {displayState === "failed" ? (
+        <p role="alert" className="mt-3 rounded-md bg-rose-50 p-3 text-xs leading-5 text-rose-800">
+          生成失敗，可重新嘗試。{safeSourceNoteError(workspace?.job?.errorCode ?? null)}
+        </p>
+      ) : null}
+      {error ? <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p> : null}
+
+      {workspace?.note ? (
+        <div className="mt-5 space-y-5">
+          <div className="rounded-lg bg-subtle p-4">
+            <h3 className="text-sm font-semibold">{workspace.note.title}</h3>
+            <p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-muted">{workspace.note.body}</p>
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold text-ink">Claims 與 Evidence 引用</h3>
+            <div className="mt-3 space-y-3">
+              {workspace.note.claims.map((claim) => (
+                <article key={claim.id} className="rounded-lg border border-line p-3">
+                  <p className="text-xs font-medium leading-5 text-ink">{claim.text}</p>
+                  <p className="mt-1 text-[10px] text-faint">
+                    {claim.claimType} · {claim.verificationStatus}{claim.needsReview ? " · 需人工審核" : ""}
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {claim.citations.map((citation) => (
+                      <li key={citation.evidenceId} className="text-[11px] leading-5 text-muted">
+                        {workspace.note?.pdfUrl && citation.page ? (
+                          <a
+                            href={`${workspace.note.pdfUrl}#page=${citation.page}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-medium text-indigo-700 hover:underline"
+                          >
+                            PDF 第 {citation.page} 頁
+                          </a>
+                        ) : <span className="font-medium text-ink">Evidence</span>}
+                        <span> · 「{citation.quote}」 · {citation.validityStatus}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function LibraryPage() {
   const [items, setItems] = useState<KnowledgeItem[]>([]);
   const [filter, setFilter] = useState<FilterType>("All");
@@ -27,42 +168,57 @@ export function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [deletions, setDeletions] = useState<AssetDeletion[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeItem | null>(null);
+  const [filterReferenceTime] = useState(Date.now);
 
-  const loadData = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     const [assets, notes, deletionRows] = await Promise.all([
       getApi<Asset[]>("/api/assets?limit=100"),
       getApi<Note[]>("/api/notes?limit=100"),
       getApi<AssetDeletion[]>("/api/assets/deletions"),
     ]);
-    setItems(toKnowledgeItems(assets, notes));
-    setDeletions(deletionRows);
-    setError(null);
+    return { items: toKnowledgeItems(assets, notes), deletions: deletionRows };
   }, []);
+
+  const loadData = useCallback(async () => {
+    const data = await fetchData();
+    setItems(data.items);
+    setDeletions(data.deletions);
+    setError(null);
+  }, [fetchData]);
 
   useEffect(() => {
     let active = true;
-    void loadData()
+    void fetchData()
+      .then((data) => {
+        if (!active) return;
+        setItems(data.items);
+        setDeletions(data.deletions);
+        setError(null);
+      })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "知識庫讀取失敗。"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [loadData]);
+  }, [fetchData]);
 
   const hasActiveDeletion = deletions.some((item) => ["pending", "deleting"].includes(item.status));
+  const hasActiveIngestion = items.some((item) =>
+    item.category === "source" && ["pending", "processing"].includes(item.sourceStatus ?? ""),
+  );
   useEffect(() => {
-    if (!hasActiveDeletion) return;
+    if (!hasActiveDeletion && !hasActiveIngestion) return;
     const timer = window.setInterval(() => {
       void loadData().catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : "刪除狀態讀取失敗。");
       });
     }, 2500);
     return () => window.clearInterval(timer);
-  }, [hasActiveDeletion, loadData]);
+  }, [hasActiveDeletion, hasActiveIngestion, loadData]);
 
   const filtered = useMemo(() => items.filter((item) => (
     (filter === "All" || (filter === "Notes" ? item.category === "note" : item.category === "source"))
-    && (!activeSourceFilter || (activeSourceFilter === "recent" ? Date.now() - new Date(item.updatedAt).getTime() < 7 * 86400000 : item.kind === activeSourceFilter))
+    && (!activeSourceFilter || (activeSourceFilter === "recent" ? filterReferenceTime - new Date(item.updatedAt).getTime() < 7 * 86400000 : item.kind === activeSourceFilter))
     && (!query.trim() || `${item.title} ${item.excerpt}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
-  )), [activeSourceFilter, filter, items, query]);
+  )), [activeSourceFilter, filter, filterReferenceTime, items, query]);
   const selected = filtered.find((item) => item.id === selectedId) ?? filtered[0] ?? null;
   const selectedDeletion = selected
     ? deletions.find((item) => item.asset_id_snapshot === selected.id)
@@ -104,7 +260,7 @@ export function LibraryPage() {
             {!loading && filtered.length && viewMode === "list" ? <div role="region" aria-label="知識列表" className="divide-y divide-line border-y border-line">{filtered.map((item) => <button type="button" key={item.id} onClick={() => setSelectedId(item.id)} className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-2 py-4 text-left transition hover:bg-subtle ${selected?.id === item.id ? "bg-subtle" : ""}`}><SourceIcon kind={item.kind} size="sm" /><div className="min-w-0"><h3 className="truncate text-sm font-semibold">{item.title}</h3><p className="mt-1 truncate text-[11px] text-muted">{kindName[item.kind]} · {item.meta}</p></div><StatusBadge status={item.status} /></button>)}</div> : null}
             {!loading && !filtered.length ? <PendingState title="這個篩選沒有內容" description="沒有符合條件的真實資料；可清除搜尋或篩選後再試。" /> : null}
           </div>
-          <article className="self-start border-t border-line pt-5 xl:sticky xl:top-20 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">{selected ? <><div className="flex items-start justify-between gap-3"><SourceIcon kind={selected.kind} size="lg" />{selected.category === "source" && selected.kind === "PDF" ? <button type="button" aria-label="刪除 PDF" disabled={selectedDeletion?.status === "pending" || selectedDeletion?.status === "deleting"} onClick={() => setDeleteTarget(selected)} className="rounded-md p-2 text-muted transition hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" /></button> : null}</div><p className="mt-5 text-[11px] text-muted">{selected.category === "note" ? "可編輯筆記" : kindName[selected.kind]}</p><h2 className="mt-2 text-xl font-semibold leading-8 tracking-[-0.02em]">{selected.title}</h2><p className="mt-2 text-xs text-muted">{selected.meta}</p>{selectedDeletion ? <div className={`mt-5 rounded-lg border p-3 text-xs leading-5 ${selectedDeletion.status === "failed" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}><p className="font-semibold">{selectedDeletion.status === "pending" ? "等待後端刪除" : selectedDeletion.status === "deleting" ? "後端正在刪除" : selectedDeletion.status === "failed" ? "刪除失敗，可重新嘗試" : selectedDeletion.mode === "remove_original" ? "原始 PDF 已移除" : "永久刪除已完成"}</p>{selectedDeletion.status === "failed" ? <p className="mt-1">{selectedDeletion.error_message ?? "後端未能完成清理，資料仍維持不可檢索狀態。"}</p> : null}</div> : null}<div className="mt-6 border-y border-line py-5"><p className="text-[11px] font-medium text-muted">內容摘要</p><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-ink">{selected.excerpt}</p></div><p className="mt-6 text-[11px] leading-5 text-faint">只顯示目前 API 回傳內容；引用統計與主題關聯尚未串接。</p></> : <PendingState title="尚未選擇內容" description="選擇左側項目後查看詳細資料。" />}</article>
+          <article className="self-start border-t border-line pt-5 xl:sticky xl:top-20 xl:border-l xl:border-t-0 xl:pl-7 xl:pt-0">{selected ? <><div className="flex items-start justify-between gap-3"><SourceIcon kind={selected.kind} size="lg" />{selected.category === "source" && selected.kind === "PDF" ? <button type="button" aria-label="刪除 PDF" disabled={selectedDeletion?.status === "pending" || selectedDeletion?.status === "deleting"} onClick={() => setDeleteTarget(selected)} className="rounded-md p-2 text-muted transition hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"><Trash2 className="h-4 w-4" /></button> : null}</div><p className="mt-5 text-[11px] text-muted">{selected.category === "note" ? "可編輯筆記" : kindName[selected.kind]}</p><h2 className="mt-2 text-xl font-semibold leading-8 tracking-[-0.02em]">{selected.title}</h2><p className="mt-2 text-xs text-muted">{selected.meta}</p>{selectedDeletion ? <div className={`mt-5 rounded-lg border p-3 text-xs leading-5 ${selectedDeletion.status === "failed" ? "border-rose-200 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}><p className="font-semibold">{selectedDeletion.status === "pending" ? "等待後端刪除" : selectedDeletion.status === "deleting" ? "後端正在刪除" : selectedDeletion.status === "failed" ? "刪除失敗，可重新嘗試" : selectedDeletion.mode === "remove_original" ? "原始 PDF 已移除" : "永久刪除已完成"}</p>{selectedDeletion.status === "failed" ? <p className="mt-1">{selectedDeletion.error_message ?? "後端未能完成清理，資料仍維持不可檢索狀態。"}</p> : null}</div> : null}<div className="mt-6 border-y border-line py-5"><p className="text-[11px] font-medium text-muted">內容摘要</p><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-ink">{selected.excerpt}</p></div>{selected.category === "source" && selected.kind === "PDF" ? <SourceNotePanel key={selected.id} asset={selected} onLibraryRefresh={loadData} /> : null}{selected.category === "source" && selected.sourceUrl ? <div className="mt-5"><a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="rounded-md border border-line px-3 py-2 text-xs font-semibold text-ink hover:bg-subtle">開啟原始來源</a></div> : null}<p className="mt-6 text-[11px] leading-5 text-faint">Claims 與 Evidence 引用均受目前登入使用者的資料權限限制。</p></> : <PendingState title="尚未選擇內容" description="選擇左側項目後查看詳細資料。" />}</article>
         </div>
       </section>
       {deleteTarget ? <DeleteAssetDialog item={deleteTarget} onClose={() => setDeleteTarget(null)} onRequested={handleDeletionRequested} /> : null}

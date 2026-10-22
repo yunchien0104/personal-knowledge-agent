@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pdfPageFromLocator, safeSourceNoteError } from "../src/lib/source-notes.ts";
+import {
+  pdfPageFromLocator,
+  safeSourceNoteError,
+  sourceNoteDisplayState,
+  type SourceNoteWorkspace,
+} from "../src/lib/source-notes.ts";
 
 test("PDF Evidence locator resolves only a positive page", () => {
   assert.equal(pdfPageFromLocator({ kind: "pdf_page", page_number: 3 }), 3);
@@ -12,9 +17,32 @@ test("PDF Evidence locator resolves only a positive page", () => {
 
 test("Source Note errors expose only stable allowlisted messages", () => {
   assert.match(safeSourceNoteError("unsupported_claim") ?? "", /原文支持/);
+  assert.match(safeSourceNoteError("invalid_evidence_id") ?? "", /不存在/);
+  assert.match(safeSourceNoteError("quote_mismatch") ?? "", /原文不符/);
+  assert.match(safeSourceNoteError("duplicate_evidence_id") ?? "", /重複引用/);
   assert.equal(
     safeSourceNoteError("provider-secret-detail"),
     "Source Note 產生失敗，請稍後再試。",
   );
   assert.equal(safeSourceNoteError(null), null);
+});
+
+test("Source Note display state distinguishes generation, completion, and retry", () => {
+  const workspace = (status: string, note: SourceNoteWorkspace["note"] = null) => ({
+    asset: { id: "asset", status: "ready", activeRevisionId: "revision" },
+    job: { id: "job", status, errorCode: status === "failed" ? "quote_mismatch" : null },
+    note,
+  });
+  const note = {
+    id: "note", title: "Title", body: "Summary", bodyRevision: 1,
+    updatedAt: "2026-10-22T00:00:00Z", modelProvider: "openai", modelName: "sol",
+    promptVersion: "source-note-v1", revisionId: "revision", pdfUrl: null,
+    sourceUrl: null, claims: [],
+  };
+
+  assert.equal(sourceNoteDisplayState(null), "idle");
+  assert.equal(sourceNoteDisplayState(workspace("queued")), "generating");
+  assert.equal(sourceNoteDisplayState(workspace("completed")), "generating");
+  assert.equal(sourceNoteDisplayState(workspace("completed", note)), "completed");
+  assert.equal(sourceNoteDisplayState(workspace("failed")), "failed");
 });

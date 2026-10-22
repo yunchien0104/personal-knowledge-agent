@@ -509,3 +509,28 @@
   so local history aligns with Cloud without repairing or mutating remote history.
 - The later `20261021173759_fix_opportunity_enqueue_auth_user_access` remains
   aligned. Next action: deploy only `20261021193156_asset_deletion_lifecycle`.
+## Manual Threads single-URL ingestion (2026-10-22)
+
+- Added authenticated, tenant-scoped canonical Threads URL submission with atomic Asset +
+  durable `ingest_threads` Job creation and per-user post-ID duplicate prevention.
+- Added bounded Playwright public-post retrieval, explicit inaccessible/truncated outcomes,
+  immutable normalized artifacts, post-offset Evidence, and lease-fenced Revision promotion.
+- Reused the existing Source Note, retrieval, and Research pipelines; Threads citations retain
+  the canonical source URL while PDF citations continue to use short-lived signed URLs.
+- Connected the existing Add Data URL tab and Library polling/status UI; no bulk crawling,
+  account monitoring, scheduled ingestion, login bypass, push, or deployment was added.
+- Runtime prerequisite: install the pinned Worker dependencies and Playwright Chromium
+  (`python -m playwright install chromium`) before enabling `WORKER_CAPABILITY=threads|all`.
+- PASS: Threads Worker 4/4, Source Note 9/9, affected PDF/Research Worker 10/10,
+  Threads Web 3/3, existing Web unit suites 10/10, TypeScript, targeted ESLint, production build.
+- BLOCKED locally: Supabase pgTAP/API integration requires the unavailable Docker/OrbStack
+  socket; `threads_ingestion_protocol.test.sql` and API duplicate coverage are ready to run.
+
+## V6 Library Source Note integration (2026-10-22)
+
+- Connected parsed PDF cards in `/library` to the existing authenticated
+  `enqueue_source_note_generation` RPC and tenant-scoped Source Note loader.
+- Added generating, completed, and retryable-failure states with automatic polling;
+  completed notes render their body, Claims, Evidence quotes, and PDF page links inline.
+- PASS: Source Note Web tests 3/3, TypeScript, and targeted ESLint.
+- No Schema, Worker, LLM configuration, deployment, or push change was made.

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { uploadPdf } from "@/lib/pdf-upload-client";
+import { submitThreadsUrl } from "@/lib/threads";
 import { PrimaryButton } from "./ui";
 
 type CaptureMode = "url" | "pdf" | "text";
@@ -45,6 +46,27 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
     }
   }
 
+  async function submitUrl(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const input = event.currentTarget.elements.namedItem("url");
+    if (!(input instanceof HTMLInputElement) || !input.value.trim()) {
+      setMessage("請先貼上 Threads 貼文網址。");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await submitThreadsUrl(input.value);
+      onClose();
+      router.push("/library");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Threads 貼文匯入失敗。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-0 sm:items-center sm:p-6" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section role="dialog" aria-modal="true" aria-label="新增資料" className="max-h-[92vh] w-full overflow-y-auto rounded-t-[14px] border border-line bg-surface shadow-soft sm:max-w-xl sm:rounded-[10px]">
@@ -73,11 +95,31 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
                 <PrimaryButton type="submit" disabled={busy}>{busy ? <><LoaderCircle className="h-4 w-4 animate-spin" />上傳中…</> : "加入 Inbox"}</PrimaryButton>
               </div>
             </form>
+          ) : mode === "url" ? (
+            <form onSubmit={submitUrl} className="mt-6">
+              <label htmlFor="capture-url" className="block text-sm font-semibold">Threads 貼文網址</label>
+              <input
+                id="capture-url"
+                name="url"
+                type="url"
+                inputMode="url"
+                autoComplete="url"
+                placeholder="https://www.threads.net/@account/post/…"
+                disabled={busy}
+                required
+                className="mt-3 w-full rounded-md border border-line bg-surface px-3 py-3 text-sm outline-none transition placeholder:text-faint focus:border-indigo-300"
+              />
+              <p className="mt-2 text-xs leading-5 text-muted">只處理你明確送出的這一則公開貼文；不會追蹤帳號、串文或排程抓取。</p>
+              {message ? <p role="alert" className="mt-3 text-xs text-rose-700">{message}</p> : null}
+              <div className="mt-7 flex justify-end border-t border-line pt-5">
+                <PrimaryButton type="submit" disabled={busy}>{busy ? <><LoaderCircle className="h-4 w-4 animate-spin" />建立匯入工作…</> : "開始匯入"}</PrimaryButton>
+              </div>
+            </form>
           ) : (
             <div className="mt-6">
               <div className="rounded-lg border border-dashed border-line bg-subtle p-7 text-center">
                 <p className="text-sm font-semibold">此新增方式尚未串接</p>
-                <p className="mt-2 text-xs leading-5 text-muted">目前只有 PDF 上傳已連接既有 Storage 與處理佇列；{mode === "url" ? "網址收藏" : "文字收藏"}不會送出或建立假資料。</p>
+                <p className="mt-2 text-xs leading-5 text-muted">文字收藏尚未連接既有處理佇列，不會送出或建立假資料。</p>
               </div>
               <div className="mt-7 flex justify-end border-t border-line pt-5"><PrimaryButton type="button" disabled>尚未串接</PrimaryButton></div>
             </div>

@@ -58,6 +58,10 @@ export default async function SourceNotePage({ params }: { params: Promise<{ id:
                         <a href={`${note.pdfUrl}#page=${citation.page}`} target="_blank" rel="noreferrer">
                           PDF 第 {citation.page} 頁
                         </a>
+                      ) : citation.sourceUrl ? (
+                        <a href={citation.sourceUrl} target="_blank" rel="noreferrer">
+                          Threads 原始貼文
+                        </a>
                       ) : `Evidence ${citation.evidenceId}`}
                       ：「{citation.quote}」 ({citation.validityStatus})
                     </li>

@@ -155,6 +155,27 @@ class SourceNoteWorkerTests(unittest.TestCase):
             "Revenue increased by 20 percent in 2025.",
         )
 
+    def test_threads_evidence_uses_the_same_grounded_source_note_pipeline(self):
+        gateway = FakeGateway()
+        source_url = "https://www.threads.net/t/DewcDm5n4FD"
+        locator = {
+            "kind": "threads_post", "url": source_url, "post_id": "DewcDm5n4FD",
+            "start_offset": 0, "end_offset": len(EXCERPT), "source_hash": SOURCE_HASH,
+        }
+        gateway.context.update({"sourceType": "threads", "sourceUrl": source_url})
+        gateway.context["evidence"][0]["locator"] = locator
+        gateway.artifact = {
+            "schema_version": 1, "source_type": "threads", "source_hash": SOURCE_HASH,
+            "source_url": source_url,
+            "segments": [{"text": EXCERPT, "evidence_locator": locator}],
+        }
+
+        result = SourceNoteWorker(gateway, MockModel(), "note-worker").process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.failures, [])
+
     def test_unknown_evidence_id_fails_without_publication(self):
         output = valid_output()
         output["facts"][0]["citations"][0]["evidenceId"] = "67000000-0000-4000-8000-000000000007"

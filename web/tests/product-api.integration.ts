@@ -262,6 +262,33 @@ test("invalid bodies, ids, and pagination return consistent client errors", asyn
   assert.equal((await appRequest("/api/notes/not-a-uuid", {}, userA.jar)).status, 400);
 });
 
+test("manual Threads URL submission canonicalizes, enqueues once, and rejects duplicates", async () => {
+  const postId = `Post_${crypto.randomUUID().replaceAll("-", "")}`;
+  const sharedUrl = `https://www.threads.com/@account/post/${postId}?xmt=tracking`;
+  const first = await postAsset(userA, { source_type: "threads", source_url: sharedUrl });
+  assert.equal(first.status, 202);
+  const firstPayload = await first.json() as ApiEnvelope<{
+    asset: Asset & { source_url: string; source_external_id: string };
+    job: { status: string };
+  }>;
+  assert.equal(firstPayload.data.asset.source_url, `https://www.threads.net/t/${postId}`);
+  assert.equal(firstPayload.data.asset.source_external_id, postId);
+  assert.equal(firstPayload.data.job.status, "queued");
+  createdAssets.push({ id: firstPayload.data.asset.id, owner: "a" });
+
+  const duplicate = await postAsset(userA, {
+    source_type: "threads",
+    source_url: `https://threads.net/t/${postId}`,
+  });
+  assert.equal(duplicate.status, 409);
+  assert.equal((await duplicate.json() as ApiEnvelope<null>).error?.code, "ASSET_CONFLICT");
+
+  const otherOwner = await postAsset(userB, { source_type: "threads", source_url: sharedUrl });
+  assert.equal(otherOwner.status, 202, "duplicate prevention must remain tenant scoped");
+  const otherPayload = await otherOwner.json() as ApiEnvelope<{ asset: Asset }>;
+  createdAssets.push({ id: otherPayload.data.asset.id, owner: "b" });
+});
+
 test("authenticated users create, read, and paginate only their assets", async () => {
   for (const [owner, user, externalId] of [
     ["a", userA, `a-1-${crypto.randomUUID()}`],

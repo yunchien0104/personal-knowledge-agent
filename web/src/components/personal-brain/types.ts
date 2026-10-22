@@ -7,6 +7,12 @@ export type Asset = {
   active_revision_id: string | null;
   created_at: string;
   updated_at: string;
+  ingestion_job: {
+    id: string;
+    status: string;
+    last_error_code: string | null;
+    last_error_message: string | null;
+  } | null;
 };
 
 export type Note = {
@@ -54,6 +60,8 @@ export type KnowledgeItem = {
   excerpt: string;
   updatedAt: string;
   sourceStatus?: string;
+  activeRevisionId?: string | null;
+  sourceUrl?: string | null;
 };
 
 export type AssetDeletion = {

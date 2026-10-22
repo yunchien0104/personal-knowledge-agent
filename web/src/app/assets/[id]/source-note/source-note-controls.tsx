@@ -78,7 +78,7 @@ export function SourceNoteControls({
         <button type="button" onClick={generate} disabled={busy || !assetReady || processing}>
           {processing ? "產生中…" : "產生 Source Note"}
         </button>
-        {!assetReady ? <p>PDF 解析完成後才能產生 Source Note。</p> : null}
+        {!assetReady ? <p>來源解析完成後才能產生 Source Note。</p> : null}
         <p role="status" aria-live="polite">{message}</p>
       </section>
     );
