@@ -2,7 +2,7 @@ import json
 import unittest
 
 from personal_brain.models import JobPayloadV1
-from personal_brain.source_notes import ModelError, SourceNoteWorker
+from personal_brain.source_notes import ModelError, NOTE_SCHEMA, SourceNoteWorker
 from personal_brain.supabase_gateway import ClaimedJob
 
 
@@ -28,19 +28,23 @@ def claimed_job() -> ClaimedJob:
     return ClaimedJob(JOB_ID, USER_ID, ASSET_ID, 1, payload)
 
 
-def valid_output():
-    citation = {"evidenceId": EVIDENCE_ID, "quote": "Revenue increased by 20 percent in 2025."}
+def valid_output(*, legacy_quotes=False):
+    fact_citation = {"evidenceId": EVIDENCE_ID}
+    uncertainty_citation = {"evidenceId": EVIDENCE_ID}
+    if legacy_quotes:
+        fact_citation["quote"] = "Revenue increased by 20 percent in 2025."
+        uncertainty_citation["quote"] = "seasonal uncertainty"
     return {
         "title": "2025 Revenue Review",
         "summary": "The source reports revenue growth with seasonal uncertainty.",
         "topics": ["Revenue", "Seasonality"],
-        "facts": [{"text": "Revenue increased in 2025.", "citations": [citation]}],
-        "dataPoints": [{"text": "The reported increase was 20 percent.", "citations": [citation]}],
+        "facts": [{"text": "Revenue increased in 2025.", "citations": [fact_citation]}],
+        "dataPoints": [{"text": "The reported increase was 20 percent.", "citations": [fact_citation.copy()]}],
         "arguments": [],
         "conclusions": [],
         "uncertainties": [{
             "text": "The report identifies seasonal uncertainty.",
-            "citations": [{"evidenceId": EVIDENCE_ID, "quote": "seasonal uncertainty"}],
+            "citations": [uncertainty_citation],
         }],
     }
 
@@ -127,7 +131,29 @@ class SourceNoteWorkerTests(unittest.TestCase):
         self.assertIn("## 摘要", publication["body"])
         self.assertEqual(len(publication["claims"]), 3)
         self.assertTrue(all(claim["citations"] for claim in publication["claims"]))
+        self.assertTrue(all(
+            citation["quote"] == EXCERPT
+            for claim in publication["claims"] for citation in claim["citations"]
+        ))
         self.assertEqual(gateway.failures, [])
+
+    def test_model_schema_requests_only_evidence_ids(self):
+        citation_schema = NOTE_SCHEMA["properties"]["facts"]["items"]["properties"]["citations"]["items"]
+
+        self.assertEqual(citation_schema["required"], ["evidenceId"])
+        self.assertEqual(set(citation_schema["properties"]), {"evidenceId"})
+
+    def test_legacy_quote_format_remains_supported(self):
+        gateway = FakeGateway()
+        result = SourceNoteWorker(
+            gateway, MockModel(valid_output(legacy_quotes=True)), "note-worker",
+        ).process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            gateway.publications[0]["claims"][0]["citations"][0]["quote"],
+            "Revenue increased by 20 percent in 2025.",
+        )
 
     def test_unknown_evidence_id_fails_without_publication(self):
         output = valid_output()
@@ -137,18 +163,28 @@ class SourceNoteWorkerTests(unittest.TestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(gateway.publications, [])
-        self.assertEqual(gateway.failures[0]["error_code"], "unsupported_claim")
+        self.assertEqual(gateway.failures[0]["error_code"], "invalid_evidence_id")
         self.assertFalse(gateway.failures[0]["retryable"])
 
     def test_non_verbatim_support_quote_fails_safely(self):
-        output = valid_output()
+        output = valid_output(legacy_quotes=True)
         output["facts"][0]["citations"][0]["quote"] = "Revenue doubled."
         gateway = FakeGateway()
         result = SourceNoteWorker(gateway, MockModel(output), "note-worker").process_one()
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(gateway.publications, [])
-        self.assertEqual(gateway.failures[0]["error_code"], "unsupported_claim")
+        self.assertEqual(gateway.failures[0]["error_code"], "quote_mismatch")
+
+    def test_duplicate_evidence_id_fails_safely(self):
+        output = valid_output()
+        output["facts"][0]["citations"].append({"evidenceId": EVIDENCE_ID})
+        gateway = FakeGateway()
+        result = SourceNoteWorker(gateway, MockModel(output), "note-worker").process_one()
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(gateway.publications, [])
+        self.assertEqual(gateway.failures[0]["error_code"], "duplicate_evidence_id")
 
     def test_transient_model_failure_requests_retry(self):
         gateway = FakeGateway()

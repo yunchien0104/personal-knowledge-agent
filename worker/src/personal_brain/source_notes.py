@@ -104,10 +104,9 @@ NOTE_SCHEMA = {
                             "type": "array", "minItems": 1, "maxItems": 20,
                             "items": {
                                 "type": "object", "additionalProperties": False,
-                                "required": ["evidenceId", "quote"],
+                                "required": ["evidenceId"],
                                 "properties": {
                                     "evidenceId": {"type": "string", "format": "uuid"},
-                                    "quote": {"type": "string", "minLength": 1, "maxLength": 4000},
                                 },
                             },
                         },
@@ -158,8 +157,9 @@ class OpenAICompatibleStructuredNoteModel:
                     "role": "system",
                     "content": (
                         "Create a factual source note from only the supplied PDF evidence. "
-                        "Every item must cite evidenceId and copy an exact supporting quote. "
-                        "Do not call a claim verified; preserve uncertainty and omit unsupported claims."
+                        "Every item must cite evidenceId; do not include quote in citations. "
+                        "An evidence ID does not by itself verify a claim. Preserve uncertainty "
+                        "and omit unsupported claims."
                     ),
                 },
                 {"role": "user", "content": json.dumps(document, ensure_ascii=False)},
@@ -265,14 +265,38 @@ def validate_note_output(
             clean_citations: list[dict[str, str]] = []
             seen: set[str] = set()
             for citation in citations:
-                if not isinstance(citation, dict) or set(citation) != {"evidenceId", "quote"}:
+                if not isinstance(citation, dict) or set(citation) not in (
+                    {"evidenceId"}, {"evidenceId", "quote"},
+                ):
                     raise ModelError("invalid_model_output", "Citation output is invalid", retryable=False)
                 evidence_id = citation.get("evidenceId")
-                quote = _text(citation.get("quote"), maximum=4000)
                 row = evidence.get(evidence_id) if isinstance(evidence_id, str) else None
-                if row is None or quote not in str(row.get("excerpt", "")) or evidence_id in seen:
-                    raise ModelError("unsupported_claim", "A claim is not supported by cited Evidence", retryable=False)
+                if row is None:
+                    raise ModelError(
+                        "invalid_evidence_id", "Citation references unknown Evidence", retryable=False,
+                    )
+                if evidence_id in seen:
+                    raise ModelError(
+                        "duplicate_evidence_id", "A claim cites the same Evidence more than once",
+                        retryable=False,
+                    )
                 seen.add(evidence_id)
+                excerpt = str(row.get("excerpt", ""))
+                if "quote" in citation:
+                    quote_value = citation.get("quote")
+                    if (
+                        not isinstance(quote_value, str)
+                        or not quote_value.strip()
+                        or len(quote_value.strip()) > 4000
+                        or quote_value.strip() not in excerpt
+                    ):
+                        raise ModelError(
+                            "quote_mismatch", "Citation quote does not match Evidence",
+                            retryable=False,
+                        )
+                    quote = quote_value.strip()
+                else:
+                    quote = excerpt
                 clean_citations.append({"evidenceId": evidence_id, "quote": quote})
             claims.append({"text": claim_text, "category": CATEGORY_NAME[field], "citations": clean_citations})
             rendered.append(f"- {claim_text}")
