@@ -2,9 +2,9 @@
 
 ## Current phase
 
-- Step 6 Research Agent MVP is implemented and its first real-browser functional
-  E2E passed against the allowlisted Supabase Cloud Staging project. Web and Worker
-  were run locally from the production build because neither service is deployed.
+- R1 Unified Hybrid Retrieval is implemented locally and awaits isolated Staging
+  migration, pgvector protocol tests, real embedding-provider verification, and
+  incremental backfill. No Cloud resource was changed in this implementation run.
 
 ## Completed
 
@@ -554,3 +554,34 @@
   verified PDF Inbox, Source Note, Research, Retrieval, TypeScript, and Web production build.
 - Threads Cloud Migration, Chromium runtime, and Staging integration remain deployment blockers;
   no Cloud, Worker, Migration, commit, push, or deployment action was performed.
+## R1 Unified Hybrid Retrieval MVP
+
+- Added deterministic paragraph/sentence-aware chunking over the immutable full
+  normalized PDF artifact. Chunks never cross page Evidence boundaries and retain
+  Evidence, locator, absolute offsets, content hash, Revision, and Asset identity.
+- Added a local-only additive pgvector migration with 1536-dimensional exact
+  search, composite owner foreign keys plus a full provenance trigger, forced RLS,
+  idempotent atomic chunk replacement, and active-ready-validated filtering.
+- Added bounded dynamic OR-style `simple` FTS plus exact semantic candidates and
+  RRF fusion. The result reports retrieval method and degraded semantic state;
+  sufficiency is always `unassessed` and Top-K is not treated as full-document
+  reading or proof that Evidence is sufficient.
+- Added authenticated single/multi-Asset and whole-owned-KB scopes. The public RPC
+  derives the user from Auth; the explicit user parameter is isolated in a
+  service-role-only Worker RPC. Invalid, empty, foreign, and unavailable scopes
+  fail closed without expanding search.
+- Added an independent OpenAI-compatible embedding adapter using the documented
+  multilingual `text-embedding-3-small` 1536-dimensional contract. Sol embedding
+  support was not assumed. Configuration, bounded batches/timeouts/retries,
+  response model/dimension validation, content-hash/model-version caching, and an
+  incremental backfill command are separate from Source Note settings.
+- PASS: Retrieval-specific Mock/unit tests 14/14; the non-network Worker regression
+  suite 59/59 (including PDF ingestion/parser, Source Note, Research, deletion,
+  runner, and gateway); Python compilation; and `git diff --check`.
+- BLOCKED: seven unrelated Worker HTTP tests require a localhost socket that this
+  sandbox denies. They reached no external service and no product data.
+- NOT RUN: the 26-case pgTAP protocol suite because Docker/OrbStack and Cloud are
+  excluded. NOT RUN: real embedding integration because no authorized provider
+  credential was used. Neither Mock vectors nor unexecuted SQL are recorded as E2E.
+- Existing `get_research_context`, PDF ingestion, Source Note, citations, Research
+  synthesis, UI, Render settings, and Threads files were not changed.
