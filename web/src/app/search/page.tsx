@@ -10,6 +10,7 @@ import {
   retrieveKnowledge,
 } from "@/lib/retrieval";
 import { createServerSupabaseClient } from "@/lib/supabase";
+import { threadsCitationUrl } from "@/lib/threads";
 
 
 export const instant = false;
@@ -30,7 +31,11 @@ export default async function SearchPage({
     ? await retrieveKnowledge(supabase, parsed.data)
     : { results: [], total: 0 };
 
-  const assetIds = [...new Set(retrieval.results.map((result) => result.assetId))];
+  const assetIds = [...new Set(retrieval.results.flatMap((result) =>
+    result.citations
+      .filter((citation) => citation.validityStatus === "valid" && citationPdfPage(citation))
+      .map((citation) => citation.assetId)
+  ))];
   const signedUrls = new Map<string, string>();
   await Promise.all(assetIds.map(async (assetId) => {
     const signed = await supabase.storage
@@ -74,11 +79,16 @@ export default async function SearchPage({
               {result.citations.map((citation) => {
                 const page = citationPdfPage(citation);
                 const pdfUrl = signedUrls.get(citation.assetId);
+                const sourceUrl = threadsCitationUrl(citation.locator);
                 return (
                   <li key={citation.evidenceId}>
                     {pdfUrl && page && citation.validityStatus === "valid" ? (
                       <a href={`${pdfUrl}#page=${page}`} target="_blank" rel="noreferrer">
                         PDF 第 {page} 頁
+                      </a>
+                    ) : sourceUrl ? (
+                      <a href={sourceUrl} target="_blank" rel="noreferrer">
+                        Threads 原始貼文
                       </a>
                     ) : `Evidence ${citation.evidenceId}`}
                     {citation.validityStatus !== "valid" ? ` (${citation.validityStatus})` : null}

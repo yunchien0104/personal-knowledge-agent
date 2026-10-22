@@ -526,6 +526,19 @@
 - BLOCKED locally: Supabase pgTAP/API integration requires the unavailable Docker/OrbStack
   socket; `threads_ingestion_protocol.test.sql` and API duplicate coverage are ready to run.
 
+### Threads citation provenance hardening (2026-10-22)
+
+- Added a database trigger to make an established Threads Asset's `source_type`,
+  `source_url`, and `source_external_id` immutable, including privileged writes.
+- Threads Source Note, Research, and search citations now resolve the canonical URL from
+  the Evidence/citation locator snapshot; PDF citations retain signed Storage URLs.
+- Extended pgTAP coverage for identity immutability, immutable Evidence URLs, PDF behavior,
+  and cross-tenant isolation. The SQL suite remains pending staging/local Supabase execution.
+- PASS: Threads Web 4/4, Source Note Web 3/3, Research Web 3/3, Retrieval Web 3/3,
+  affected Worker tests 19/19, TypeScript, and targeted ESLint.
+- No Cloud database mutation, migration execution, Docker/OrbStack use, push, or deployment
+  was performed.
+
 ## V6 Library Source Note integration (2026-10-22)
 
 - Connected parsed PDF cards in `/library` to the existing authenticated
@@ -534,3 +547,10 @@
   completed notes render their body, Claims, Evidence quotes, and PDF page links inline.
 - PASS: Source Note Web tests 3/3, TypeScript, and targeted ESLint.
 - No Schema, Worker, LLM configuration, deployment, or push change was made.
+
+## Vercel Threads module unblock (2026-10-22)
+
+- Added the previously omitted tracked `web/src/lib/threads.ts` module and its URL provenance tests;
+  verified PDF Inbox, Source Note, Research, Retrieval, TypeScript, and Web production build.
+- Threads Cloud Migration, Chromium runtime, and Staging integration remain deployment blockers;
+  no Cloud, Worker, Migration, commit, push, or deployment action was performed.

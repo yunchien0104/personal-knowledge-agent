@@ -6,6 +6,7 @@ import {
   researchRequestSchema,
   startResearch,
 } from "@/lib/research";
+import { threadsCitationUrl } from "@/lib/threads";
 
 
 export async function POST(request: Request) {
@@ -36,27 +37,28 @@ export async function GET(request: Request) {
     if (!parsed.success) return jsonError(400, "INVALID_ID", "Research ID is invalid.");
     const run = await getResearchRun(auth.supabase, parsed.data);
     if (!run) return jsonError(404, "NOT_FOUND", "Research run was not found.");
-    const urls = new Map<string, string>();
+    const pdfUrls = new Map<string, string>();
+    const citationUrls = new Map<string, string>();
+    for (const citation of run.citations) {
+      const sourceUrl = threadsCitationUrl(citation.locator);
+      if (sourceUrl) citationUrls.set(citation.id, sourceUrl);
+    }
     const verifiableAssetIds = run.citations
-      .filter((item) => item.validityStatus === "valid")
+      .filter((item) => item.validityStatus === "valid" && !citationUrls.has(item.id))
       .map((item) => item.assetId);
     const uniqueAssetIds = [...new Set(verifiableAssetIds)];
     if (uniqueAssetIds.length) {
       const { data: assets, error: assetError } = await auth.supabase
         .from("assets")
-        .select("id,source_type,source_url")
+        .select("id,source_type")
         .in("id", uniqueAssetIds);
       if (assetError) throw new Error("Research source URLs could not be loaded.");
       await Promise.all((assets ?? []).map(async (asset) => {
-        if (asset.source_type === "threads" && asset.source_url) {
-          urls.set(asset.id, asset.source_url);
-          return;
-        }
         if (asset.source_type === "pdf") {
           const signed = await auth.supabase.storage
             .from(PDF_BUCKET)
             .createSignedUrl(pdfObjectPath(auth.user.id, asset.id), 300);
-          if (!signed.error) urls.set(asset.id, signed.data.signedUrl);
+          if (!signed.error) pdfUrls.set(asset.id, signed.data.signedUrl);
         }
       }));
     }
@@ -64,7 +66,7 @@ export async function GET(request: Request) {
       ...run,
       citations: run.citations.map((citation) => ({
         ...citation,
-        sourceUrl: urls.get(citation.assetId),
+        sourceUrl: citationUrls.get(citation.id) ?? pdfUrls.get(citation.assetId),
       })),
     });
   } catch {

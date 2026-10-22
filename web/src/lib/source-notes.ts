@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PDF_BUCKET, pdfObjectPath } from "./pdf.ts";
+import { threadsCitationUrl } from "./threads.ts";
 
 export type SourceNoteCitation = {
   evidenceId: string;
@@ -73,7 +74,7 @@ export async function loadSourceNoteWorkspace(
 ): Promise<SourceNoteWorkspace | null> {
   const { data: asset, error: assetError } = await supabase
     .from("assets")
-    .select("id,status,active_revision_id,source_type,source_url")
+    .select("id,status,active_revision_id,source_type")
     .eq("id", assetId)
     .eq("user_id", userId)
     .in("source_type", ["pdf", "threads"])
@@ -145,12 +146,15 @@ export async function loadSourceNoteWorkspace(
   if (citationsError) throw new Error("Source Note citations could not be loaded.");
 
   const citationsByClaim = new Map<string, SourceNoteCitation[]>();
+  let immutableSourceUrl: string | null = null;
   for (const citation of citationRows ?? []) {
     const values = citationsByClaim.get(citation.claim_id) ?? [];
+    const sourceUrl = threadsCitationUrl(citation.locator_json);
+    immutableSourceUrl ??= sourceUrl;
     values.push({
       evidenceId: citation.evidence_id_snapshot,
       page: pdfPageFromLocator(citation.locator_json),
-      sourceUrl: asset.source_type === "threads" ? asset.source_url : null,
+      sourceUrl,
       quote: citation.supporting_quote,
       validityStatus: citation.evidence_id ? citation.validity_status : "source_deleted",
     });
@@ -174,7 +178,7 @@ export async function loadSourceNoteWorkspace(
       promptVersion: generation.prompt_version,
       revisionId: generation.source_revision_id_snapshot,
       pdfUrl: signed && !signed.error ? signed.data.signedUrl : null,
-      sourceUrl: asset.source_type === "threads" ? asset.source_url : null,
+      sourceUrl: immutableSourceUrl,
       claims: (claimRows ?? []).map((claim) => ({
         id: claim.id,
         text: claim.text,
