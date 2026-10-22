@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from typing import Any, Mapping, Protocol
+from uuid import UUID
 
 from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.source_notes import ModelError, _text
@@ -12,6 +13,7 @@ from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 PROMPT_VERSION = "research-internal-v1"
 MAX_EVIDENCE = 12
+HYBRID_CANDIDATE_LIMIT = 40
 
 
 class StructuredResearchModel(Protocol):
@@ -22,6 +24,18 @@ class StructuredResearchModel(Protocol):
 
     def synthesize(
         self, question: str, plan: Mapping[str, Any], evidence: list[Mapping[str, Any]]
+    ) -> Mapping[str, Any]: ...
+
+
+class ResearchRetrieval(Protocol):
+    def retrieve(
+        self,
+        user_id: str,
+        query: str,
+        *,
+        scope_asset_ids: list[str] | None = None,
+        top_k: int = MAX_EVIDENCE,
+        candidate_limit: int = HYBRID_CANDIDATE_LIMIT,
     ) -> Mapping[str, Any]: ...
 
 
@@ -147,6 +161,79 @@ def select_evidence(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return selected
 
 
+def research_asset_scope(job: ClaimedJob) -> list[str] | None:
+    raw_scope = job.payload.input.get("scopeAssetIds")
+    if raw_scope is None:
+        return None
+    if not isinstance(raw_scope, list) or not 1 <= len(raw_scope) <= 100:
+        raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
+    scope: list[str] = []
+    seen: set[str] = set()
+    for value in raw_scope:
+        if not isinstance(value, str):
+            raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
+        try:
+            canonical = str(UUID(value))
+        except ValueError as error:
+            raise GatewayError(
+                "invalid_research_scope", "Research Asset scope is invalid", retryable=False
+            ) from error
+        if canonical != value.lower() or canonical in seen:
+            raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
+        seen.add(canonical)
+        scope.append(canonical)
+    return scope
+
+
+def hybrid_evidence_context(result: Mapping[str, Any]) -> dict[str, Any]:
+    semantic_status = result.get("semanticStatus")
+    rows = result.get("results")
+    if semantic_status not in {"ready", "degraded_embedding_unavailable"} or not isinstance(rows, list):
+        raise ModelError("invalid_research_context", "Hybrid retrieval context is invalid", retryable=False)
+    evidence: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ModelError("invalid_research_context", "Hybrid retrieval context is invalid", retryable=False)
+        method = row.get("retrievalMethod")
+        if method not in {"lexical", "semantic", "hybrid"}:
+            raise ModelError("invalid_research_context", "Hybrid retrieval method is invalid", retryable=False)
+        if semantic_status == "degraded_embedding_unavailable" and method != "lexical":
+            raise ModelError(
+                "invalid_research_context", "Degraded retrieval contains semantic results", retryable=False
+            )
+        evidence_id = row.get("evidenceId")
+        asset_id = row.get("assetId")
+        revision_id = row.get("revisionId")
+        content = row.get("content")
+        locator = row.get("locator")
+        if (
+            not isinstance(evidence_id, str)
+            or not isinstance(asset_id, str)
+            or not isinstance(revision_id, str)
+            or not isinstance(content, str)
+            or not content.strip()
+            or not isinstance(locator, Mapping)
+        ):
+            raise ModelError("invalid_research_context", "Hybrid retrieval result is invalid", retryable=False)
+        try:
+            if any(str(UUID(value)) != value.lower() for value in (evidence_id, asset_id, revision_id)):
+                raise ValueError
+        except ValueError as error:
+            raise ModelError(
+                "invalid_research_context", "Hybrid retrieval provenance is invalid", retryable=False
+            ) from error
+        evidence.append({
+            "id": evidence_id,
+            "assetId": asset_id,
+            "revisionId": revision_id,
+            "excerpt": content,
+            "locator": dict(locator),
+            "retrievalMethod": method,
+            "retrievalStatus": semantic_status,
+        })
+    return {"evidence": evidence}
+
+
 def validate_synthesis(
     output: Mapping[str, Any], evidence_rows: list[Mapping[str, Any]]
 ) -> ValidatedResearchDraft:
@@ -208,11 +295,13 @@ def validate_synthesis(
 
 class ResearchAgentWorker:
     def __init__(
-        self, gateway: Any, model: StructuredResearchModel, worker_id: str,
+        self, gateway: Any, model: StructuredResearchModel,
+        retrieval: ResearchRetrieval, worker_id: str,
         *, lease_seconds: int = 120,
     ) -> None:
         self.gateway = gateway
         self.model = model
+        self.retrieval = retrieval
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
 
@@ -234,7 +323,15 @@ class ResearchAgentWorker:
                 context = self.gateway.research_context(job, self.worker_id, plan)
                 if context is None:
                     raise LeaseLostError("Worker lease is no longer valid")
-                evidence = select_evidence(context)
+                scope_asset_ids = research_asset_scope(job)
+                retrieval_result = self.retrieval.retrieve(
+                    job.user_id,
+                    question,
+                    scope_asset_ids=scope_asset_ids,
+                    top_k=MAX_EVIDENCE,
+                    candidate_limit=HYBRID_CANDIDATE_LIMIT,
+                )
+                evidence = select_evidence(hybrid_evidence_context(retrieval_result))
                 lease.pulse()
                 output = self.model.synthesize(question, plan, evidence)
                 lease.pulse()

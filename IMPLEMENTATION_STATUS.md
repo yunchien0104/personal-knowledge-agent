@@ -585,3 +585,16 @@
   credential was used. Neither Mock vectors nor unexecuted SQL are recorded as E2E.
 - Existing `get_research_context`, PDF ingestion, Source Note, citations, Research
   synthesis, UI, Render settings, and Threads files were not changed.
+
+### R1 Research Worker integration
+
+- Research keeps the fenced `get_research_context` control-plane validation, then
+  sends the user's unmodified question and optional validated Asset scope through
+  the existing Hybrid Retriever and service-role-only Retrieval gateway.
+- Hybrid RPC rows are explicitly converted to the Research model contract while
+  retaining Evidence, Asset, Revision, locator, method, and degraded-state data.
+  Existing draft synthesis and database citation revalidation remain unchanged.
+- Embedding failure uses only an explicitly marked lexical fallback; a degraded
+  response containing semantic/hybrid rows fails closed.
+- PASS: targeted Research/Retrieval tests 25/25, non-network Worker regression
+  65/65, Python compilation, and `git diff --check`. No Cloud request was made.

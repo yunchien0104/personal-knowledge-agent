@@ -90,15 +90,26 @@ def build_source_note_worker():
 
 def build_research_worker():
     from personal_brain.research_agent import LocalExtractiveResearchModel, ResearchAgentWorker
-    from personal_brain.supabase_gateway import SupabaseGateway
+    from personal_brain.retrieval import (
+        EmbeddingSettings,
+        HybridRetriever,
+        OpenAICompatibleEmbeddingProvider,
+    )
+    from personal_brain.retrieval_gateway import RetrievalSupabaseGateway
 
     worker_id = os.environ.get("WORKER_ID", "").strip()
     if not worker_id:
         raise ValueError("WORKER_ID is required")
     lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
+    gateway = RetrievalSupabaseGateway.from_environment()
+    retrieval = HybridRetriever(
+        gateway,
+        OpenAICompatibleEmbeddingProvider(EmbeddingSettings.from_environment()),
+    )
     return ResearchAgentWorker(
-        SupabaseGateway.from_environment(),
+        gateway,
         LocalExtractiveResearchModel(),
+        retrieval,
         worker_id,
         lease_seconds=lease_seconds,
     )
