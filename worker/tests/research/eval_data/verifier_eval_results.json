@@ -1,0 +1,127 @@
+{
+  "total": 20,
+  "accuracy": 0.95,
+  "false_acceptance_rate": 0.0,
+  "details": [
+    {
+      "case_id": "CASE001",
+      "expected": "supported",
+      "predicted": "supported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE002",
+      "expected": "contradicted",
+      "predicted": "contradicted",
+      "correct": true
+    },
+    {
+      "case_id": "CASE003",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE004",
+      "expected": "unsupported",
+      "predicted": "unsupported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE005",
+      "expected": "supported",
+      "predicted": "supported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE006",
+      "expected": "contradicted",
+      "predicted": "contradicted",
+      "correct": true
+    },
+    {
+      "case_id": "CASE007",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE008",
+      "expected": "unsupported",
+      "predicted": "unsupported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE009",
+      "expected": "supported",
+      "predicted": "supported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE010",
+      "expected": "contradicted",
+      "predicted": "contradicted",
+      "correct": true
+    },
+    {
+      "case_id": "CASE101",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE102",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE103",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE104",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE105",
+      "expected": "supported",
+      "predicted": "supported",
+      "correct": true
+    },
+    {
+      "case_id": "CASE106",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE107",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE108",
+      "expected": "supported",
+      "predicted": "insufficient_evidence",
+      "correct": false
+    },
+    {
+      "case_id": "CASE109",
+      "expected": "insufficient_evidence",
+      "predicted": "insufficient_evidence",
+      "correct": true
+    },
+    {
+      "case_id": "CASE110",
+      "expected": "contradicted",
+      "predicted": "contradicted",
+      "correct": true
+    }
+  ]
+}

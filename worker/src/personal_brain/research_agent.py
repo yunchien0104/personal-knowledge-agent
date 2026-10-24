@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from typing import Any, Mapping, Protocol
-from uuid import UUID
 
 from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.source_notes import ModelError, _text
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
-
+from personal_brain.research.orchestrator import ResearchOrchestrator
+from pydantic import ValidationError
 
 PROMPT_VERSION = "research-internal-v1"
 MAX_EVIDENCE = 12
-HYBRID_CANDIDATE_LIMIT = 40
+R2_PROMPT_VERSION = "research-r2-v1"
 
 
 class StructuredResearchModel(Protocol):
@@ -24,18 +24,6 @@ class StructuredResearchModel(Protocol):
 
     def synthesize(
         self, question: str, plan: Mapping[str, Any], evidence: list[Mapping[str, Any]]
-    ) -> Mapping[str, Any]: ...
-
-
-class ResearchRetrieval(Protocol):
-    def retrieve(
-        self,
-        user_id: str,
-        query: str,
-        *,
-        scope_asset_ids: list[str] | None = None,
-        top_k: int = MAX_EVIDENCE,
-        candidate_limit: int = HYBRID_CANDIDATE_LIMIT,
     ) -> Mapping[str, Any]: ...
 
 
@@ -161,79 +149,6 @@ def select_evidence(context: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return selected
 
 
-def research_asset_scope(job: ClaimedJob) -> list[str] | None:
-    raw_scope = job.payload.input.get("scopeAssetIds")
-    if raw_scope is None:
-        return None
-    if not isinstance(raw_scope, list) or not 1 <= len(raw_scope) <= 100:
-        raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
-    scope: list[str] = []
-    seen: set[str] = set()
-    for value in raw_scope:
-        if not isinstance(value, str):
-            raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
-        try:
-            canonical = str(UUID(value))
-        except ValueError as error:
-            raise GatewayError(
-                "invalid_research_scope", "Research Asset scope is invalid", retryable=False
-            ) from error
-        if canonical != value.lower() or canonical in seen:
-            raise GatewayError("invalid_research_scope", "Research Asset scope is invalid", retryable=False)
-        seen.add(canonical)
-        scope.append(canonical)
-    return scope
-
-
-def hybrid_evidence_context(result: Mapping[str, Any]) -> dict[str, Any]:
-    semantic_status = result.get("semanticStatus")
-    rows = result.get("results")
-    if semantic_status not in {"ready", "degraded_embedding_unavailable"} or not isinstance(rows, list):
-        raise ModelError("invalid_research_context", "Hybrid retrieval context is invalid", retryable=False)
-    evidence: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, Mapping):
-            raise ModelError("invalid_research_context", "Hybrid retrieval context is invalid", retryable=False)
-        method = row.get("retrievalMethod")
-        if method not in {"lexical", "semantic", "hybrid"}:
-            raise ModelError("invalid_research_context", "Hybrid retrieval method is invalid", retryable=False)
-        if semantic_status == "degraded_embedding_unavailable" and method != "lexical":
-            raise ModelError(
-                "invalid_research_context", "Degraded retrieval contains semantic results", retryable=False
-            )
-        evidence_id = row.get("evidenceId")
-        asset_id = row.get("assetId")
-        revision_id = row.get("revisionId")
-        content = row.get("content")
-        locator = row.get("locator")
-        if (
-            not isinstance(evidence_id, str)
-            or not isinstance(asset_id, str)
-            or not isinstance(revision_id, str)
-            or not isinstance(content, str)
-            or not content.strip()
-            or not isinstance(locator, Mapping)
-        ):
-            raise ModelError("invalid_research_context", "Hybrid retrieval result is invalid", retryable=False)
-        try:
-            if any(str(UUID(value)) != value.lower() for value in (evidence_id, asset_id, revision_id)):
-                raise ValueError
-        except ValueError as error:
-            raise ModelError(
-                "invalid_research_context", "Hybrid retrieval provenance is invalid", retryable=False
-            ) from error
-        evidence.append({
-            "id": evidence_id,
-            "assetId": asset_id,
-            "revisionId": revision_id,
-            "excerpt": content,
-            "locator": dict(locator),
-            "retrievalMethod": method,
-            "retrievalStatus": semantic_status,
-        })
-    return {"evidence": evidence}
-
-
 def validate_synthesis(
     output: Mapping[str, Any], evidence_rows: list[Mapping[str, Any]]
 ) -> ValidatedResearchDraft:
@@ -295,74 +210,167 @@ def validate_synthesis(
 
 class ResearchAgentWorker:
     def __init__(
-        self, gateway: Any, model: StructuredResearchModel,
-        retrieval: ResearchRetrieval, worker_id: str,
-        *, lease_seconds: int = 120,
+        self,
+        gateway: Any,
+        model: StructuredResearchModel,
+        worker_id: str,
+        *,
+        orchestrator: ResearchOrchestrator,
+        lease_seconds: int = 120,
     ) -> None:
         self.gateway = gateway
         self.model = model
-        self.retrieval = retrieval
         self.worker_id = worker_id
+        self.orchestrator = orchestrator
         self.lease_seconds = lease_seconds
 
+
+    
     def process_one(self) -> ProcessResult:
+        from personal_brain.research.publication_adapter import (
+            adapt_r2_publication,
+        )
+
         job: ClaimedJob | None = self.gateway.claim(
             self.worker_id, self.lease_seconds, "research"
         )
         if job is None:
             return ProcessResult("idle")
+
         try:
             if job.payload.job_type != "execute_research":
-                raise GatewayError("invalid_claim", "Worker received an unsupported Job", retryable=False)
-            question = job.payload.input.get("question")
-            if not isinstance(question, str):
-                raise GatewayError("invalid_research_context", "Research question is unavailable", retryable=False)
-            with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
-                plan = validate_plan(self.model.plan(question), question)
-                lease.pulse()
-                context = self.gateway.research_context(job, self.worker_id, plan)
-                if context is None:
-                    raise LeaseLostError("Worker lease is no longer valid")
-                scope_asset_ids = research_asset_scope(job)
-                retrieval_result = self.retrieval.retrieve(
-                    job.user_id,
-                    question,
-                    scope_asset_ids=scope_asset_ids,
-                    top_k=MAX_EVIDENCE,
-                    candidate_limit=HYBRID_CANDIDATE_LIMIT,
-                )
-                evidence = select_evidence(hybrid_evidence_context(retrieval_result))
-                lease.pulse()
-                output = self.model.synthesize(question, plan, evidence)
-                lease.pulse()
-                draft = validate_synthesis(output, evidence)
-                lease.ensure()
-            publication = self.gateway.publish_research_draft(
-                job, self.worker_id,
-                model_provider=self.model.provider,
-                model_name=self.model.model_name,
-                prompt_version=PROMPT_VERSION,
-                output_hash=draft.output_hash,
-                title=draft.title,
-                body=draft.body,
-                findings=draft.findings,
-            )
-            if publication is None:
-                raise LeaseLostError("Worker lease expired before publication")
-            note_id = publication.get("noteId")
-            if not isinstance(note_id, str):
                 raise GatewayError(
-                    "invalid_publication_response", "Research publication is invalid", retryable=True
+                    "invalid_claim",
+                    "Worker received an unsupported Job",
+                    retryable=False,
                 )
-            return ProcessResult("completed", job.id, note_id=note_id)
+
+            question = job.payload.input.get("question")
+            if not isinstance(question, str) or not question.strip():
+                raise GatewayError(
+                    "invalid_research_context",
+                    "Research question is unavailable",
+                    retryable=False,
+                )
+
+            # Heartbeat must remain active through R2 and publication.
+            with LeaseGuard(
+                self.gateway, job, self.worker_id, self.lease_seconds
+            ) as lease:
+
+                # 1. Planning
+                plan = validate_plan(
+                    self.model.plan(question), question
+                )
+                lease.pulse()
+
+                # 2. R1 Retrieval
+                context = self.gateway.research_context(
+                    job, self.worker_id, plan
+                )
+                if context is None:
+                    raise LeaseLostError(
+                        "Worker lease is no longer valid"
+                    )
+
+                evidence = select_evidence(context)
+                lease.pulse()
+
+                # 3. R2 Generate -> Verify -> Repair -> Gate
+                try:
+                    execution = self.orchestrator.run(
+                        question=question,
+                        plan=plan,
+                        evidence=evidence,
+                    )
+                except (RuntimeError, TimeoutError) as error:
+                    raise ModelError(
+                        "r2_llm_failure",
+                        "R2 research model request failed",
+                        retryable=True,
+                    ) from error
+                except (
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    IndexError,
+                    ValidationError,
+                ) as error:
+                    raise ModelError(
+                        "r2_invalid_output",
+                        "R2 research returned an invalid result",
+                        retryable=False,
+                    ) from error
+
+                lease.pulse()
+
+                # 4. Verification Gate
+                if not execution.gate.can_publish:
+                    raise ModelError(
+                        "research_verification_failed",
+                        "Research claims did not pass verification",
+                        retryable=False,
+                    )
+
+                # 5. Convert verified claims to publication format
+                try:
+                    draft = adapt_r2_publication(
+                        execution, evidence
+                    )
+                except (ValueError, ModelError) as error:
+                    raise ModelError(
+                        "r2_publication_invalid",
+                        "R2 publication draft is invalid",
+                        retryable=False,
+                    ) from error
+
+                lease.pulse()
+
+                # 6. Supabase Publication
+                publication = self.gateway.publish_research_draft(
+                    job,
+                    self.worker_id,
+                    model_provider=self.orchestrator.generator.provider,
+                    model_name=self.orchestrator.generator.model_name,
+                    prompt_version=R2_PROMPT_VERSION,
+                    output_hash=draft.output_hash,
+                    title=draft.title,
+                    body=draft.body,
+                    findings=draft.findings,
+                )
+
+                if publication is None:
+                    raise LeaseLostError(
+                        "Worker lease expired before publication"
+                    )
+
+                note_id = publication.get("noteId")
+                if not isinstance(note_id, str):
+                    raise GatewayError(
+                        "invalid_publication_response",
+                        "Research publication is invalid",
+                        retryable=True,
+                    )
+
+                return ProcessResult(
+                    "completed", job.id, note_id=note_id
+                )
+
         except LeaseLostError:
             return ProcessResult("lease_lost", job.id)
+
         except (ModelError, GatewayError) as error:
             self.gateway.report_failure(
-                job, self.worker_id,
-                error_class="transient" if error.retryable else "permanent",
+                job,
+                self.worker_id,
+                error_class=(
+                    "transient" if error.retryable else "permanent"
+                ),
                 error_code=error.code,
                 error_message=str(error),
                 retryable=error.retryable,
             )
-            return ProcessResult("retry_wait" if error.retryable else "failed", job.id)
+            return ProcessResult(
+                "retry_wait" if error.retryable else "failed",
+                job.id,
+            )

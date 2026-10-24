@@ -1,0 +1,323 @@
+[
+{
+    "case_id": "CASE001",
+    "claim_type": "fact",
+    "claim": "曜石公司 2025 年營收為 120 億元。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "曜石公司 2025 年營收為 120 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "曜石公司 2024 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "supported",
+    "category": "finance",
+    "rationale": "Evidence directly states the fact or permits the arithmetic inference."
+  },
+  {
+    "case_id": "CASE002",
+    "claim_type": "fact",
+    "claim": "曜石公司 2025 年營收為 150 億元。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "曜石公司 2025 年營收為 120 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "曜石公司 2024 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "contradicted",
+    "category": "finance",
+    "rationale": "Claim conflicts with an explicitly supplied value or an arithmetic consequence."
+  },
+  {
+    "case_id": "CASE003",
+    "claim_type": "fact",
+    "claim": "曜石公司 2026 年營收為 180 億元。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "曜石公司 2025 年營收為 120 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "曜石公司 2024 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "finance",
+    "rationale": "Claim extends to an unreported time, cause, outcome, or population."
+  },
+  {
+    "case_id": "CASE004",
+    "claim_type": "fact",
+    "claim": "曜石公司董事長最喜歡藍色。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "曜石公司 2025 年營收為 120 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "曜石公司 2024 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "unsupported",
+    "category": "finance",
+    "rationale": "Claim is about a subject with no material evidentiary connection."
+  },
+  {
+    "case_id": "CASE005",
+    "claim_type": "inference",
+    "claim": "晨光公司 2025 年營收較 2024 年增加 25%。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "晨光公司 2024 年營收為 80 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "晨光公司 2025 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "supported",
+    "category": "finance",
+    "rationale": "Evidence directly states the fact or permits the arithmetic inference."
+  },
+  {
+    "case_id": "CASE006",
+    "claim_type": "inference",
+    "claim": "晨光公司 2025 年營收較 2024 年減少 25%。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "晨光公司 2024 年營收為 80 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "晨光公司 2025 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "contradicted",
+    "category": "finance",
+    "rationale": "Claim conflicts with an explicitly supplied value or an arithmetic consequence."
+  },
+  {
+    "case_id": "CASE007",
+    "claim_type": "inference",
+    "claim": "晨光公司營收成長完全由海外需求帶動。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "晨光公司 2024 年營收為 80 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "晨光公司 2025 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "finance",
+    "rationale": "Claim extends to an unreported time, cause, outcome, or population."
+  },
+  {
+    "case_id": "CASE008",
+    "claim_type": "inference",
+    "claim": "晨光公司明年的新產品將獲設計獎。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "晨光公司 2024 年營收為 80 億元。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "晨光公司 2025 年營收為 100 億元。"
+      }
+    ],
+    "expected_verdict": "unsupported",
+    "category": "finance",
+    "rationale": "Claim is about a subject with no material evidentiary connection."
+  },
+  {
+    "case_id": "CASE009",
+    "claim_type": "fact",
+    "claim": "遠川書店 2026 年第一季線上訂單為 4,200 筆。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "遠川書店 2026 年第一季線上訂單共 4,200 筆。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "遠川書店 2026 年第一季實體店交易共 2,600 筆。"
+      }
+    ],
+    "expected_verdict": "supported",
+    "category": "retail",
+    "rationale": "Evidence directly states the fact or permits the arithmetic inference."
+  },
+  {
+    "case_id": "CASE010",
+    "claim_type": "fact",
+    "claim": "遠川書店 2026 年第一季線上訂單為 2,600 筆。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "遠川書店 2026 年第一季線上訂單共 4,200 筆。"
+      },
+      {
+        "id": "E002",
+        "excerpt": "遠川書店 2026 年第一季實體店交易共 2,600 筆。"
+      }
+    ],
+    "expected_verdict": "contradicted",
+    "category": "retail",
+    "rationale": "Claim conflicts with an explicitly supplied value or an arithmetic consequence."
+  },
+
+  {
+    "case_id": "CASE101",
+    "claim_type": "hypothesis",
+    "claim": "A 公司本季營收成長可能是因為推出限時折扣。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "A 公司推出限時折扣後，本季營收較上季增加 12%。同期通路數量與廣告投放也增加，未提供對照組或其他因素的控制分析。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "折扣與營收成長同時發生，存在其他變動，無法把成長歸因於折扣。"
+  },
+  {
+    "case_id": "CASE102",
+    "claim_type": "hypothesis",
+    "claim": "導入 AI 助理可能提升了客服人員的工作效率。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "導入 AI 助理後的一個月，客服團隊平均每日處理案件數由 40 件增加到 49 件。同期案件平均複雜度下降，且沒有比較未導入工具的人員。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "觀察到處理量提升，但案件難度也改變，無法確立 AI 助理的效果。"
+  },
+  {
+    "case_id": "CASE103",
+    "claim_type": "inference",
+    "claim": "今年房價上漲可能主要是由房貸利率下降造成。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "某城市今年房貸平均利率由 3.0% 降至 2.5%，住宅成交均價上漲 7%。同期當地新增大型企業園區並增加就業人口。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "同期利率與價格變動不足以建立「主要原因」，且有其他候選因素。"
+  },
+  {
+    "case_id": "CASE104",
+    "claim_type": "hypothesis",
+    "claim": "增加睡眠時間可能改善這所學校學生的考試成績。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "一項追蹤調查顯示，平均睡眠 8 小時的學生分數高於平均睡眠 6 小時的學生；研究未調整先前成績、家庭背景和課外補習差異。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "觀察性相關不能充分證明睡眠時間增加造成成績改善。"
+  },
+  {
+    "case_id": "CASE105",
+    "claim_type": "inference",
+    "claim": "在本次實驗的受試流量中，新付款介面提高了完成付款的比例。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "同時段隨機分配 20,000 名訪客至舊版與新版付款介面，各 10,000 人。舊版完成付款 1,000 人，新版完成付款 1,300 人；流量來源與裝置組成平衡，主要實驗指標預先設定為完成付款率。"
+      }
+    ],
+    "expected_verdict": "supported",
+    "category": "causal_hypothesis_hard",
+    "rationale": "隨機對照實驗直接支持限定在此次流量與實驗環境內的完成付款率改善。"
+  },
+  {
+    "case_id": "CASE106",
+    "claim_type": "hypothesis",
+    "claim": "使用健身 App 可能使參與者在三個月內減重。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "一個自願參加的健身 App 社群中，持續登入三個月的 300 名會員平均減重 2 公斤；未記錄中途停用者，也未設定對照組。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "自選參與和倖存者偏差，沒有足夠證據歸因於 App。"
+  },
+  {
+    "case_id": "CASE107",
+    "claim_type": "inference",
+    "claim": "員工離職率下降可能主要歸功於新推行的彈性工時制度。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "公司實施彈性工時後，年度離職率由 18% 降至 12%。同年也全面調薪 10%，並因市場景氣轉弱而減少外部徵才。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "多重同時變化使彈性工時是否為主要原因未獲確立。"
+  },
+  {
+    "case_id": "CASE108",
+    "claim_type": "hypothesis",
+    "claim": "在這次試驗條件下，每週提供一次有結構的課後輔導，可能提高學生的數學測驗成績。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "研究將 400 名學生隨機分為每週一次課後輔導組與原課程組，各 200 人。八週後使用事先指定的同一套測驗，輔導組平均 76 分，對照組平均 70 分；評分採盲評，研究報告指出組間差異的 95% 信賴區間為 3 至 9 分。"
+      }
+    ],
+    "expected_verdict": "supported",
+    "category": "causal_hypothesis_hard",
+    "rationale": "隨機試驗與區間估計支持在本次試驗條件下的有限因果結論。"
+  },
+  {
+    "case_id": "CASE109",
+    "claim_type": "hypothesis",
+    "claim": "新一波品牌廣告可能促使消費者主動搜尋該品牌。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "廣告投放期間，品牌關鍵字搜尋量增加 25%。同期間品牌捲入全國性新聞事件，且未比較未接觸廣告的使用者或控制新聞曝光。"
+      }
+    ],
+    "expected_verdict": "insufficient_evidence",
+    "category": "causal_hypothesis_hard",
+    "rationale": "搜尋增加與廣告重疊，但重大新聞事件是未控制的替代解釋。"
+  },
+  {
+    "case_id": "CASE110",
+    "claim_type": "hypothesis",
+    "claim": "在這次隨機實驗的受試者中，新的提醒訊息可能提高七日回訪率。",
+    "evidence": [
+      {
+        "id": "E001",
+        "excerpt": "平台將 12,000 名受試者隨機平均分派至新提醒訊息與舊提醒訊息組。七日回訪率新訊息組為 18%，舊訊息組為 25%；預先指定的差值為新組減舊組，95% 信賴區間為負 9 至負 5 個百分點，沒有顯著資料遺失。"
+      }
+    ],
+    "expected_verdict": "contradicted",
+    "category": "causal_hypothesis_hard",
+    "rationale": "隨機實驗顯示新訊息降低而非提高回訪率，直接反駁有方向性的假設。"
+  }
+]

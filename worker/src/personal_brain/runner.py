@@ -88,31 +88,45 @@ def build_source_note_worker():
     )
 
 
+
 def build_research_worker():
-    from personal_brain.research_agent import LocalExtractiveResearchModel, ResearchAgentWorker
-    from personal_brain.retrieval import (
-        EmbeddingSettings,
-        HybridRetriever,
-        OpenAICompatibleEmbeddingProvider,
+    from personal_brain.research_agent import (
+        LocalExtractiveResearchModel,
+        ResearchAgentWorker,
     )
-    from personal_brain.retrieval_gateway import RetrievalSupabaseGateway
+    from personal_brain.supabase_gateway import SupabaseGateway
+    from personal_brain.research.llm import OpenAICompatibleResearchModel
+    from personal_brain.research.verifier import LLMClaimJudge
+    from personal_brain.research.orchestrator import ResearchOrchestrator
 
     worker_id = os.environ.get("WORKER_ID", "").strip()
     if not worker_id:
         raise ValueError("WORKER_ID is required")
-    lease_seconds = int(os.environ.get("JOB_LEASE_SECONDS", "120"))
-    gateway = RetrievalSupabaseGateway.from_environment()
-    retrieval = HybridRetriever(
-        gateway,
-        OpenAICompatibleEmbeddingProvider(EmbeddingSettings.from_environment()),
+
+    lease_seconds = int(
+        os.environ.get("JOB_LEASE_SECONDS", "120")
     )
+
+    # R2: 真正的 Research Generator
+    generator = OpenAICompatibleResearchModel()
+
+    # R2: 逐條驗證 Atomic Claims
+    judge = LLMClaimJudge(generator.client)
+
+    # R2: 串接 Generator、Verifier、Gate、Repair
+    orchestrator = ResearchOrchestrator(generator, judge)
+
+    # 沿用原本的 Planning Model
+    planning_model = LocalExtractiveResearchModel()
+
     return ResearchAgentWorker(
-        gateway,
-        LocalExtractiveResearchModel(),
-        retrieval,
+        SupabaseGateway.from_environment(),
+        planning_model,
         worker_id,
+        orchestrator=orchestrator,
         lease_seconds=lease_seconds,
     )
+
 
 
 def research_suggestions_enabled() -> bool:
@@ -176,8 +190,10 @@ def build_queue_worker():
         return build_deletion_worker()
     if capability == "all":
         workers = [
-            build_deletion_worker(), build_ingestion_worker(), build_threads_worker(), build_source_note_worker(),
-            build_research_worker()
+            build_deletion_worker(),
+            build_ingestion_worker(),
+            build_source_note_worker(),
+            build_research_worker(),
         ]
         if research_suggestions_enabled():
             workers.append(build_opportunity_worker())

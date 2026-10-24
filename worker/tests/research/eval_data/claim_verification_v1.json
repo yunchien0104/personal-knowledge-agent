@@ -1,0 +1,59 @@
+
+[
+  {
+    "case_id": "CASE001",
+    "claim_type": "fact",
+    "claim": "A 公司 2025 年營收成長率為 20%。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2025 年營收成長率為 20%。"}
+    ],
+    "expected_verdict": "supported"
+  },
+  {
+    "case_id": "CASE002",
+    "claim_type": "fact",
+    "claim": "A 公司 2025 年營收成長率為 35%。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2025 年營收成長率為 20%。"}
+    ],
+    "expected_verdict": "contradicted"
+  },
+  {
+    "case_id": "CASE003",
+    "claim_type": "fact",
+    "claim": "A 公司 2026 年營收成長率將超過 30%。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2025 年營收成長率為 20%。"}
+    ],
+    "expected_verdict": "insufficient_evidence"
+  },
+  {
+    "case_id": "CASE004",
+    "claim_type": "inference",
+    "claim": "A 公司 2026 年預估營收成長率比 2025 年下降 8 個百分點。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2025 年營收成長率為 20%。"},
+      {"id": "E002", "excerpt": "A 公司 2026 年預估營收成長率為 12%。"}
+    ],
+    "expected_verdict": "supported"
+  },
+  {
+    "case_id": "CASE005",
+    "claim_type": "inference",
+    "claim": "A 公司營收成長率下降，證明公司即將破產。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2025 年營收成長率為 20%。"},
+      {"id": "E002", "excerpt": "A 公司 2026 年預估營收成長率為 12%。"}
+    ],
+    "expected_verdict": "insufficient_evidence"
+  },
+  {
+    "case_id": "CASE006",
+    "claim_type": "hypothesis",
+    "claim": "A 公司未來營收成長放緩可能與市場競爭加劇有關。",
+    "evidence": [
+      {"id": "E001", "excerpt": "A 公司 2026 年預估營收成長率為 12%，低於 2025 年的 20%。"}
+    ],
+    "expected_verdict": "insufficient_evidence"
+  }
+]
