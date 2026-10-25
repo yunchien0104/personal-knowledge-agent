@@ -47,7 +47,7 @@ class ClaimedJob:
             raise GatewayError("invalid_claim", "Claimed Job identity is inconsistent", retryable=False)
         if payload.job_type not in {
             "ingest_pdf", "ingest_threads", "generate_source_note", "execute_research", "rank_opportunities",
-            "delete_asset",
+            "delete_asset", "index_retrieval",
         }:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
         if payload.job_type in {"execute_research", "rank_opportunities", "delete_asset"}:
@@ -65,7 +65,7 @@ class ClaimedJob:
                 raise GatewayError("invalid_claim", "Deletion input is inconsistent", retryable=False)
         elif payload.input.get("assetId") != asset_id:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
-        if payload.job_type == "generate_source_note" and not isinstance(
+        if payload.job_type in {"generate_source_note", "index_retrieval"} and not isinstance(
             payload.input.get("revisionId"), str
         ):
             raise GatewayError("invalid_claim", "Claimed Job Revision is invalid", retryable=False)

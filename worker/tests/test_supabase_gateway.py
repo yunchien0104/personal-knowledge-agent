@@ -94,6 +94,34 @@ class SupabaseGatewayAuthenticationTests(unittest.TestCase):
         with self.assertRaises(GatewayError):
             ClaimedJob.from_row(row)
 
+    def test_retrieval_index_claim_accepts_asset_and_revision(self):
+        row = {
+            "id": "64000000-0000-4000-8000-000000000001",
+            "user_id": "64000000-0000-4000-8000-000000000002",
+            "asset_id": "64000000-0000-4000-8000-000000000003",
+            "lease_generation": 1,
+            "payload_json": {
+                "schemaVersion": 1,
+                "jobId": "64000000-0000-4000-8000-000000000001",
+                "userId": "64000000-0000-4000-8000-000000000002",
+                "jobType": "index_retrieval",
+                "idempotencyKey": "retrieval-index:test",
+                "input": {
+                    "assetId": "64000000-0000-4000-8000-000000000003",
+                    "revisionId": "64000000-0000-4000-8000-000000000004",
+                    "embeddingModel": "test-model",
+                    "embeddingVersion": "test-v1",
+                },
+            },
+        }
+
+        claim = ClaimedJob.from_row(row)
+        self.assertEqual(claim.payload.job_type, "index_retrieval")
+
+        del row["payload_json"]["input"]["revisionId"]
+        with self.assertRaises(GatewayError):
+            ClaimedJob.from_row(row)
+
 
 if __name__ == "__main__":
     unittest.main()
