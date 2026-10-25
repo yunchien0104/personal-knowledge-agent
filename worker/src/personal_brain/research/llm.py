@@ -42,6 +42,8 @@ class OpenAICompatibleResearchModel:
             base_url=os.environ["LLM_API_BASE_URL"],
             api_key=os.environ["LLM_API_KEY"],
             model=self.model_name,
+            max_output_tokens=int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4096")),
+            timeout_seconds=int(os.getenv("RESEARCH_LLM_TIMEOUT_SECONDS", "60")),
         )
     
     def synthesize(

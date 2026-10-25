@@ -5,6 +5,10 @@ import { z } from "zod";
 export const researchRequestSchema = z.object({
   question: z.string().trim().min(3).max(500),
   request_key: z.uuid(),
+  scope_asset_ids: z.array(z.uuid()).min(1).max(100).refine(
+    (values) => new Set(values).size === values.length,
+    "Asset scope must not contain duplicates.",
+  ).optional(),
 }).strict();
 
 export function newResearchRequestKey() {
@@ -35,6 +39,9 @@ export type ResearchRun = {
   id: string;
   question: string;
   plan: Record<string, unknown> | null;
+  scopeAssetIds: string[] | null;
+  retrievalStatus: "ready" | "degraded_embedding_unavailable" | "insufficient" | null;
+  progress: Record<string, unknown>;
   status: string;
   jobId: string | null;
   outputNoteId: string | null;
@@ -52,6 +59,7 @@ export async function startResearch(
   const { data, error } = await supabase.rpc("start_research", {
     p_question: input.question,
     p_request_key: input.request_key,
+    p_scope_asset_ids: input.scope_asset_ids ?? null,
   });
   if (error || !data || typeof data !== "object") {
     throw new Error("Research could not be started.");
@@ -75,7 +83,7 @@ export async function getResearchRun(
 ): Promise<ResearchRun | null> {
   const { data: run, error } = await supabase
     .from("research_runs")
-    .select("id,question,plan_json,status,job_id,output_note_id,created_at,updated_at")
+    .select("id,question,plan_json,scope_asset_ids,retrieval_status,progress_json,status,job_id,output_note_id,created_at,updated_at")
     .eq("id", runId)
     .maybeSingle();
   if (error) throw new Error("Research run could not be loaded.");
@@ -102,6 +110,9 @@ export async function getResearchRun(
     id: run.id,
     question: run.question,
     plan: run.plan_json,
+    scopeAssetIds: run.scope_asset_ids,
+    retrievalStatus: run.retrieval_status,
+    progress: run.progress_json ?? {},
     status: run.status,
     jobId: run.job_id,
     outputNoteId: run.output_note_id,

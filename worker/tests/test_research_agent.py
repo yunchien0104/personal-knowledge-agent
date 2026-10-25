@@ -197,6 +197,9 @@ class ResearchAgentWorkerTests(unittest.TestCase):
             "EMBEDDING_MODEL": "multilingual-test-model",
             "EMBEDDING_MODEL_VERSION": "test-v1",
             "EMBEDDING_DIMENSIONS": "1536",
+            "LLM_API_BASE_URL": "https://llm.example.test/v1",
+            "LLM_API_KEY": "llm-secret",
+            "RESEARCH_MODEL": "research-test-model",
         }, clear=True):
             worker = build_research_worker()
 

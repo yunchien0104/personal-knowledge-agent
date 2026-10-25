@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from personal_brain.text_normalization import lexical_search_text, normalize_for_retrieval
+
 
 EMBEDDING_DIMENSIONS = 1536
 _BOUNDARY = re.compile(r"\n\n|\n|[。！？.!?](?:\s+|$)")
@@ -29,6 +31,7 @@ class RetrievalChunk:
     chunk_index: int
     evidence_id: str
     content: str
+    search_text: str
     content_hash: str
     start_offset: int
     end_offset: int
@@ -39,6 +42,7 @@ class RetrievalChunk:
             "chunkIndex": self.chunk_index,
             "evidenceId": self.evidence_id,
             "content": self.content,
+            "searchText": self.search_text,
             "contentHash": self.content_hash,
             "startOffset": self.start_offset,
             "endOffset": self.end_offset,
@@ -127,7 +131,7 @@ def chunk_normalized_pdf(
     pages = artifact.get("pages")
     full_text = artifact.get("text")
     if (
-        artifact.get("schema_version") != 1
+        artifact.get("schema_version") not in {1, 2}
         or not isinstance(source_hash, str)
         or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
         or not isinstance(pages, list)
@@ -142,6 +146,9 @@ def chunk_normalized_pdf(
         if not isinstance(page, Mapping) or not isinstance(page.get("text"), str):
             raise RetrievalError("invalid_normalized_artifact", "Normalized page is invalid", retryable=False)
         text = page["text"]
+        retrieval_text = page.get("retrieval_text", text)
+        if not isinstance(retrieval_text, str):
+            raise RetrievalError("invalid_normalized_artifact", "Retrieval text is invalid", retryable=False)
         start_offset = _integer(page.get("start_offset"), "page start offset")
         end_offset = _integer(page.get("end_offset"), "page end offset")
         if (
@@ -160,6 +167,7 @@ def chunk_normalized_pdf(
                 chunk_index=len(chunks),
                 evidence_id=str(mapped["id"]),
                 content=content,
+                search_text=lexical_search_text(normalize_for_retrieval(content)),
                 content_hash=sha256(content.encode()).hexdigest(),
                 start_offset=start_offset + local_start,
                 end_offset=start_offset + local_end,
@@ -317,7 +325,7 @@ class RetrievalIndexer:
         self.gateway = gateway
         self.provider = provider
 
-    def index_context(self, context: Mapping[str, Any]) -> int:
+    def build_publications(self, context: Mapping[str, Any]) -> list[dict[str, Any]]:
         object_path = context.get("artifactObjectKey")
         evidence = context.get("evidence")
         if not isinstance(object_path, str) or not isinstance(evidence, list):
@@ -329,11 +337,63 @@ class RetrievalIndexer:
         if not isinstance(artifact, Mapping) or artifact.get("source_hash") != context.get("sourceFingerprint"):
             raise RetrievalError("invalid_normalized_artifact", "Artifact fingerprint is invalid", retryable=False)
         chunks = chunk_normalized_pdf(artifact, evidence)
-        vectors = self.provider.embed([chunk.content for chunk in chunks])
-        publications = [chunk.publication(vector) for chunk, vector in zip(chunks, vectors, strict=True)]
+        vectors = self.provider.embed([chunk.search_text for chunk in chunks])
+        return [chunk.publication(vector) for chunk, vector in zip(chunks, vectors, strict=True)]
+
+    def index_context(self, context: Mapping[str, Any]) -> int:
+        publications = self.build_publications(context)
         return self.gateway.replace_retrieval_chunks(
             context, self.provider.settings.model, self.provider.settings.version, publications
         )
+
+
+class RetrievalIndexWorker:
+    """Durable, leased indexing worker using the shared Jobs queue."""
+
+    def __init__(self, gateway: Any, provider: OpenAICompatibleEmbeddingProvider,
+                 worker_id: str, *, lease_seconds: int = 120) -> None:
+        self.gateway = gateway
+        self.provider = provider
+        self.worker_id = worker_id
+        self.lease_seconds = lease_seconds
+
+    def process_one(self):
+        from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
+        from personal_brain.supabase_gateway import GatewayError
+
+        self.gateway.enqueue_retrieval_index_jobs(
+            self.provider.settings.model, self.provider.settings.version, limit=25
+        )
+        job = self.gateway.claim(self.worker_id, self.lease_seconds, "retrieval")
+        if job is None:
+            return ProcessResult("idle")
+        try:
+            if job.payload.job_type != "index_retrieval":
+                raise GatewayError("invalid_claim", "Worker received an unsupported Job", retryable=False)
+            with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
+                context = self.gateway.retrieval_index_context(job, self.worker_id)
+                if context is None:
+                    raise LeaseLostError("Worker lease is no longer valid")
+                publications = RetrievalIndexer(self.gateway, self.provider).build_publications(context)
+                lease.pulse()
+                result = self.gateway.publish_retrieval_index(
+                    job, self.worker_id,
+                    embedding_model=self.provider.settings.model,
+                    embedding_version=self.provider.settings.version,
+                    chunks=publications,
+                )
+                if result is None:
+                    raise LeaseLostError("Worker lease expired before indexing publication")
+            return ProcessResult("completed", job.id, revision_id=str(context["revisionId"]))
+        except LeaseLostError:
+            return ProcessResult("lease_lost", job.id)
+        except (RetrievalError, GatewayError) as error:
+            self.gateway.report_failure(
+                job, self.worker_id,
+                error_class="transient" if error.retryable else "permanent",
+                error_code=error.code, error_message=str(error), retryable=error.retryable,
+            )
+            return ProcessResult("retry_wait" if error.retryable else "failed", job.id)
 
 
 class HybridRetriever:
@@ -362,3 +422,27 @@ class HybridRetriever:
         if not isinstance(result, Mapping):
             raise RetrievalError("invalid_retrieval_response", "Retrieval response is invalid", retryable=True)
         return result
+
+    def retrieve_for_job(
+        self, job: Any, worker_id: str, query: str, *,
+        scope_asset_ids: list[str] | None = None, top_k: int = 12,
+        candidate_limit: int = 40,
+    ) -> Mapping[str, Any]:
+        if not isinstance(query, str) or not 2 <= len(query.strip()) <= 500:
+            raise ValueError("query must contain between 2 and 500 characters")
+        try:
+            query_embedding = self.provider.embed([normalize_for_retrieval(query)])[0]
+        except RetrievalError:
+            query_embedding = None
+        job_method = getattr(self.gateway, "hybrid_retrieve_for_job", None)
+        if callable(job_method):
+            return job_method(
+                job, worker_id, query, query_embedding,
+                self.provider.settings.model, self.provider.settings.version,
+                scope_asset_ids, top_k, candidate_limit,
+            )
+        return self.gateway.hybrid_retrieve(
+            job.user_id, query, query_embedding,
+            self.provider.settings.model, self.provider.settings.version,
+            scope_asset_ids, top_k, candidate_limit,
+        )

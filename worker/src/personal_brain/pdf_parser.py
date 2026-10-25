@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from io import BytesIO
-import unicodedata
 from typing import Any
 
 from pypdf import PdfReader
 from pypdf.errors import FileNotDecryptedError, PdfReadError
 from pypdf.generic import DictionaryObject
+
+from personal_brain.text_normalization import normalize_for_retrieval, preserve_extracted_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,7 @@ class EvidenceLocator:
 class ParsedPdfPage:
     page_number: int
     text: str
+    retrieval_text: str
     start_offset: int
     end_offset: int
     source_hash: str
@@ -44,6 +46,7 @@ class ParsedPdf:
     source_hash: str
     page_count: int
     text: str
+    retrieval_text: str
     pages: tuple[ParsedPdfPage, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,11 +59,6 @@ class PdfParseError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
-    return "\n".join(line.rstrip() for line in normalized.split("\n")).strip()
 
 
 def _has_image_xobject(page: Any) -> bool:
@@ -120,7 +118,7 @@ def parse_native_pdf(data: bytes, limits: PdfParseLimits | None = None) -> Parse
     try:
         for page in reader.pages:
             contains_images = contains_images or _has_image_xobject(page)
-            text = _normalize_text(page.extract_text() or "")
+            text = preserve_extracted_text(page.extract_text() or "")
             if len(text) > active_limits.max_page_characters:
                 raise _resource_error("A PDF page exceeds the configured text limit")
             total_characters += len(text)
@@ -160,6 +158,7 @@ def parse_native_pdf(data: bytes, limits: PdfParseLimits | None = None) -> Parse
             ParsedPdfPage(
                 page_number=index + 1,
                 text=text,
+                retrieval_text=normalize_for_retrieval(text),
                 start_offset=start_offset,
                 end_offset=end_offset,
                 source_hash=source_hash,
@@ -169,9 +168,10 @@ def parse_native_pdf(data: bytes, limits: PdfParseLimits | None = None) -> Parse
         cursor = end_offset
 
     return ParsedPdf(
-        schema_version=1,
+        schema_version=2,
         source_hash=source_hash,
         page_count=page_count,
         text=full_text,
+        retrieval_text="\n\n".join(normalize_for_retrieval(text) for text in extracted_pages),
         pages=tuple(parsed_pages),
     )

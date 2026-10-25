@@ -117,6 +117,9 @@ export type ResearchRun = {
   id: string;
   question: string;
   plan: Record<string, unknown> | null;
+  scopeAssetIds: string[] | null;
+  retrievalStatus: "ready" | "degraded_embedding_unavailable" | "insufficient" | null;
+  progress: Record<string, unknown>;
   status: string;
   createdAt: string;
   updatedAt: string;

@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(27);
+select plan(33);
 
 select ok(not has_function_privilege('anon', 'public.start_research(text,uuid)', 'execute'), 'anon cannot start research');
 select ok(has_function_privilege('authenticated', 'public.start_research(text,uuid)', 'execute'), 'authenticated can start research');
@@ -11,6 +11,17 @@ select ok(not has_function_privilege('authenticated', 'public.publish_research_d
 select ok(has_function_privilege('service_role', 'public.publish_research_draft(uuid,text,bigint,text,text,text,text,text,text,jsonb)', 'execute'), 'service role can publish fenced draft');
 select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.research_runs'::regclass), 'Research Runs use forced RLS');
 select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.research_citations'::regclass), 'Research citations use forced RLS');
+select has_table('public', 'research_run_evidence', 'Research retrieval checkpoint table exists');
+select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.research_run_evidence'::regclass), 'Research retrieval checkpoints use forced RLS');
+select ok(not has_function_privilege('authenticated',
+  'public.hybrid_retrieve_for_user(uuid,text,extensions.vector,text,text,uuid[],integer,integer)',
+  'execute'), 'authenticated cannot call the explicit-user SECURITY DEFINER helper');
+select ok(has_function_privilege('service_role',
+  'public.hybrid_retrieve_for_research_job(uuid,text,bigint,text,extensions.vector,text,text,uuid[],integer,integer)',
+  'execute'), 'service role can call only the fenced Research retrieval RPC');
+select ok(not has_function_privilege('service_role',
+  'public.hybrid_retrieve_for_worker(uuid,text,extensions.vector,text,text,uuid[],integer,integer)',
+  'execute'), 'unbound worker retrieval RPC is revoked');
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -48,7 +59,7 @@ insert into public.asset_evidence (
    '{"kind":"pdf_page","page_number":9,"start_offset":0,"end_offset":39}',
    'Revenue private evidence for another user.', repeat('b', 64));
 
-create temporary table research_state (run_id uuid, job_id uuid, note_id uuid);
+create temporary table research_state (run_id uuid, job_id uuid, note_id uuid, plan_json jsonb);
 grant select, update, insert on research_state to authenticated, service_role;
 set local role authenticated;
 set local request.jwt.claim.sub = 'a1000000-0000-4000-8000-000000000001';
@@ -58,6 +69,14 @@ from (select public.start_research(
   'What does the evidence say about revenue?',
   'a5000000-0000-4000-8000-000000000001'
 ) result) started;
+update research_state set plan_json = jsonb_build_object(
+  'question', 'What does the evidence say about revenue?',
+  'subquestions', jsonb_build_array('What changed in revenue?'),
+  'lexicalQueries', jsonb_build_array('revenue increased'),
+  'semanticQueries', jsonb_build_array('revenue change'),
+  'searchKeywords', jsonb_build_array('revenue'),
+  'maxCostUsd', 0, 'maxQueries', 1, 'maxRounds', 1
+);
 select is((select status from public.research_runs where id = (select run_id from research_state)), 'queued', 'explicit user request creates queued Research Run');
 select is((select asset_id from public.jobs where id = (select job_id from research_state)), null::uuid, 'Research Job is not coupled to one Asset');
 select is((select resource_class from public.jobs where id = (select job_id from research_state)), 'research', 'Research uses isolated Worker capability');
@@ -71,25 +90,27 @@ set local role service_role;
 select is((select status from public.claim_job('research-worker', 'research', 120)), 'running', 'Research Worker claims only Research work');
 select is((select status from public.research_runs where id = (select run_id from research_state)), 'running', 'Run follows claimed Job state');
 select is(
-  jsonb_array_length(public.get_research_context(
+  public.get_research_context(
     (select job_id from research_state), 'research-worker', 1,
-    jsonb_build_object(
-      'question', 'What does the evidence say about revenue?',
-      'scope', 'Internal evidence only',
-      'subquestions', jsonb_build_array('revenue'),
-      'evidenceRequirements', jsonb_build_array('Original Evidence'),
-      'maxCostUsd', 0, 'maxQueries', 1, 'maxRounds', 1,
-      'stopConditions', jsonb_build_array('One round')
-    )
-  ) -> 'evidence'),
-  1, 'retrieval returns only owned active original Evidence'
+    (select plan_json from research_state)
+  ) ->> 'question',
+  'What does the evidence say about revenue?',
+  'fenced context returns the trusted Research question without bulk Evidence'
 );
 select is(
   public.get_research_context(
     (select job_id from research_state), 'other-worker', 1,
-    '{"question":"What does the evidence say about revenue?","scope":"Internal","subquestions":["revenue"],"evidenceRequirements":["Original"],"maxCostUsd":0,"maxQueries":1,"maxRounds":1,"stopConditions":["Stop"]}'::jsonb
+    (select plan_json from research_state)
   ),
   null::jsonb, 'stale Worker identity cannot retrieve context'
+);
+select is(
+  public.record_research_retrieval(
+    (select job_id from research_state), 'research-worker', 1,
+    (select plan_json from research_state), 'degraded_embedding_unavailable',
+    '[{"id":"a4000000-0000-4000-8000-000000000001","assetId":"a2000000-0000-4000-8000-000000000001","revisionId":"a3000000-0000-4000-8000-000000000001","retrievalMethod":"lexical","retrievalScore":0.5,"queryHits":1}]'::jsonb
+  ) ->> 'evidenceCount',
+  '1', 'fenced retrieval checkpoint records only owned active Evidence'
 );
 select throws_matching(
   $$select public.publish_research_draft(

@@ -19,6 +19,19 @@ test("research request requires a bounded question and UUID idempotency key", ()
   assert.equal(researchRequestSchema.safeParse({
     question: "Valid question", request_key: "98000000-0000-4000-8000-000000000008", user_id: "forged",
   }).success, false);
+  assert.equal(researchRequestSchema.safeParse({
+    question: "Valid question",
+    request_key: "98000000-0000-4000-8000-000000000008",
+    scope_asset_ids: ["94000000-0000-4000-8000-000000000004"],
+  }).success, true);
+  assert.equal(researchRequestSchema.safeParse({
+    question: "Valid question",
+    request_key: "98000000-0000-4000-8000-000000000008",
+    scope_asset_ids: [
+      "94000000-0000-4000-8000-000000000004",
+      "94000000-0000-4000-8000-000000000004",
+    ],
+  }).success, false);
 });
 
 test("research citations expose only valid positive PDF pages", () => {

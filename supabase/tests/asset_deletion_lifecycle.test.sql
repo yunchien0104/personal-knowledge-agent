@@ -161,6 +161,16 @@ insert into public.research_runs (
   '7a000000-0000-4000-8000-000000000002', 'Compare sources', 'draft_ready',
   '79000000-0000-4000-8000-000000000002', '75000000-0000-4000-8000-000000000002'
 );
+insert into public.research_run_evidence (
+  user_id, research_run_id, evidence_id, asset_id, revision_id,
+  retrieval_rank, retrieval_score, retrieval_method, query_hits
+) values
+  ('71000000-0000-4000-8000-000000000001', '7a000000-0000-4000-8000-000000000001',
+   '74000000-0000-4000-8000-000000000001', '72000000-0000-4000-8000-000000000001',
+   '73000000-0000-4000-8000-000000000001', 1, 1, 'hybrid', 1),
+  ('71000000-0000-4000-8000-000000000001', '7a000000-0000-4000-8000-000000000001',
+   '74000000-0000-4000-8000-000000000002', '72000000-0000-4000-8000-000000000002',
+   '73000000-0000-4000-8000-000000000002', 2, 0.9, 'hybrid', 1);
 insert into public.research_citations (
   id, user_id, research_run_id, note_id, finding_index, citation_index,
   relation_type, evidence_id, evidence_id_snapshot, asset_id, asset_id_snapshot,

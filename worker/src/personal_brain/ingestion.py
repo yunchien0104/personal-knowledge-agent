@@ -11,7 +11,7 @@ from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResu
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 
-PROCESSOR_VERSION = "native-text-pypdf-v1"
+PROCESSOR_VERSION = "native-text-pypdf-v2"
 
 
 class IngestionGateway(Protocol):

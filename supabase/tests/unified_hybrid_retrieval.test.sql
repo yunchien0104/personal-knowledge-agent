@@ -19,8 +19,8 @@ select ok(not has_function_privilege('service_role',
   'public.hybrid_retrieve_for_user(uuid,text,extensions.vector,text,text,uuid[],integer,integer)',
   'execute'), 'private retrieval core has no Data API grant');
 select is((select count(*) from pg_indexes where schemaname = 'public'
-  and tablename = 'retrieval_chunks' and indexdef ~* '(hnsw|ivfflat)'), 0::bigint,
-  'R1 uses exact vector search without an ANN index');
+  and tablename = 'retrieval_chunks' and indexdef ~* 'hnsw'), 1::bigint,
+  'production retrieval uses one partial HNSW index');
 
 create function pg_temp.test_vector(p_axis integer)
 returns extensions.vector(1536)
@@ -82,23 +82,23 @@ insert into public.asset_evidence (
   ('d4000000-0000-4000-8000-000000000005','d1000000-0000-4000-8000-000000000002','d3000000-0000-4000-8000-000000000005','pdf','{"kind":"pdf_page","page_number":5}','renewable infrastructure private tenant secret',repeat('5',64));
 
 insert into public.retrieval_chunks (
-  id,user_id,asset_id,revision_id,evidence_id,chunk_index,content,content_hash,
+  id,user_id,asset_id,revision_id,evidence_id,chunk_index,content,search_text,content_hash,
   start_offset,end_offset,locator_json,embedding,embedding_model,embedding_version,embedding_status
 ) values
-  ('d5000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001','d4000000-0000-4000-8000-000000000001',0,'legacy forbidden evidence',repeat('a',64),0,25,'{"kind":"pdf_page","page_number":1}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
-  ('d5000000-0000-4000-8000-000000000002','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000002','d4000000-0000-4000-8000-000000000002',0,'renewable infrastructure expands grid capacity',repeat('b',64),0,46,'{"kind":"pdf_page","page_number":2}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
-  ('d5000000-0000-4000-8000-000000000003','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000002','d3000000-0000-4000-8000-000000000003','d4000000-0000-4000-8000-000000000003',0,'AI data centers increase grid load and create energy storage opportunities',repeat('c',64),0,66,'{"kind":"pdf_page","page_number":3}',pg_temp.test_vector(2),'test-multilingual','v1','ready'),
-  ('d5000000-0000-4000-8000-000000000004','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000003','d3000000-0000-4000-8000-000000000004','d4000000-0000-4000-8000-000000000004',0,'deleting source must not be retrieved',repeat('d',64),0,37,'{"kind":"pdf_page","page_number":4}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
-  ('d5000000-0000-4000-8000-000000000005','d1000000-0000-4000-8000-000000000002','d2000000-0000-4000-8000-000000000004','d3000000-0000-4000-8000-000000000005','d4000000-0000-4000-8000-000000000005',0,'renewable infrastructure private tenant secret',repeat('e',64),0,46,'{"kind":"pdf_page","page_number":5}',pg_temp.test_vector(1),'test-multilingual','v1','ready');
+  ('d5000000-0000-4000-8000-000000000001','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000001','d4000000-0000-4000-8000-000000000001',0,'legacy forbidden evidence','legacy forbidden evidence',repeat('a',64),0,25,'{"kind":"pdf_page","page_number":1}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
+  ('d5000000-0000-4000-8000-000000000002','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000002','d4000000-0000-4000-8000-000000000002',0,'renewable infrastructure expands grid capacity','renewable infrastructure expands grid capacity',repeat('b',64),0,46,'{"kind":"pdf_page","page_number":2}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
+  ('d5000000-0000-4000-8000-000000000003','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000002','d3000000-0000-4000-8000-000000000003','d4000000-0000-4000-8000-000000000003',0,'AI data centers increase grid load and create energy storage opportunities','AI data centers increase grid load and create energy storage opportunities',repeat('c',64),0,66,'{"kind":"pdf_page","page_number":3}',pg_temp.test_vector(2),'test-multilingual','v1','ready'),
+  ('d5000000-0000-4000-8000-000000000004','d1000000-0000-4000-8000-000000000001','d2000000-0000-4000-8000-000000000003','d3000000-0000-4000-8000-000000000004','d4000000-0000-4000-8000-000000000004',0,'deleting source must not be retrieved','deleting source must not be retrieved',repeat('d',64),0,37,'{"kind":"pdf_page","page_number":4}',pg_temp.test_vector(1),'test-multilingual','v1','ready'),
+  ('d5000000-0000-4000-8000-000000000005','d1000000-0000-4000-8000-000000000002','d2000000-0000-4000-8000-000000000004','d3000000-0000-4000-8000-000000000005','d4000000-0000-4000-8000-000000000005',0,'renewable infrastructure private tenant secret','renewable infrastructure private tenant secret',repeat('e',64),0,46,'{"kind":"pdf_page","page_number":5}',pg_temp.test_vector(1),'test-multilingual','v1','ready');
 
 select throws_matching(
   $$insert into public.retrieval_chunks (
-    id,user_id,asset_id,revision_id,evidence_id,chunk_index,content,content_hash,
+    id,user_id,asset_id,revision_id,evidence_id,chunk_index,content,search_text,content_hash,
     start_offset,end_offset,locator_json,embedding,embedding_model,embedding_version,embedding_status
   ) values (
     'd5000000-0000-4000-8000-000000000099','d1000000-0000-4000-8000-000000000001',
     'd2000000-0000-4000-8000-000000000001','d3000000-0000-4000-8000-000000000002',
-    'd4000000-0000-4000-8000-000000000005',99,'cross tenant',repeat('f',64),0,12,
+    'd4000000-0000-4000-8000-000000000005',99,'cross tenant','cross tenant',repeat('f',64),0,12,
     '{"kind":"pdf_page","page_number":99}',pg_temp.test_vector(1),
     'test-multilingual','v1','ready')$$,
   'retrieval chunk provenance is inconsistent',

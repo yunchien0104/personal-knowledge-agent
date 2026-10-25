@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "retrieval-golden-v1",
+  "thresholds": {
+    "recallAt5": 0.8,
+    "recallAt10": 0.9,
+    "precisionAt5": 0.4,
+    "mrr": 0.7,
+    "ndcgAt10": 0.75,
+    "evidenceCoverage": 0.9
+  },
+  "cases": [
+    {
+      "id": "zh-cjk-linebreak",
+      "language": "zh",
+      "query": "台灣科技產業的主要成長動能是什麼？",
+      "rewrites": ["科技業成長來源", "台灣科技產業成長動能"],
+      "relevantEvidenceIds": ["gold-zh-1"],
+      "fixtureText": "台\n灣\n科\n技\n產\n業的主要成長動能來自先進製程。"
+    },
+    {
+      "id": "en-paraphrase",
+      "language": "en",
+      "query": "What drove the company's revenue increase?",
+      "rewrites": ["reasons for sales growth", "revenue growth drivers"],
+      "relevantEvidenceIds": ["gold-en-1"],
+      "fixtureText": "Revenue increased because enterprise subscriptions expanded."
+    },
+    {
+      "id": "mixed-language",
+      "language": "mixed",
+      "query": "AI server 的 revenue growth 來源？",
+      "rewrites": ["AI 伺服器營收成長動能", "AI server revenue drivers"],
+      "relevantEvidenceIds": ["gold-mixed-1"],
+      "fixtureText": "AI server 營收成長主要由 data center demand 帶動。"
+    }
+  ]
+}

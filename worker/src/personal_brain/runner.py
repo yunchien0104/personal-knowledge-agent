@@ -90,11 +90,14 @@ def build_source_note_worker():
 
 
 def build_research_worker():
-    from personal_brain.research_agent import (
-        LocalExtractiveResearchModel,
-        ResearchAgentWorker,
+    from personal_brain.query_planning import ProductionQueryPlanner
+    from personal_brain.research_agent import ResearchAgentWorker
+    from personal_brain.retrieval import (
+        EmbeddingSettings,
+        HybridRetriever,
+        OpenAICompatibleEmbeddingProvider,
     )
-    from personal_brain.supabase_gateway import SupabaseGateway
+    from personal_brain.retrieval_gateway import RetrievalSupabaseGateway
     from personal_brain.research.llm import OpenAICompatibleResearchModel
     from personal_brain.research.verifier import LLMClaimJudge
     from personal_brain.research.orchestrator import ResearchOrchestrator
@@ -116,15 +119,38 @@ def build_research_worker():
     # R2: 串接 Generator、Verifier、Gate、Repair
     orchestrator = ResearchOrchestrator(generator, judge)
 
-    # 沿用原本的 Planning Model
-    planning_model = LocalExtractiveResearchModel()
+    gateway = RetrievalSupabaseGateway.from_environment()
+    retrieval = HybridRetriever(
+        gateway,
+        OpenAICompatibleEmbeddingProvider(EmbeddingSettings.from_environment()),
+    )
 
     return ResearchAgentWorker(
-        SupabaseGateway.from_environment(),
-        planning_model,
+        gateway,
+        ProductionQueryPlanner(),
+        retrieval,
         worker_id,
         orchestrator=orchestrator,
         lease_seconds=lease_seconds,
+    )
+
+
+def build_retrieval_index_worker():
+    from personal_brain.retrieval import (
+        EmbeddingSettings,
+        OpenAICompatibleEmbeddingProvider,
+        RetrievalIndexWorker,
+    )
+    from personal_brain.retrieval_gateway import RetrievalSupabaseGateway
+
+    worker_id = os.environ.get("WORKER_ID", "").strip()
+    if not worker_id:
+        raise ValueError("WORKER_ID is required")
+    return RetrievalIndexWorker(
+        RetrievalSupabaseGateway.from_environment(),
+        OpenAICompatibleEmbeddingProvider(EmbeddingSettings.from_environment()),
+        worker_id,
+        lease_seconds=int(os.environ.get("JOB_LEASE_SECONDS", "120")),
     )
 
 
@@ -184,6 +210,8 @@ def build_queue_worker():
         return build_source_note_worker()
     if capability == "research":
         return build_research_worker()
+    if capability == "retrieval":
+        return build_retrieval_index_worker()
     if capability == "opportunity":
         return build_opportunity_worker()
     if capability == "deletion":
@@ -193,6 +221,7 @@ def build_queue_worker():
             build_deletion_worker(),
             build_ingestion_worker(),
             build_source_note_worker(),
+            build_retrieval_index_worker(),
             build_research_worker(),
         ]
         if research_suggestions_enabled():
