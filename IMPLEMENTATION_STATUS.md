@@ -598,3 +598,87 @@
   response containing semantic/hybrid rows fails closed.
 - PASS: targeted Research/Retrieval tests 25/25, non-network Worker regression
   65/65, Python compilation, and `git diff --check`. No Cloud request was made.
+
+## Production Research Pipeline integration (2026-10-25)
+
+- Restored the deployed Research worker to the existing R1 Hybrid Retriever and
+  retained the R2 generate/verify/repair/reverify/gate/publication path.
+- Added multilingual bounded planning, multi-query RRF/dedup, trusted Job-bound
+  scope, retrieval Evidence checkpoints, CJK-safe search text, GIN/HNSW indexes,
+  and durable leased embedding-index Jobs.
+- Preserved exact extracted Evidence for quotations while using a separate NFKC
+  and abnormal-line-break-repaired representation for lexical/vector retrieval.
+- Added manually judged retrieval fixtures, metric calculations, security review,
+  evaluation/performance protocol, Staging/backfill runbook, and rollback plan.
+- Local test results are recorded in the final task report. Staging DB/RLS/E2E,
+  EXPLAIN/ANN recall, provider, and load tests remain BLOCKED until authorized.
+
+### Production Readiness Gate (2026-10-25)
+
+- Overall status: **BLOCKED**. The linked remote is not provably isolated
+  Staging: branch count is zero, PITR is disabled, and the backup list is empty.
+- **FAIL**: remote migration history ends at `20261021193156`, while read-only
+  table stats show `public.retrieval_chunks` already exists with about 30 rows.
+  Do not run `db push` or `migration repair` until the drift is audited.
+- The experimental `20261025000100_fix_research_cjk_retrieval.sql` was preserved
+  under `docs/experimental/` and is excluded from Supabase migration discovery.
+- Hardened the undeployed production migration with bounded lock/statement
+  timeouts, validate-before-swap for the Jobs constraint, and explicit grants for
+  all explicit-user `SECURITY DEFINER` retrieval helpers.
+- Fixed both pre-existing ESLint errors. Web lint now has zero errors; typecheck,
+  production build, 17 Web tests, 72 Worker unittest cases, 79 pytest cases plus
+  3 subtests, 10 cloud guardrail tests, remote schema lint, dry-run, performance
+  advisor, lock, blocking, and long-query checks passed.
+- SQL migration/pgTAP execution remains **BLOCKED** because the local Supabase
+  container is unavailable and sandbox IPC prevents a temporary Postgres
+  cluster. Security Advisor timed out and was stopped without changing state.
+- Added a fail-closed executable Staging E2E driver covering PDF upload,
+  ingestion, indexing, hybrid retrieval, R2, citations, and Research Draft.
+  Its guard was locally verified; it was not run because Staging is not safe.
+- No remote database mutation, migration repair, deployment, restore, production
+  service change, commit, or push was performed.
+
+### Production Readiness Gate — Local Staging continuation (2026-10-25)
+
+- Started an isolated OrbStack Supabase Local Staging stack on loopback-only
+  endpoints and rebuilt its disposable Postgres 17 database from the complete
+  17-migration chain. No linked/cloud write was performed.
+- PASS: local migration reset; schema lint with zero issues; security and
+  performance advisors with zero findings; 279/279 pgTAP assertions across RLS,
+  grants, deletion, publication, retrieval, Research, and two-session queue
+  concurrency.
+- Updated existing pgTAP fixtures for the retrieval Evidence checkpoint and the
+  already-deployed `service_role` retrieval grant; made the dblink concurrency
+  test compatible with Supabase Local Postgres 17.
+- PASS: HTTP Auth 7/7; Web lint/typecheck/build and 17/17 unit tests; Worker
+  unittest 72/72; non-live pytest 92 plus 3 subtests; Python guardrails 10/10.
+- FAIL: clean-schema product API integration is 5/6 because the current branch
+  calls `create_threads_asset_and_enqueue` but does not contain its migration;
+  that migration exists only on the separate `feat/threads-ingestion` history.
+- BLOCKED: PDF HTTP integration is 3/5 because Supabase Storage v1.80.2 creates
+  and then rejects its own signed-upload token with `Invalid Compact JWS`,
+  matching upstream issue supabase/storage#1268. The signed-upload boundary was
+  not bypassed.
+- Added a guarded loopback-only mode to the full Staging E2E driver and an
+  accountless Local Staging runbook. Full PDF -> Indexing -> Hybrid Retrieval ->
+  R2 -> Citation -> Research Draft remains blocked by the Storage issue and by
+  missing reviewed non-Production provider credentials.
+- Overall Production status remains BLOCKED: the linked project has no backup or
+  PITR and still has unrecorded R1 schema objects; dry-run would apply R1 and the
+  production Research migration. No push, repair, Production deployment, or
+  destructive cloud action was performed.
+
+### Local signed PDF upload correction (2026-10-25)
+
+- Superseded the earlier Storage-blocker diagnosis: this application uses the
+  standard `/object/upload/sign/...` flow, not TUS. Its browser client already
+  used the required `PUT`; the HTTP and Staging E2E drivers incorrectly used
+  `POST`, which routed the valid signed token through the wrong request flow and
+  produced the misleading `Invalid Compact JWS` response.
+- Corrected both drivers to use `PUT` without weakening JWT, RLS, private-bucket,
+  or signed-token validation. No Storage downgrade or service-role upload was
+  introduced.
+- PASS: PDF HTTP integration 5/5, Auth integration 7/7, Web lint/typecheck,
+  database/RLS pgTAP 279/279, and local Security Advisor with zero findings.
+  Cleanup verification found zero test Auth fixtures and zero uploaded PDF
+  objects after the suites completed.
