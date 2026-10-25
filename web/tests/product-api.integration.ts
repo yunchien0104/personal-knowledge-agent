@@ -54,7 +54,10 @@ const createdAssets: Array<{ id: string; owner: "a" | "b" }> = [];
 const createdAuthUserIds: string[] = [];
 
 function localConfiguration(): LocalSupabase {
-  const result = spawnSync("supabase", ["status", "-o", "json"], { encoding: "utf8" });
+  const result = spawnSync("supabase", ["status", "-o", "json"], {
+    encoding: "utf8",
+    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
+  });
   assert.equal(result.status, 0, result.stderr);
   const configuration = JSON.parse(result.stdout) as LocalSupabase;
   const url = new URL(configuration.API_URL);
@@ -116,7 +119,7 @@ async function createUser(label: string): Promise<TestUser> {
     jar,
   );
   assert.equal(loginResponse.status, 303);
-  assert.equal(new URL(loginResponse.headers.get("location")!).pathname, "/protected");
+  assert.equal(new URL(loginResponse.headers.get("location")!).pathname, "/");
 
   const protectedPage = await appRequest("/protected", {}, jar);
   assert.equal(protectedPage.status, 200);

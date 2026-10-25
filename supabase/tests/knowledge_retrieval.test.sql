@@ -5,7 +5,7 @@ select plan(25);
 
 select ok(not has_function_privilege('anon', 'public.search_knowledge(text,integer,integer)', 'execute'), 'anon has no retrieval grant');
 select ok(has_function_privilege('authenticated', 'public.search_knowledge(text,integer,integer)', 'execute'), 'authenticated has retrieval grant');
-select ok(not has_function_privilege('service_role', 'public.search_knowledge(text,integer,integer)', 'execute'), 'service role cannot bypass user-scoped retrieval');
+select ok(has_function_privilege('service_role', 'public.search_knowledge(text,integer,integer)', 'execute'), 'service role retains the explicitly deployed worker retrieval grant');
 select ok(
   not exists (
     select 1

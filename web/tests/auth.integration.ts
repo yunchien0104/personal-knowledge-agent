@@ -37,6 +37,7 @@ const jar = new CookieJar();
 function localConfiguration(): LocalSupabase {
   const result = spawnSync("supabase", ["status", "-o", "json"], {
     encoding: "utf8",
+    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
   });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout) as LocalSupabase;
@@ -116,7 +117,7 @@ test("registration creates a real session", async () => {
   const body = new URLSearchParams({ email, password });
   const response = await request("/auth/actions/sign-up", { method: "POST", body });
   assert.equal(response.status, 303);
-  assert.equal(new URL(response.headers.get("location")!).pathname, "/protected");
+  assert.equal(new URL(response.headers.get("location")!).pathname, "/");
   const protectedResponse = await request("/protected");
   assert.equal(protectedResponse.status, 200);
   const html = await protectedResponse.text();

@@ -50,7 +50,13 @@ create temporary table concurrent_claims (worker_id text not null, job_id uuid n
 
 do $$
 declare
-  connection_string text := format('dbname=%L user=%L', current_database(), current_user);
+  -- Route through the published local port so PostgreSQL 17 consumes the
+  -- supplied SCRAM password; direct in-container trust auth is rejected by
+  -- dblink_connect for the non-superuser `postgres` role in Supabase Local.
+  connection_string text := format(
+    'host=host.docker.internal port=54322 dbname=%L user=postgres password=postgres',
+    current_database()
+  );
 begin
   perform extensions.dblink_connect('queue_worker_one', connection_string);
   perform extensions.dblink_connect('queue_worker_two', connection_string);
@@ -101,6 +107,15 @@ from extensions.dblink_get_result('queue_worker_one') as claimed(job_id uuid);
 insert into concurrent_claims
 select 'worker-two', job_id
 from extensions.dblink_get_result('queue_worker_two') as claimed(job_id uuid);
+
+-- PostgreSQL 17 keeps an asynchronous dblink connection busy until the final
+-- empty result is consumed, even after the row-bearing result was read.
+do $$
+begin
+  perform * from extensions.dblink_get_result('queue_worker_one') as drained(job_id uuid);
+  perform * from extensions.dblink_get_result('queue_worker_two') as drained(job_id uuid);
+end;
+$$;
 
 do $$
 begin

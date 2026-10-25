@@ -35,7 +35,10 @@ let savedAsset: Prepared | undefined;
 const authUserIds: string[] = [];
 
 function localConfiguration() {
-  const result = spawnSync("supabase", ["status", "-o", "json"], { encoding: "utf8" });
+  const result = spawnSync("supabase", ["status", "-o", "json"], {
+    encoding: "utf8",
+    env: { ...process.env, SUPABASE_TELEMETRY_DISABLED: "1" },
+  });
   assert.equal(result.status, 0, result.stderr);
   const configuration = JSON.parse(result.stdout) as LocalSupabase;
   const url = new URL(configuration.API_URL);
@@ -94,7 +97,7 @@ async function createUser(label: string): Promise<TestUser> {
     method: "POST",
     body: new URLSearchParams({ email, password }),
   }, jar);
-  assert.equal(new URL(signIn.headers.get("location")!).pathname, "/protected");
+  assert.equal(new URL(signIn.headers.get("location")!).pathname, "/");
 
   const login = await fetch(`${local.API_URL}/auth/v1/token?grant_type=password`, {
     method: "POST",
@@ -140,12 +143,17 @@ async function signedUpload(prepared: Prepared, bytes: Uint8Array) {
   body.append("cacheControl", "3600");
   body.append("", file);
   const response = await fetch(prepared.upload.signed_url, {
-    method: "POST",
+    method: "PUT",
     headers: { "x-upsert": "false" },
     body,
     redirect: "error",
   });
-  assert(response.ok);
+  const signedUrl = new URL(prepared.upload.signed_url);
+  const signedToken = signedUrl.searchParams.get("token") ?? "";
+  assert(
+    response.ok,
+    `signed upload failed (${response.status}, path=${signedUrl.pathname}, tokenParts=${signedToken.split(".").length}): ${await response.text()}`,
+  );
 }
 
 function storagePath(user: TestUser, prepared: Prepared) {

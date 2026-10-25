@@ -2,7 +2,7 @@
 
 import { ArrowUp, BookOpen, ChevronRight, MessageSquareText, RotateCcw } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { getApi } from "./api";
 import type { RetrievalResult } from "./types";
@@ -22,11 +22,6 @@ export function AskPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("輸入問題後，系統會搜尋你的真實 Source Notes、Claims 與 Evidence。");
   const selected = results.find((item) => item.resultId === activeId) ?? results[0] ?? null;
-
-  useEffect(() => {
-    const query = params.get("q");
-    if (query) setDraft(query);
-  }, [params]);
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

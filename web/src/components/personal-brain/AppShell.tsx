@@ -29,19 +29,15 @@ export function AppShell({ children, userEmail }: PropsWithChildren<{ userEmail:
 
   useEffect(() => {
     const stored = window.localStorage.getItem("personal-brain-theme") === "dark" ? "dark" : "light";
-    setTheme(stored);
     document.documentElement.classList.toggle("dark", stored === "dark");
+    const frame = window.requestAnimationFrame(() => setTheme(stored));
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   function updateTheme(next: Theme) {
     setTheme(next);
     document.documentElement.classList.toggle("dark", next === "dark");
     window.localStorage.setItem("personal-brain-theme", next);
-  }
-
-  function closeProfile() {
-    setProfileOpen(false);
-    setProfileView("account");
   }
 
   function navClass(href: string) {
