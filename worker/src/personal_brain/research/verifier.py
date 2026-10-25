@@ -96,19 +96,22 @@ Return the required structured verification result.
 """
 
 
-        allowed_ids = {row["id"] for row in evidence}
-
         # Only pass evidence that the claim actually cites.
-        cited_evidence = [
-            {
+        cited_ids = {
+            citation.evidenceId for citation in claim.citations
+        }
+        cited_evidence = []
+        for row in evidence:
+            if row["id"] not in cited_ids:
+                continue
+            item = {
                 "id": row["id"],
                 "excerpt": row["excerpt"],
             }
-            for row in evidence
-            if row["id"] in {
-                citation.evidenceId for citation in claim.citations
-            }
-        ]
+            locator = row.get("locator")
+            if isinstance(locator, Mapping):
+                item["locator"] = dict(locator)
+            cited_evidence.append(item)
 
         if not cited_evidence:
             return VerificationResult(

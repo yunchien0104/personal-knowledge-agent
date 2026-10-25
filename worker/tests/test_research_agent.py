@@ -3,6 +3,8 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from personal_brain.models import JobPayloadV1
+from personal_brain.research.contracts import EvidenceCitation, ResearchClaim
+from personal_brain.research.verifier import LLMClaimJudge
 from personal_brain.research_agent import ResearchAgentWorker
 from personal_brain.retrieval import HybridRetriever, RetrievalError
 from personal_brain.runner import build_research_worker
@@ -187,6 +189,43 @@ class FakeGateway:
 
 
 class ResearchAgentWorkerTests(unittest.TestCase):
+    def test_claim_verifier_receives_cited_locator_provenance(self):
+        class CapturingClient:
+            def generate(self, **request):
+                self.request = request
+                return {
+                    "claimId": "C001",
+                    "verdict": "supported",
+                    "explanation": "The locator and excerpt support the claim.",
+                }
+
+        client = CapturingClient()
+        claim = ResearchClaim(
+            claimId="C001",
+            statement="The second page says that revenue increased.",
+            claimType="fact",
+            citations=[EvidenceCitation(
+                evidenceId=EVIDENCE_ID,
+                quote="Revenue increased by 20 percent in 2025",
+                relationType="supports",
+            )],
+        )
+
+        result = LLMClaimJudge(client).verify(claim, [{
+            "id": EVIDENCE_ID,
+            "excerpt": EXCERPT,
+            "locator": {"kind": "pdf_page", "page_number": 2},
+            "untrustedExtra": "must not be forwarded",
+        }])
+
+        self.assertEqual(result.verdict, "supported")
+        forwarded = client.request["user_input"]["evidence"]
+        self.assertEqual(forwarded, [{
+            "id": EVIDENCE_ID,
+            "excerpt": EXCERPT,
+            "locator": {"kind": "pdf_page", "page_number": 2},
+        }])
+
     def test_runner_builds_research_with_shared_retrieval_gateway_and_provider(self):
         with patch.dict("os.environ", {
             "WORKER_ID": "research-worker",
