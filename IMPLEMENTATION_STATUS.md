@@ -682,3 +682,26 @@
   database/RLS pgTAP 279/279, and local Security Advisor with zero findings.
   Cleanup verification found zero test Auth fixtures and zero uploaded PDF
   objects after the suites completed.
+
+### Incremental R2 Cloud rollout (2026-10-25)
+
+- Applied only `20261024185133_production_research_pipeline.sql` to Supabase
+  project `djzrtjfoyceggqgtsgkm` after the verified R1 history repair and a fresh
+  incremental pre-R2 backup. Post-deploy migration history, empty schema diff,
+  RLS checks, and unchanged pre-existing row counts passed.
+- Promoted Web commit `3778c2e` to Vercel Production deployment
+  `3KWxBrJR3EZ6SvsiUGMfUnA5282r` at
+  `https://personal-knowledge-agent-flax.vercel.app`.
+- Deployed Render Worker commit `7ba52da` as deployment
+  `dep-dbevun4s728c73d04omg`. The rollout includes the `1169aab` fix that lets
+  the Worker claim durable retrieval-index jobs, plus locator provenance in the
+  R2 claim verifier without relaxing the verification gate.
+- PASS: isolated hosted Login -> signed PDF upload -> ingestion -> embedding
+  indexing -> hybrid retrieval -> R2 generation -> per-claim verification ->
+  citation binding -> Research Draft. The Production Web UI displayed the
+  readable draft, one `valid / supports` PDF citation, and a short-lived signed
+  source link. Automated cleanup removed the temporary Auth user, Storage object,
+  and associated rows.
+- Existing backup/restore, migration, Auth/RLS, local HTTP, and full Web/Worker
+  suites were reused and not rerun. Threads ingestion was outside this R2
+  rollout and was not presented as hosted-verified.
