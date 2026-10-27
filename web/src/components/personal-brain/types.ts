@@ -26,6 +26,31 @@ export type Note = {
   updated_at: string;
 };
 
+export type Topic = {
+  id: string;
+  name: string;
+  description: string;
+  is_seed: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TopicChip = Pick<Topic, "id" | "name">;
+
+export type KnowledgeNote = {
+  id: string;
+  note_type: "source_note" | "research_note" | "manual_note";
+  title: string;
+  summary: string;
+  publication_state: "draft" | "published";
+  created_at: string;
+  updated_at: string;
+  topics: TopicChip[];
+  manual_topic_override: boolean;
+  source_asset_id: string | null;
+  source_status: string | null;
+};
+
 export type Opportunity = {
   id: string;
   question: string;

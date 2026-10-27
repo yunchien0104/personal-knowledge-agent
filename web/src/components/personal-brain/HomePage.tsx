@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { getApi, toKnowledgeItems } from "./api";
-import type { Asset, KnowledgeItem, Note, Opportunity } from "./types";
+import type { Asset, KnowledgeItem, Note, Opportunity, Topic } from "./types";
 import { Card, PendingState, SourceIcon, StatusBadge } from "./ui";
 
 export function HomePage() {
   const [items, setItems] = useState<KnowledgeItem[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,10 +21,12 @@ export function HomePage() {
       getApi<Asset[]>("/api/assets?limit=12"),
       getApi<Note[]>("/api/notes?limit=12"),
       getApi<Opportunity[]>("/api/research/opportunities?limit=4"),
-    ]).then(([assets, notes, suggestions]) => {
+      getApi<Topic[]>("/api/topics"),
+    ]).then(([assets, notes, suggestions, topicList]) => {
       if (!active) return;
       setItems(toKnowledgeItems(assets, notes));
       setOpportunities(suggestions);
+      setTopics(topicList);
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : "資料讀取失敗。");
     }).finally(() => {
@@ -60,7 +63,13 @@ export function HomePage() {
         </section>
 
         <div className="space-y-7">
-          <section><div className="flex items-center justify-between border-b border-line pb-3"><h2 className="text-base font-semibold">我的主題</h2><BookOpen className="h-4 w-4 text-muted" /></div><div className="pt-4"><PendingState title="主題分類尚未串接" description="目前後端尚未提供 Topics API，因此不顯示模擬產業分類。" /></div></section>
+          <section>
+            <div className="flex items-center justify-between border-b border-line pb-3"><h2 className="text-base font-semibold">我的主題</h2><BookOpen className="h-4 w-4 text-muted" /></div>
+            <div className="pt-4">
+              {topics.length ? <div className="flex flex-wrap gap-2">{topics.slice(0, 8).map((topic) => <Link key={topic.id} href={`/knowledge?topic=${topic.id}`} title={topic.description} className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs font-medium text-muted transition hover:border-indigo-300 hover:text-indigo-700">{topic.name}</Link>)}</div> : <PendingState title="尚無主題" description="前往全部知識建立或管理你的主題。" />}
+              <Link href="/knowledge" className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-indigo-600">管理主題 <ChevronRight className="h-3.5 w-3.5" /></Link>
+            </div>
+          </section>
           <Card className="p-5"><p className="text-xs font-medium text-indigo-600">回顧建議</p><p className="mt-3 text-sm font-medium leading-6">回顧排程尚未串接</p><p className="mt-2 flex items-center gap-1.5 text-[11px] text-faint"><Clock3 className="h-3.5 w-3.5" />不會以假日期或假閱讀時間填補</p><span className="mt-4 flex items-center gap-2 text-xs text-muted"><FileText className="h-3.5 w-3.5" />等待真實回顧資料</span></Card>
         </div>
       </div>

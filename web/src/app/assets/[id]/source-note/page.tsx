@@ -40,6 +40,11 @@ export default async function SourceNotePage({ params }: { params: Promise<{ id:
       />
       {note ? (
         <>
+          <h2>主題分類</h2>
+          <p>{note.topics.length ? note.topics.map((topic) => topic.name).join("、") : "未分類"}</p>
+          {workspace.asset.status === "source_removed" ? (
+            <p role="status">原始來源已移除；筆記與既有引用文字仍保留，但原檔連結已停用。</p>
+          ) : null}
           <p>
             來源 Revision：<code>{note.revisionId}</code><br />
             模型：{note.modelProvider} / {note.modelName} · Prompt {note.promptVersion}

@@ -3,7 +3,7 @@ import unittest
 
 from personal_brain.models import JobPayloadV1
 from personal_brain.source_notes import ModelError, NOTE_SCHEMA, SourceNoteWorker
-from personal_brain.supabase_gateway import ClaimedJob
+from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 
 JOB_ID = "61000000-0000-4000-8000-000000000001"
@@ -12,6 +12,7 @@ ASSET_ID = "63000000-0000-4000-8000-000000000003"
 REVISION_ID = "64000000-0000-4000-8000-000000000004"
 EVIDENCE_ID = "65000000-0000-4000-8000-000000000005"
 NOTE_ID = "66000000-0000-4000-8000-000000000006"
+TOPIC_ID = "67000000-0000-4000-8000-000000000007"
 SOURCE_HASH = "a" * 64
 EXCERPT = "Revenue increased by 20 percent in 2025. The report notes seasonal uncertainty."
 
@@ -37,7 +38,7 @@ def valid_output(*, legacy_quotes=False):
     return {
         "title": "2025 Revenue Review",
         "summary": "The source reports revenue growth with seasonal uncertainty.",
-        "topics": ["Revenue", "Seasonality"],
+        "topicIds": [TOPIC_ID],
         "facts": [{"text": "Revenue increased in 2025.", "citations": [fact_citation]}],
         "dataPoints": [{"text": "The reported increase was 20 percent.", "citations": [fact_citation.copy()]}],
         "arguments": [],
@@ -72,6 +73,8 @@ class FakeGateway:
         self.heartbeat_results = []
         self.publications = []
         self.failures = []
+        self.topic_publications = []
+        self.topic_options_error = None
         self.context = {
             "assetId": ASSET_ID,
             "revisionId": REVISION_ID,
@@ -108,9 +111,20 @@ class FakeGateway:
     def download_artifact(self, _path):
         return json.dumps(self.artifact).encode()
 
+    def topic_classification_options(self, _user_id):
+        if self.topic_options_error:
+            raise self.topic_options_error
+        return [{"id": TOPIC_ID, "name": "金融與投資", "description": "金融市場與公司財務"}]
+
     def publish_source_note(self, _job, _worker_id, **publication):
         self.publications.append(publication)
         return {"noteId": NOTE_ID, "status": "completed"}
+
+    def apply_ai_note_topics(self, note_id, topic_ids, status, error):
+        self.topic_publications.append({
+            "noteId": note_id, "topicIds": topic_ids, "status": status, "error": error,
+        })
+        return {"noteId": note_id, "topicIds": topic_ids, "status": status}
 
     def report_failure(self, _job, _worker_id, **failure):
         self.failures.append(failure)
@@ -136,12 +150,49 @@ class SourceNoteWorkerTests(unittest.TestCase):
             for claim in publication["claims"] for citation in claim["citations"]
         ))
         self.assertEqual(gateway.failures, [])
+        self.assertEqual(gateway.topic_publications[0]["topicIds"], [TOPIC_ID])
+        self.assertEqual(gateway.topic_publications[0]["status"], "classified")
+
+    def test_current_pdf_artifact_schema_is_supported(self):
+        gateway = FakeGateway()
+        gateway.artifact["schema_version"] = 2
+
+        result = SourceNoteWorker(gateway, MockModel(), "note-worker").process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
 
     def test_model_schema_requests_only_evidence_ids(self):
         citation_schema = NOTE_SCHEMA["properties"]["facts"]["items"]["properties"]["citations"]["items"]
 
         self.assertEqual(citation_schema["required"], ["evidenceId"])
         self.assertEqual(set(citation_schema["properties"]), {"evidenceId"})
+
+    def test_invalid_topic_id_does_not_fail_the_note(self):
+        output = valid_output()
+        output["topicIds"] = ["68000000-0000-4000-8000-000000000008"]
+        gateway = FakeGateway()
+
+        result = SourceNoteWorker(gateway, MockModel(output), "note-worker").process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.topic_publications[0]["topicIds"], [])
+        self.assertEqual(gateway.topic_publications[0]["status"], "failed")
+        self.assertEqual(gateway.topic_publications[0]["error"], "invalid_topic_ids")
+
+    def test_topic_option_failure_does_not_fail_the_note(self):
+        gateway = FakeGateway()
+        gateway.topic_options_error = GatewayError(
+            "supabase_unavailable", "temporary", retryable=True,
+        )
+
+        result = SourceNoteWorker(gateway, MockModel(), "note-worker").process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.topic_publications[0]["status"], "failed")
+        self.assertEqual(gateway.topic_publications[0]["error"], "topic_options_unavailable")
 
     def test_legacy_quote_format_remains_supported(self):
         gateway = FakeGateway()

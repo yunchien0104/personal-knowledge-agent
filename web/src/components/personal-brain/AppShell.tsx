@@ -9,7 +9,8 @@ import { AddDataModal } from "./AddDataModal";
 
 const nav = [
   { href: "/", label: "首頁", icon: Home },
-  { href: "/library", label: "知識庫", icon: BookOpen },
+  { href: "/knowledge", label: "全部知識", icon: BookOpen },
+  { href: "/library", label: "Library", icon: FolderKanban },
   { href: "/explore", label: "探索精選", icon: Newspaper },
   { href: "/ask", label: "問知識庫", icon: MessageCircleQuestion },
   { href: "/research", label: "研究專案", icon: FolderKanban },
@@ -93,7 +94,7 @@ export function AppShell({ children, userEmail }: PropsWithChildren<{ userEmail:
       {mobileMenu ? <div className="fixed inset-x-3 top-16 z-40 rounded-[10px] border border-line bg-surface p-2 shadow-soft lg:hidden"><nav aria-label="行動版主要導覽" className="grid grid-cols-2 gap-1">{nav.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileMenu(false)} className={navClass(href)}><Icon className="h-4 w-4" />{label}</Link>)}</nav></div> : null}
 
       <main className="min-h-screen px-4 pb-24 pt-20 sm:px-6 lg:ml-[212px] lg:px-8 lg:pb-12 xl:px-10"><div className="mx-auto max-w-[1240px]">{children}</div></main>
-      <nav aria-label="手機導覽" className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-5 rounded-[10px] border border-line bg-surface/95 p-1 shadow-soft backdrop-blur-lg lg:hidden">
+      <nav aria-label="手機導覽" className="fixed inset-x-3 bottom-3 z-30 grid grid-cols-6 rounded-[10px] border border-line bg-surface/95 p-1 shadow-soft backdrop-blur-lg lg:hidden">
         {nav.map(({ href, label, icon: Icon }) => { const active = href === "/" ? pathname === "/" : pathname.startsWith(href); return <Link key={href} href={href} className={`flex flex-col items-center gap-1 rounded-md py-2 text-[9px] font-medium transition ${active ? "bg-indigo-50 text-indigo-700" : "text-muted"}`}><Icon className="h-4 w-4" /><span className="max-w-full truncate px-0.5">{label}</span></Link>; })}
       </nav>
       <AddDataModal open={captureOpen} onClose={() => setCaptureOpen(false)} />

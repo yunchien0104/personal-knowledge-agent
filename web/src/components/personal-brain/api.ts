@@ -1,24 +1,32 @@
 import type { Asset, KnowledgeItem, KnowledgeStatus, Note, SourceKind } from "./types";
 
-type ApiEnvelope<T> = {
+export type ApiEnvelope<T> = {
   data: T | null;
   error?: { message?: string };
   meta?: { total?: number };
 };
 
-export async function getApi<T>(url: string, init?: RequestInit): Promise<T> {
+export async function getApiEnvelope<T>(url: string, init?: RequestInit): Promise<ApiEnvelope<T>> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json() as ApiEnvelope<T>;
   if (!response.ok || payload.data === null) {
     throw new Error(payload.error?.message ?? "資料讀取失敗，請稍後再試。");
   }
-  return payload.data;
+  return payload;
 }
 
-function sourceKind(type: Asset["source_type"]): SourceKind {
+export async function getApi<T>(url: string, init?: RequestInit): Promise<T> {
+  return (await getApiEnvelope<T>(url, init)).data as T;
+}
+
+export function sourceKind(type: Asset["source_type"]): SourceKind {
   if (type === "pdf") return "PDF";
   if (type === "instagram_reel") return "IG";
   return "TH";
+}
+
+export function supportsSourceNote(type: Asset["source_type"]) {
+  return type === "pdf" || type === "threads";
 }
 
 function statusLabel(status: string): KnowledgeStatus {

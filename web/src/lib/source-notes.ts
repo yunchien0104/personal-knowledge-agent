@@ -35,6 +35,8 @@ export type SourceNoteWorkspace = {
     revisionId: string;
     pdfUrl: string | null;
     sourceUrl: string | null;
+    topics: Array<{ id: string; name: string }>;
+    manualTopicOverride: boolean;
     claims: SourceNoteClaim[];
   } | null;
 };
@@ -93,22 +95,17 @@ export async function loadSourceNoteWorkspace(
   if (jobError) throw new Error("Source Note Job could not be loaded.");
   const job = jobs?.[0] ?? null;
 
-  if (!asset.active_revision_id) {
-    return {
-      asset: { id: asset.id, status: asset.status, activeRevisionId: null },
-      job: job ? { id: job.id, status: job.status, errorCode: job.last_error_code } : null,
-      note: null,
-    };
-  }
-
-  const { data: generations, error: generationError } = await supabase
+  let generationQuery = supabase
     .from("source_note_generations")
     .select("note_id,source_revision_id_snapshot,model_provider,model_name,prompt_version,created_at")
     .eq("asset_id_snapshot", assetId)
     .eq("user_id", userId)
-    .eq("source_revision_id_snapshot", asset.active_revision_id)
     .order("created_at", { ascending: false })
     .limit(1);
+  if (asset.active_revision_id) {
+    generationQuery = generationQuery.eq("source_revision_id_snapshot", asset.active_revision_id);
+  }
+  const { data: generations, error: generationError } = await generationQuery;
   if (generationError) throw new Error("Source Note provenance could not be loaded.");
   const generation = generations?.[0] ?? null;
   if (!generation) {
@@ -127,6 +124,13 @@ export async function loadSourceNoteWorkspace(
     .eq("note_type", "source_note")
     .maybeSingle();
   if (noteError || !note) throw new Error("Source Note could not be loaded.");
+  const [{ data: topicRows, error: topicError }, { data: topicState, error: stateError }] = await Promise.all([
+    supabase.from("note_topics").select("topic_id,topics!inner(id,name)")
+      .eq("note_id", note.id).eq("user_id", userId),
+    supabase.from("note_topic_states").select("manual_override")
+      .eq("note_id", note.id).eq("user_id", userId).maybeSingle(),
+  ]);
+  if (topicError || stateError) throw new Error("Source Note topics could not be loaded.");
   const { data: claimRows, error: claimsError } = await supabase
     .from("claims")
     .select("id,text,claim_type,verification_status,needs_review,created_at")
@@ -160,7 +164,7 @@ export async function loadSourceNoteWorkspace(
     });
     citationsByClaim.set(citation.claim_id, values);
   }
-  const signed = asset.source_type === "pdf"
+  const signed = asset.source_type === "pdf" && asset.status === "ready" && asset.active_revision_id
     ? await supabase.storage.from(PDF_BUCKET).createSignedUrl(pdfObjectPath(userId, assetId), 300)
     : null;
 
@@ -179,6 +183,13 @@ export async function loadSourceNoteWorkspace(
       revisionId: generation.source_revision_id_snapshot,
       pdfUrl: signed && !signed.error ? signed.data.signedUrl : null,
       sourceUrl: immutableSourceUrl,
+      topics: (topicRows ?? []).flatMap((row) => {
+        const topic = Array.isArray(row.topics) ? row.topics[0] : row.topics;
+        return topic && typeof topic.id === "string" && typeof topic.name === "string"
+          ? [{ id: topic.id, name: topic.name }]
+          : [];
+      }),
+      manualTopicOverride: topicState?.manual_override ?? false,
       claims: (claimRows ?? []).map((claim) => ({
         id: claim.id,
         text: claim.text,

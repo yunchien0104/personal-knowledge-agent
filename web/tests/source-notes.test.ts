@@ -37,7 +37,7 @@ test("Source Note display state distinguishes generation, completion, and retry"
     id: "note", title: "Title", body: "Summary", bodyRevision: 1,
     updatedAt: "2026-10-22T00:00:00Z", modelProvider: "openai", modelName: "sol",
     promptVersion: "source-note-v1", revisionId: "revision", pdfUrl: null,
-    sourceUrl: null, claims: [],
+    sourceUrl: null, topics: [], manualTopicOverride: false, claims: [],
   };
 
   assert.equal(sourceNoteDisplayState(null), "idle");

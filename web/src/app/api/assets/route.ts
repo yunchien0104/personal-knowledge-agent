@@ -18,12 +18,15 @@ export async function GET(request: Request) {
   const pagination = parsePagination(request.url);
   if ("error" in pagination) return pagination.error;
 
-  const { data, error, count } = await auth.supabase
+  const includeRemoved = new URL(request.url).searchParams.get("includeRemoved") === "true";
+  let query = auth.supabase
     .from("assets")
     .select(ASSET_COLUMNS, { count: "exact" })
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .range(pagination.offset, pagination.offset + pagination.limit - 1);
+  if (!includeRemoved) query = query.neq("status", "source_removed");
+  const { data, error, count } = await query;
 
   if (error) {
     return jsonError(500, "DATABASE_ERROR", "Assets could not be loaded.");

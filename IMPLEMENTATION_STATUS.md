@@ -705,3 +705,40 @@
 - Existing backup/restore, migration, Auth/RLS, local HTTP, and full Web/Worker
   suites were reused and not rerun. Threads ingestion was outside this R2
   rollout and was not presented as hosted-verified.
+## R2G note Topics and Library separation (2026-10-26)
+
+- Added an undeployed additive migration for user-owned Topics, note assignments,
+  separate AI suggestions/manual override state, rename/merge RPCs, current-note
+  projection, and forced-RLS/two-user pgTAP coverage.
+- Source Note structured output now selects only IDs from the user's existing
+  Topics. Invalid/failed classification cannot fail note publication; late AI
+  results cannot overwrite a manual selection or intentional empty selection.
+- Added the bounded, explicit `python -m personal_brain.topic_backfill --dry-run`
+  / `--limit N` command; it only targets unclassified, non-manually-edited notes.
+- Added `/knowledge` as note-only search/topic-filter/pagination UI and changed
+  `/library` to a compact active-source list using the existing fenced deletion
+  lifecycle. Removed-source Notes remain readable with unavailable-source copy.
+- Refined `/knowledge` into a full-width responsive card grid (three columns on
+  desktop). Selecting a note now replaces the workspace content with a full-page
+  reader while preserving app navigation. The reader loads the complete Note body
+  through the existing account-scoped Note API and renders its Markdown sections
+  as readable summary/fact/uncertainty blocks; per-note topic editing stays collapsed
+  behind an explicit `管理主題` action until the user chooses to edit.
+- Fixed two full-flow issues found during local acceptance: Source Notes now accept
+  the current PDF artifact schema v2, and topic-aware Source Note retries use a
+  prompt-specific idempotency key while retaining attempt history instead of
+  colliding with an existing `job_attempts` row.
+- PASS: local migration application; schema lint with zero issues; 21/21 focused
+  pgTAP assertions; Source Note/topic/deletion Worker tests 18/18; Web Source Note
+  tests 3/3; TypeScript, ESLint, Python compilation, `git diff --check`, and Next
+  production build.
+- PASS: authenticated local browser flow for PDF upload -> ingestion -> Source Note
+  -> existing-topic AI classification; manual multi-select and intentional clear;
+  refresh persistence; late AI result protection; topic add/rename/merge with
+  relationship deduplication; DB-side topic/unclassified/search totals; active
+  source-only Library; and remove-original with Note retention, unavailable-source
+  copy, disabled original link, and HTTP 410. A second account saw zero foreign
+  Note rows and received HTTP 403 for a cross-account topic write.
+- The migration is applied only to Supabase Local and remains **NOT DEPLOYED** to
+  the linked Cloud project by request. No Cloud deploy, migration repair, or
+  remote database write was performed.

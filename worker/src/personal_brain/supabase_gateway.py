@@ -225,6 +225,40 @@ class SupabaseGateway:
         )
         return result if isinstance(result, dict) else None
 
+    def topic_classification_options(self, user_id: str) -> list[dict[str, Any]]:
+        result = self._rpc("get_topic_classification_options", {"p_user_id": user_id})
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise GatewayError(
+                "invalid_topic_options", "Topic options response is invalid", retryable=True
+            )
+        return result
+
+    def apply_ai_note_topics(
+        self,
+        note_id: str,
+        topic_ids: list[str],
+        status: str,
+        error: str | None,
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "apply_ai_note_topics",
+            {
+                "p_note_id": note_id,
+                "p_topic_ids": topic_ids,
+                "p_status": status,
+                "p_error": error,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def topic_backfill_candidates(self, limit: int) -> list[dict[str, Any]]:
+        result = self._rpc("get_topic_backfill_candidates", {"p_limit": limit})
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise GatewayError(
+                "invalid_backfill_candidates", "Topic backfill response is invalid", retryable=True
+            )
+        return result
+
     def download_artifact(self, object_path: str) -> bytes:
         if not object_path or ".." in object_path.split("/"):
             raise GatewayError("invalid_storage_path", "Artifact path is invalid", retryable=False)
