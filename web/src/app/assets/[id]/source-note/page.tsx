@@ -64,9 +64,12 @@ export default async function SourceNotePage({ params }: { params: Promise<{ id:
                           PDF 第 {citation.page} 頁
                         </a>
                       ) : citation.sourceUrl ? (
-                        <a href={citation.sourceUrl} target="_blank" rel="noreferrer">
-                          Threads 原始貼文
-                        </a>
+                        <>
+                          <a href={citation.sourceUrl} target="_blank" rel="noreferrer">
+                            {citation.imageIndex ? `Instagram 第 ${citation.imageIndex} 張圖片` : "原始貼文"}
+                          </a>
+                          {citation.imageUrl ? <> · <a href={citation.imageUrl} target="_blank" rel="noreferrer">私人圖片預覽</a></> : null}
+                        </>
                       ) : `Evidence ${citation.evidenceId}`}
                       ：「{citation.quote}」 ({citation.validityStatus})
                     </li>

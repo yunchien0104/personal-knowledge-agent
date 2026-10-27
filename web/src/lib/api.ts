@@ -12,7 +12,7 @@ export const uuidSchema = z.uuid();
 
 export const createAssetSchema = z
   .object({
-    source_type: z.enum(["pdf", "instagram_reel", "threads"]),
+    source_type: z.enum(["pdf", "instagram_reel", "instagram_post", "threads"]),
     source_url: z.url().max(2048).nullable().optional(),
     source_external_id: z.string().trim().min(1).max(512).nullable().optional(),
   })

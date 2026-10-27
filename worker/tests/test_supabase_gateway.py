@@ -2,6 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from personal_brain.models import JobPayloadV1
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError, SupabaseGateway
 
 
@@ -121,6 +122,35 @@ class SupabaseGatewayAuthenticationTests(unittest.TestCase):
         del row["payload_json"]["input"]["revisionId"]
         with self.assertRaises(GatewayError):
             ClaimedJob.from_row(row)
+
+    def test_instagram_source_note_context_uses_namespaced_rpc(self):
+        gateway = SupabaseGateway(
+            "https://example.supabase.co", "sb_secret_" + "a" * 32
+        )
+        calls = []
+        gateway._rpc = lambda name, arguments: calls.append((name, arguments)) or {
+            "sourceType": "instagram_post"
+        }
+        payload = JobPayloadV1.from_dict({
+            "schemaVersion": 1,
+            "jobId": "65000000-0000-4000-8000-000000000001",
+            "userId": "65000000-0000-4000-8000-000000000002",
+            "jobType": "generate_source_note",
+            "idempotencyKey": "instagram-source-note",
+            "input": {
+                "assetId": "65000000-0000-4000-8000-000000000003",
+                "revisionId": "65000000-0000-4000-8000-000000000004",
+                "sourceType": "instagram_post",
+            },
+        })
+        job = ClaimedJob(
+            payload.job_id, payload.user_id, payload.input["assetId"], 1, payload
+        )
+
+        result = gateway.source_note_context(job, "worker")
+
+        self.assertEqual(result, {"sourceType": "instagram_post"})
+        self.assertEqual(calls[0][0], "get_instagram_post_source_note_context")
 
 
 if __name__ == "__main__":

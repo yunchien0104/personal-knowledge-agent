@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
 import { PDF_BUCKET, pdfObjectPath } from "@/lib/pdf";
+import { instagramCitation } from "@/lib/instagram";
+import { instagramReelCitation } from "@/lib/instagram-reel";
 import {
   citationPdfPage,
   originLabel,
@@ -37,6 +39,13 @@ export default async function SearchPage({
       .map((citation) => citation.assetId)
   ))];
   const signedUrls = new Map<string, string>();
+  const citationAssetIds = [...new Set(retrieval.results.flatMap((result) =>
+    result.citations.map((citation) => citation.assetId)
+  ))];
+  const { data: citationAssets } = citationAssetIds.length
+    ? await supabase.from("assets").select("id,source_url").eq("user_id", user.id).in("id", citationAssetIds)
+    : { data: [] };
+  const sourceUrls = new Map((citationAssets ?? []).map((asset) => [asset.id, asset.source_url]));
   await Promise.all(assetIds.map(async (assetId) => {
     const signed = await supabase.storage
       .from(PDF_BUCKET)
@@ -80,6 +89,8 @@ export default async function SearchPage({
                 const page = citationPdfPage(citation);
                 const pdfUrl = signedUrls.get(citation.assetId);
                 const sourceUrl = threadsCitationUrl(citation.locator);
+                const instagram = instagramCitation(citation.locator);
+                const reel = instagramReelCitation(citation.locator, sourceUrls.get(citation.assetId));
                 return (
                   <li key={citation.evidenceId}>
                     {pdfUrl && page && citation.validityStatus === "valid" ? (
@@ -90,6 +101,20 @@ export default async function SearchPage({
                       <a href={sourceUrl} target="_blank" rel="noreferrer">
                         Threads 原始貼文
                       </a>
+                    ) : instagram ? (
+                      <>
+                        <a href={instagram.sourceUrl} target="_blank" rel="noreferrer">
+                          {instagram.imageIndex ? `Instagram 第 ${instagram.imageIndex} 張圖片` : "Instagram 原始貼文"}
+                        </a>
+                        {instagram.mediaId ? <> · <a href={`/api/assets/${citation.assetId}/evidence/${citation.evidenceId}/media`} target="_blank" rel="noreferrer">私人圖片預覽</a></> : null}
+                      </>
+                    ) : reel ? (
+                      <>
+                        <a href={reel.sourceUrl} target="_blank" rel="noreferrer">
+                          Reel {reel.startSeconds === null ? "說明文字" : `${reel.startSeconds.toFixed(1)}–${reel.endSeconds?.toFixed(1)} 秒`}
+                        </a>
+                        {reel.mediaId ? <> · <a href={`/api/assets/${citation.assetId}/evidence/${citation.evidenceId}/media`} target="_blank" rel="noreferrer">Keyframe 預覽</a></> : null}
+                      </>
                     ) : `Evidence ${citation.evidenceId}`}
                     {citation.validityStatus !== "valid" ? ` (${citation.validityStatus})` : null}
                   </li>

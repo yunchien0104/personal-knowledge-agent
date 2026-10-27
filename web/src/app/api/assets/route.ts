@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     .from("jobs")
     .select("id,asset_id,job_type,status,last_error_code,last_error_message,created_at")
     .in("asset_id", assetIds)
-    .in("job_type", ["ingest_pdf", "ingest_threads"])
+    .in("job_type", ["ingest_pdf", "ingest_threads", "ingest_instagram_post", "ingest_instagram_reel"])
     .order("created_at", { ascending: false });
   if (jobsError) {
     return jsonError(500, "DATABASE_ERROR", "Asset processing status could not be loaded.");

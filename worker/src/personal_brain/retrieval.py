@@ -180,6 +180,97 @@ def chunk_normalized_pdf(
     return chunks
 
 
+def chunk_normalized_segments(
+    artifact: Mapping[str, Any],
+    evidence: Sequence[Mapping[str, Any]],
+    *,
+    max_characters: int = 1200,
+    overlap_characters: int = 180,
+) -> list[RetrievalChunk]:
+    """Chunk a validated URL-source Contract without crossing Evidence boundaries."""
+
+    if not 200 <= max_characters <= 4000:
+        raise ValueError("max_characters must be between 200 and 4000")
+    if not 0 <= overlap_characters < max_characters // 2:
+        raise ValueError("overlap_characters must be less than half the chunk size")
+    source_hash = artifact.get("source_hash")
+    source_type = artifact.get("source_type")
+    full_text = artifact.get("text")
+    segments = artifact.get("segments")
+    if (
+        artifact.get("schema_version") != 1
+        or source_type not in {"instagram_post", "instagram_reel"}
+        or not isinstance(source_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
+        or not isinstance(full_text, str)
+        or not isinstance(segments, list)
+    ):
+        raise RetrievalError("invalid_normalized_artifact", "Normalized source is invalid", retryable=False)
+
+    chunks: list[RetrievalChunk] = []
+    reconstructed: list[str] = []
+    previous_end = 0
+    for segment_index, segment in enumerate(segments):
+        if not isinstance(segment, Mapping) or not isinstance(segment.get("text"), str):
+            raise RetrievalError("invalid_normalized_artifact", "Normalized segment is invalid", retryable=False)
+        text = segment["text"]
+        locator = segment.get("evidence_locator")
+        if not isinstance(locator, Mapping):
+            raise RetrievalError("invalid_normalized_artifact", "Segment locator is invalid", retryable=False)
+        start = _integer(locator.get("start_offset"), "segment start offset")
+        end = _integer(locator.get("end_offset"), "segment end offset")
+        allowed_kinds = ({"instagram_post_caption", "instagram_image"}
+                         if source_type == "instagram_post"
+                         else {"instagram_caption", "video_segment"})
+        separator = 2 if source_type == "instagram_post" else (
+            2 if segment_index == 1 and segments[0].get("evidence_locator", {}).get("kind") == "instagram_caption" else 1
+        )
+        if (
+            locator.get("kind") not in allowed_kinds
+            or locator.get("source_hash") != source_hash
+            or start != previous_end + (0 if segment_index == 0 else separator)
+            or end != start + len(text)
+            or full_text[start:end] != text
+        ):
+            raise RetrievalError("invalid_normalized_artifact", "Segment locator is inconsistent", retryable=False)
+        matches = [
+            row for row in evidence
+            if row.get("sourceHash") == source_hash
+            and row.get("excerpt") == text
+            and row.get("locator") == locator
+            and isinstance(row.get("id"), str)
+        ]
+        if len(matches) != 1:
+            raise RetrievalError(
+                "invalid_evidence_mapping",
+                "Normalized segment does not map to exactly one validated Evidence row",
+                retryable=False,
+            )
+        for local_start, local_end in _chunk_spans(text, max_characters, overlap_characters):
+            content = text[local_start:local_end]
+            chunks.append(RetrievalChunk(
+                chunk_index=len(chunks),
+                evidence_id=str(matches[0]["id"]),
+                content=content,
+                search_text=lexical_search_text(normalize_for_retrieval(content)),
+                content_hash=sha256(content.encode()).hexdigest(),
+                start_offset=start + local_start,
+                end_offset=start + local_end,
+                locator=dict(locator),
+            ))
+        reconstructed.append(text)
+        previous_end = end
+    if source_type == "instagram_post":
+        rebuilt = "\n\n".join(reconstructed)
+    elif reconstructed and segments[0].get("evidence_locator", {}).get("kind") == "instagram_caption":
+        rebuilt = reconstructed[0] + ("\n\n" + "\n".join(reconstructed[1:]) if len(reconstructed) > 1 else "")
+    else:
+        rebuilt = "\n".join(reconstructed)
+    if rebuilt != full_text or not chunks:
+        raise RetrievalError("invalid_normalized_artifact", "Normalized source text is inconsistent", retryable=False)
+    return chunks
+
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingSettings:
     base_url: str
@@ -336,7 +427,11 @@ class RetrievalIndexer:
             raise RetrievalError("invalid_normalized_artifact", "Normalized artifact is invalid", retryable=False) from error
         if not isinstance(artifact, Mapping) or artifact.get("source_hash") != context.get("sourceFingerprint"):
             raise RetrievalError("invalid_normalized_artifact", "Artifact fingerprint is invalid", retryable=False)
-        chunks = chunk_normalized_pdf(artifact, evidence)
+        chunks = (
+            chunk_normalized_segments(artifact, evidence)
+            if artifact.get("source_type") in {"instagram_post", "instagram_reel"}
+            else chunk_normalized_pdf(artifact, evidence)
+        )
         vectors = self.provider.embed([chunk.search_text for chunk in chunks])
         return [chunk.publication(vector) for chunk, vector in zip(chunks, vectors, strict=True)]
 

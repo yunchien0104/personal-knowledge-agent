@@ -1,12 +1,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { PDF_BUCKET, pdfObjectPath } from "./pdf.ts";
+import { instagramCitation } from "./instagram.ts";
+import { instagramReelCitation } from "./instagram-reel.ts";
 import { threadsCitationUrl } from "./threads.ts";
 
 export type SourceNoteCitation = {
   evidenceId: string;
   page: number | null;
   sourceUrl: string | null;
+  imageUrl: string | null;
+  imageIndex: number | null;
   quote: string;
   validityStatus: string;
 };
@@ -76,10 +80,10 @@ export async function loadSourceNoteWorkspace(
 ): Promise<SourceNoteWorkspace | null> {
   const { data: asset, error: assetError } = await supabase
     .from("assets")
-    .select("id,status,active_revision_id,source_type")
+    .select("id,status,active_revision_id,source_type,source_url")
     .eq("id", assetId)
     .eq("user_id", userId)
-    .in("source_type", ["pdf", "threads"])
+    .in("source_type", ["pdf", "threads", "instagram_post", "instagram_reel"])
     .maybeSingle();
   if (assetError) throw new Error("Source Note Asset could not be loaded.");
   if (!asset) return null;
@@ -153,12 +157,18 @@ export async function loadSourceNoteWorkspace(
   let immutableSourceUrl: string | null = null;
   for (const citation of citationRows ?? []) {
     const values = citationsByClaim.get(citation.claim_id) ?? [];
-    const sourceUrl = threadsCitationUrl(citation.locator_json);
+    const instagram = instagramCitation(citation.locator_json);
+    const reel = instagramReelCitation(citation.locator_json, asset.source_url);
+    const sourceUrl = threadsCitationUrl(citation.locator_json) ?? instagram?.sourceUrl ?? reel?.sourceUrl ?? null;
     immutableSourceUrl ??= sourceUrl;
     values.push({
       evidenceId: citation.evidence_id_snapshot,
       page: pdfPageFromLocator(citation.locator_json),
       sourceUrl,
+      imageUrl: instagram?.mediaId || reel?.mediaId
+        ? `/api/assets/${assetId}/evidence/${citation.evidence_id_snapshot}/media`
+        : null,
+      imageIndex: instagram?.imageIndex ?? null,
       quote: citation.supporting_quote,
       validityStatus: citation.evidence_id ? citation.validity_status : "source_deleted",
     });

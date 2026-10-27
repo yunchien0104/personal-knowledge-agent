@@ -11,6 +11,7 @@ from personal_brain.retrieval import (
     RetrievalError,
     RetrievalIndexer,
     chunk_normalized_pdf,
+    chunk_normalized_segments,
 )
 
 
@@ -132,6 +133,76 @@ class FixedProvider:
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_reel_segments_preserve_caption_and_timestamp_evidence(self):
+        caption, transcript = "Reel caption", "Transcript evidence"
+        text = caption + "\n\n" + transcript
+        artifact = {
+            "schema_version": 1, "source_type": "instagram_reel",
+            "source_hash": SOURCE_HASH, "text": text,
+            "segments": [
+                {"text": caption, "evidence_locator": {"kind": "instagram_caption",
+                    "start_offset": 0, "end_offset": len(caption), "source_hash": SOURCE_HASH}},
+                {"text": transcript, "evidence_locator": {"kind": "video_segment",
+                    "start_seconds": 0, "end_seconds": 3.5, "start_offset": len(caption) + 2,
+                    "end_offset": len(text), "source_hash": SOURCE_HASH}},
+            ],
+        }
+        evidence = [
+            {"id": EVIDENCE_1, "sourceHash": SOURCE_HASH, "excerpt": caption,
+             "locator": artifact["segments"][0]["evidence_locator"]},
+            {"id": EVIDENCE_2, "sourceHash": SOURCE_HASH, "excerpt": transcript,
+             "locator": artifact["segments"][1]["evidence_locator"]},
+        ]
+        chunks = chunk_normalized_segments(artifact, evidence)
+        self.assertEqual([chunk.evidence_id for chunk in chunks], [EVIDENCE_1, EVIDENCE_2])
+        self.assertEqual(chunks[1].locator["end_seconds"], 3.5)
+
+    def test_instagram_segments_map_to_exact_evidence_without_crossing_images(self):
+        caption = "Caption about renewable energy. " * 12
+        ocr = "Chart shows 42 percent growth. " * 12
+        text = caption + "\n\n" + ocr
+        artifact = {
+            "schema_version": 1,
+            "source_type": "instagram_post",
+            "source_hash": SOURCE_HASH,
+            "text": text,
+            "segments": [
+                {
+                    "text": caption,
+                    "evidence_locator": {
+                        "kind": "instagram_post_caption", "start_offset": 0,
+                        "end_offset": len(caption), "source_hash": SOURCE_HASH,
+                    },
+                },
+                {
+                    "text": ocr,
+                    "evidence_locator": {
+                        "kind": "instagram_image", "image_index": 1,
+                        "start_offset": len(caption) + 2, "end_offset": len(text),
+                        "source_hash": SOURCE_HASH,
+                    },
+                },
+            ],
+        }
+        evidence = [
+            {"id": EVIDENCE_1, "sourceHash": SOURCE_HASH, "excerpt": caption,
+             "locator": artifact["segments"][0]["evidence_locator"]},
+            {"id": EVIDENCE_2, "sourceHash": SOURCE_HASH, "excerpt": ocr,
+             "locator": artifact["segments"][1]["evidence_locator"]},
+        ]
+
+        chunks = chunk_normalized_segments(
+            artifact, evidence, max_characters=240, overlap_characters=40
+        )
+
+        self.assertGreater(len(chunks), 2)
+        self.assertEqual({chunk.evidence_id for chunk in chunks}, {EVIDENCE_1, EVIDENCE_2})
+        for chunk in chunks:
+            segment = artifact["segments"][0 if chunk.evidence_id == EVIDENCE_1 else 1]
+            local_start = chunk.start_offset - segment["evidence_locator"]["start_offset"]
+            local_end = chunk.end_offset - segment["evidence_locator"]["start_offset"]
+            self.assertEqual(chunk.content, segment["text"][local_start:local_end])
+
     def test_deterministic_chunks_use_full_artifact_and_never_cross_evidence(self):
         artifact, evidence = normalized_fixture()
         first = chunk_normalized_pdf(artifact, evidence, max_characters=240, overlap_characters=40)

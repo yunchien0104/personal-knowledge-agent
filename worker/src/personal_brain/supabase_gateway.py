@@ -46,7 +46,7 @@ class ClaimedJob:
         if payload.job_id != job_id or payload.user_id != user_id:
             raise GatewayError("invalid_claim", "Claimed Job identity is inconsistent", retryable=False)
         if payload.job_type not in {
-            "ingest_pdf", "ingest_threads", "generate_source_note", "execute_research", "rank_opportunities",
+            "ingest_pdf", "ingest_threads", "ingest_instagram_post", "ingest_instagram_reel", "generate_source_note", "execute_research", "rank_opportunities",
             "delete_asset", "index_retrieval",
         }:
             raise GatewayError("invalid_claim", "Claimed Job input is inconsistent", retryable=False)
@@ -214,9 +214,56 @@ class SupabaseGateway:
             "GET", f"storage/v1/object/{PDF_BUCKET}/{quote(expected, safe='/')}"
         )
 
+    def download_instagram_contract(self, job: ClaimedJob) -> bytes:
+        expected = f"{job.user_id}/{job.asset_id}/original/instagram-contract.json"
+        if (
+            job.payload.input.get("storageBucket") != PDF_BUCKET
+            or job.payload.input.get("contractObjectPath") != expected
+        ):
+            raise GatewayError(
+                "invalid_storage_path", "Instagram Contract path is invalid", retryable=False
+            )
+        return self._request(
+            "GET", f"storage/v1/object/{PDF_BUCKET}/{quote(expected, safe='/')}"
+        )
+
+    def download_instagram_media(self, job: ClaimedJob, media_id: str) -> bytes:
+        if not media_id or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for character in media_id):
+            raise GatewayError(
+                "invalid_storage_path", "Instagram media identity is invalid", retryable=False
+            )
+        prefix = f"{job.user_id}/{job.asset_id}/original/images"
+        if job.payload.input.get("mediaPrefix") != prefix:
+            raise GatewayError(
+                "invalid_storage_path", "Instagram media prefix is invalid", retryable=False
+            )
+        expected = f"{prefix}/{media_id}"
+        return self._request(
+            "GET", f"storage/v1/object/{PDF_BUCKET}/{quote(expected, safe='/')}"
+        )
+
+    def download_instagram_reel_contract(self, job: ClaimedJob) -> bytes:
+        expected = f"{job.user_id}/{job.asset_id}/original/instagram-reel-contract.json"
+        if job.payload.input.get("storageBucket") != PDF_BUCKET or job.payload.input.get("contractObjectPath") != expected:
+            raise GatewayError("invalid_storage_path", "Instagram Reel Contract path is invalid", retryable=False)
+        return self._request("GET", f"storage/v1/object/{PDF_BUCKET}/{quote(expected, safe='/')}")
+
+    def download_instagram_reel_keyframe(self, job: ClaimedJob, media_id: str) -> bytes:
+        if not media_id or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for character in media_id):
+            raise GatewayError("invalid_storage_path", "Instagram Reel keyframe identity is invalid", retryable=False)
+        prefix = f"{job.user_id}/{job.asset_id}/original/keyframes"
+        if job.payload.input.get("mediaPrefix") != prefix:
+            raise GatewayError("invalid_storage_path", "Instagram Reel keyframe prefix is invalid", retryable=False)
+        return self._request("GET", f"storage/v1/object/{PDF_BUCKET}/{quote(f'{prefix}/{media_id}', safe='/')}")
+
     def source_note_context(self, job: ClaimedJob, worker_id: str) -> dict[str, Any] | None:
+        source_type = job.payload.input.get("sourceType")
+        function_name = {
+            "instagram_post": "get_instagram_post_source_note_context",
+            "instagram_reel": "get_instagram_reel_source_note_context",
+        }.get(source_type, "get_source_note_context")
         result = self._rpc(
-            "get_source_note_context",
+            function_name,
             {
                 "p_job_id": job.id,
                 "p_worker_id": worker_id,
@@ -360,14 +407,20 @@ class SupabaseGateway:
         )
         return result if isinstance(result, dict) else None
 
-    def upload_immutable(self, object_path: str, content: bytes, content_hash: str) -> None:
+    def upload_immutable(
+        self,
+        object_path: str,
+        content: bytes,
+        content_hash: str,
+        content_type: str = "application/json",
+    ) -> None:
         path = f"storage/v1/object/{PDF_BUCKET}/{quote(object_path, safe='/')}"
         try:
             self._request(
                 "POST",
                 path,
                 body=content,
-                content_type="application/json",
+                content_type=content_type,
                 extra_headers={"x-upsert": "false", "cache-control": "max-age=31536000"},
             )
             return
@@ -437,6 +490,50 @@ class SupabaseGateway:
                 "p_segments": segments,
             },
         )
+        return result if isinstance(result, dict) else None
+
+    def publish_instagram_post(
+        self,
+        job: ClaimedJob,
+        worker_id: str,
+        *,
+        source_hash: str,
+        processor_version: str,
+        object_path: str,
+        artifact_hash: str,
+        artifact_size: int,
+        media: list[dict[str, Any]],
+        segments: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "publish_instagram_post_ingestion",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_source_hash": source_hash,
+                "p_processor_version": processor_version,
+                "p_object_key": object_path,
+                "p_artifact_sha256": artifact_hash,
+                "p_artifact_size_bytes": artifact_size,
+                "p_media": media,
+                "p_segments": segments,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def publish_instagram_reel(
+        self, job: ClaimedJob, worker_id: str, *, source_hash: str,
+        processor_version: str, object_path: str, artifact_hash: str,
+        artifact_size: int, media: list[dict[str, Any]], segments: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        result = self._rpc("publish_instagram_reel_ingestion", {
+            "p_job_id": job.id, "p_worker_id": worker_id,
+            "p_lease_generation": job.lease_generation, "p_source_hash": source_hash,
+            "p_processor_version": processor_version, "p_object_key": object_path,
+            "p_artifact_sha256": artifact_hash, "p_artifact_size_bytes": artifact_size,
+            "p_media": media, "p_segments": segments,
+        })
         return result if isinstance(result, dict) else None
 
     def publish_source_note(

@@ -256,7 +256,7 @@ def validate_note_output(
         raise ModelError("source_mismatch", "Parsed source does not match the active Revision", retryable=False)
     evidence_rows = context.get("evidence")
     source_type = context.get("sourceType", "pdf")
-    if source_type not in {"pdf", "threads"} or not isinstance(evidence_rows, list):
+    if source_type not in {"pdf", "threads", "instagram_post", "instagram_reel"} or not isinstance(evidence_rows, list):
         raise ModelError("source_mismatch", "Parsed source context is invalid", retryable=False)
     source_text: dict[tuple[str, int], str] = {}
     if source_type == "pdf":
@@ -268,7 +268,7 @@ def validate_note_output(
             for page in pages
             if isinstance(page, dict) and isinstance(page.get("page_number"), int)
         }
-    else:
+    elif source_type == "threads":
         segments = artifact.get("segments")
         if (
             artifact.get("source_type") != "threads"
@@ -283,21 +283,65 @@ def validate_note_output(
             and isinstance((locator := segment.get("evidence_locator")), dict)
             and isinstance(locator.get("start_offset"), int)
         }
+    elif source_type == "instagram_post":
+        segments = artifact.get("segments")
+        if (
+            artifact.get("source_type") != "instagram_post"
+            or artifact.get("source_url") != context.get("sourceUrl")
+            or not isinstance(segments, list)
+        ):
+            raise ModelError("source_mismatch", "Parsed source context is invalid", retryable=False)
+        source_text = {
+            (str(locator.get("kind")), int(locator.get("start_offset"))): str(segment.get("text"))
+            for segment in segments
+            if isinstance(segment, dict)
+            and isinstance((locator := segment.get("evidence_locator")), dict)
+            and locator.get("kind") in {"instagram_post_caption", "instagram_image"}
+            and isinstance(locator.get("start_offset"), int)
+        }
+    else:
+        segments = artifact.get("segments")
+        if (
+            artifact.get("source_type") != "instagram_reel"
+            or artifact.get("source_url") != context.get("sourceUrl")
+            or not isinstance(segments, list)
+        ):
+            raise ModelError("source_mismatch", "Parsed source context is invalid", retryable=False)
+        source_text = {
+            (str(locator.get("kind")), int(locator.get("start_offset"))): str(segment.get("text"))
+            for segment in segments
+            if isinstance(segment, dict)
+            and isinstance((locator := segment.get("evidence_locator")), dict)
+            and locator.get("kind") in {"instagram_caption", "video_segment"}
+            and isinstance(locator.get("start_offset"), int)
+        }
     evidence: dict[str, Mapping[str, Any]] = {}
     for row in evidence_rows:
         if not isinstance(row, dict) or row.get("sourceHash") != fingerprint:
             raise ModelError("source_mismatch", "Evidence does not match the active Revision", retryable=False)
         locator = row.get("locator")
-        expected_kind = "pdf_page" if source_type == "pdf" else "threads_post"
+        expected_kind = {
+            "pdf": "pdf_page",
+            "threads": "threads_post",
+        }.get(source_type)
         position_key = "page_number" if source_type == "pdf" else "start_offset"
-        if not isinstance(locator, dict) or locator.get("kind") != expected_kind:
+        if not isinstance(locator, dict) or (
+            expected_kind is not None and locator.get("kind") != expected_kind
+        ) or (
+            source_type == "instagram_post"
+            and locator.get("kind") not in {"instagram_post_caption", "instagram_image"}
+        ) or (
+            source_type == "instagram_reel"
+            and locator.get("kind") not in {"instagram_caption", "video_segment"}
+        ):
             raise ModelError("source_mismatch", "Evidence locator is invalid", retryable=False)
+        locator_kind = str(locator.get("kind"))
         excerpt = row.get("excerpt")
         position = locator.get(position_key)
         if (
             not isinstance(position, int)
             or not isinstance(excerpt, str)
-            or source_text.get((expected_kind, position)) != excerpt
+            or source_text.get((locator_kind, position)) != excerpt
         ):
             raise ModelError("source_mismatch", "Evidence is not traceable to source text", retryable=False)
         evidence[str(row.get("id"))] = row

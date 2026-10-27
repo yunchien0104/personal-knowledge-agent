@@ -31,11 +31,24 @@ export async function POST(
   if (!uuidSchema.safeParse(id).success) {
     return jsonError(400, "INVALID_ID", "Asset id must be a UUID.");
   }
-  const { data, error } = await auth.supabase.rpc("enqueue_source_note_generation", {
+  const { data: asset, error: assetError } = await auth.supabase
+    .from("assets")
+    .select("source_type")
+    .eq("id", id)
+    .maybeSingle();
+  if (assetError || !asset) {
+    return jsonError(404, "ASSET_NOT_FOUND", "Source Note Asset could not be found.");
+  }
+  const rpc = asset.source_type === "instagram_post"
+    ? "enqueue_instagram_post_source_note_generation"
+    : asset.source_type === "instagram_reel"
+      ? "enqueue_instagram_reel_source_note_generation"
+      : "enqueue_source_note_generation";
+  const { data, error } = await auth.supabase.rpc(rpc, {
     p_asset_id: id,
   });
   if (error || !data) {
-    return jsonError(409, "SOURCE_NOT_READY", "A validated PDF Revision is required.");
+    return jsonError(409, "SOURCE_NOT_READY", "A validated source Revision is required.");
   }
   return jsonSuccess(data, 202);
 }

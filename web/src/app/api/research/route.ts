@@ -1,5 +1,7 @@
 import { authenticateApi, jsonError, jsonSuccess, validationError, uuidSchema } from "@/lib/api";
 import { PDF_BUCKET, pdfObjectPath } from "@/lib/pdf";
+import { instagramCitation } from "@/lib/instagram";
+import { instagramReelCitation } from "@/lib/instagram-reel";
 import {
   getResearchRun,
   listResearchRuns,
@@ -40,7 +42,7 @@ export async function GET(request: Request) {
     const pdfUrls = new Map<string, string>();
     const citationUrls = new Map<string, string>();
     for (const citation of run.citations) {
-      const sourceUrl = threadsCitationUrl(citation.locator);
+      const sourceUrl = threadsCitationUrl(citation.locator) ?? instagramCitation(citation.locator)?.sourceUrl;
       if (sourceUrl) citationUrls.set(citation.id, sourceUrl);
     }
     const verifiableAssetIds = run.citations
@@ -50,7 +52,7 @@ export async function GET(request: Request) {
     if (uniqueAssetIds.length) {
       const { data: assets, error: assetError } = await auth.supabase
         .from("assets")
-        .select("id,source_type")
+        .select("id,source_type,source_url")
         .in("id", uniqueAssetIds);
       if (assetError) throw new Error("Research source URLs could not be loaded.");
       await Promise.all((assets ?? []).map(async (asset) => {
@@ -59,6 +61,12 @@ export async function GET(request: Request) {
             .from(PDF_BUCKET)
             .createSignedUrl(pdfObjectPath(auth.user.id, asset.id), 300);
           if (!signed.error) pdfUrls.set(asset.id, signed.data.signedUrl);
+        }
+        if (asset.source_type === "instagram_reel") {
+          for (const citation of run.citations.filter((item) => item.assetId === asset.id)) {
+            const reel = instagramReelCitation(citation.locator, asset.source_url);
+            if (reel) citationUrls.set(citation.id, reel.sourceUrl);
+          }
         }
       }));
     }

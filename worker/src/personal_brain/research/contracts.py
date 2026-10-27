@@ -17,13 +17,13 @@ class StrictModel(BaseModel):
 class ResearchDraft(StrictModel):
     title: str
     summary: str
-    findings: list[ResearchFinding] = Field(min_length=1, max_length=12)
+    findings: list[ResearchFinding] = Field(min_length=1)
 
 
 class ResearchFinding(StrictModel):
     text: str
     uncertainty: str
-    citations: list[EvidenceCitation] = Field(min_length=1, max_length=20)
+    citations: list[EvidenceCitation] = Field(min_length=1)
 
 
 class ResearchClaim(StrictModel):
@@ -34,7 +34,7 @@ class ResearchClaim(StrictModel):
         "inference",
         "hypothesis",
     ]
-    citations: list[EvidenceCitation] = Field(max_length=8)
+    citations: list[EvidenceCitation]
 
 class EvidenceCitation(StrictModel):
     evidenceId: str
@@ -59,23 +59,23 @@ class VerificationResult(StrictModel):
 class VerifiedResearchFinding(StrictModel):
     text: str = Field(min_length=1)
     uncertainty: str
-    claims: list[ResearchClaim] = Field(min_length=1, max_length=20)
+    claims: list[ResearchClaim] = Field(min_length=1)
 
 
 class VerifiedResearchDraft(StrictModel):
     title: str = Field(min_length=1)
     summary: str
-    findings: list[VerifiedResearchFinding] = Field(min_length=1, max_length=12)
+    findings: list[VerifiedResearchFinding] = Field(min_length=1)
 
 
 class AtomicResearchFinding(StrictModel):
     findingId: str = Field(min_length=1)
     topic: str = Field(min_length=1)
-    claims: list[ResearchClaim] = Field(min_length=1, max_length=20)
+    claims: list[ResearchClaim] = Field(min_length=1)
 
 
 class AtomicResearchDraft(StrictModel):
-    schemaVersion: Literal["atomic-research-v1"] = "atomic-research-v1"
+    schemaVersion: Literal["atomic-research-v1"]
     title: str = Field(min_length=1)
     summary: str = Field(min_length=1)
-    findings: list[AtomicResearchFinding] = Field(min_length=1, max_length=12)
+    findings: list[AtomicResearchFinding] = Field(min_length=1)

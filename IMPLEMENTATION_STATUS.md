@@ -742,3 +742,57 @@
 - The migration is applied only to Supabase Local and remains **NOT DEPLOYED** to
   the linked Cloud project by request. No Cloud deploy, migration repair, or
   remote database write was performed.
+### Instagram image-post bridge completion (local only, 2026-10-27)
+
+- Added an additive, undeployed Migration for canonical public Instagram `/p/`
+  Assets, durable `ingest_instagram_post` Jobs, and lease-fenced publication of
+  normalized text, one-to-twenty private image artifacts, caption Evidence, and
+  ordered image-OCR Evidence.
+- Added namespaced Instagram-only Source Note and Retrieval queue/context RPCs;
+  existing PDF and Threads RPCs are not replaced. Worker dispatch selects the
+  new boundary only when the durable Job declares `sourceType=instagram_post`.
+- Added strict Contract/media verification, private Storage publication,
+  segment-bounded Retrieval chunks, Instagram Evidence/Citation parsing, a
+  private signed image-preview route, Web Contract+image upload, and UI status.
+- PASS in the isolated implementation worktree: 39/39 transactional pgTAP
+  assertions for grants, RLS isolation, immutable identity, media/locator
+  consistency, fenced/idempotent publication, Source Note, and Retrieval. The
+  Migration/test transaction was rolled back and Local Release Staging was not
+  changed.
+- PASS after integration into the active local branch: 53 pytest checks plus 4
+  subtests; Web Instagram 5/5, Source Note 3/3, Retrieval 3/3, and Threads 4/4;
+  TypeScript, ESLint, Python compilation, production build, and `git diff
+  --check`. The 39/39 pgTAP protocol was rerun against the existing Topic-aware
+  local schema inside a rollback-only transaction.
+- Fixed the active Library UI so `instagram_post` is labelled as Instagram,
+  participates in Source Note status loading, and exposes the same grounded
+  Source Note generation action as PDF/Threads.
+- No Cloud migration, deployment, commit, push, Production credential access,
+  or existing Threads bridge modification was performed. URL-only Instagram
+  acquisition remains external to Core; this bridge accepts the Mac App Contract
+  plus the matching ordered image files.
+
+### Instagram Reel bridge completion (local only, 2026-10-27)
+
+- Verified the merged integration package supplies a pure public-Reel URL plus
+  Mac App export parser into Unified Contract v1. It does not perform live
+  Instagram acquisition; the Mac App remains responsible for authorized fetch
+  and transcription.
+- Added the Reel Web entry point for canonical `/reel/` URLs, Contract JSON and
+  zero-to-twenty optional keyframes. Core stores no original video or Instagram
+  credentials; it validates hashes, MIME signatures, URL identity, timestamped
+  locators and keyframe references before enqueueing.
+- Added isolated `ingest_instagram_reel` Worker dispatch, private immutable
+  Contract/keyframe publication, lease-fenced database publication, exact
+  caption/transcript Evidence, Source Note context, Retrieval indexing, Reel
+  citation timestamps and private keyframe previews. Existing PDF, Threads and
+  Instagram Post handlers/RPCs remain separate.
+- PASS: additive Migration applied to existing Local Supabase; schema lint has
+  zero errors; Instagram Post/Reel pgTAP 68/68 including grants, RLS isolation,
+  immutable identity, zero-keyframe ingestion, fenced publication, Source Note
+  and Retrieval contexts. Worker affected tests 49/49; Web Instagram 9/9 and
+  Source Note 4/4; TypeScript, ESLint, Python compilation, Next production build
+  and `git diff --check` pass.
+- This remains local and undeployed. No Cloud mutation, migration push, commit,
+  Git push or deployment was performed. A real authorized Reel still requires
+  one local Mac App smoke test before hosted release.

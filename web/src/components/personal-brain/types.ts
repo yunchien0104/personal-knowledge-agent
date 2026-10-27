@@ -1,6 +1,6 @@
 export type Asset = {
   id: string;
-  source_type: "pdf" | "instagram_reel" | "threads";
+  source_type: "pdf" | "instagram_reel" | "instagram_post" | "threads";
   source_url: string | null;
   source_external_id: string | null;
   status: string;

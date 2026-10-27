@@ -101,7 +101,10 @@ def validate_atomic_citations(
 
                 seen_evidence_ids.add(evidence_id)
 
-                if citation.quote not in evidence_map[evidence_id]:
+                if (
+                    not citation.quote.strip()
+                    or citation.quote not in evidence_map[evidence_id]
+            ):
                     raise EvidenceValidationError(
                         f"Quote mismatch: {evidence_id}"
                     )

@@ -5,16 +5,19 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { uploadPdf } from "@/lib/pdf-upload-client";
+import { uploadInstagramPost } from "@/lib/instagram-upload-client";
+import { uploadInstagramReel } from "@/lib/instagram-reel-upload-client";
 import { submitThreadsUrl } from "@/lib/threads";
 import { PrimaryButton } from "./ui";
 
-type CaptureMode = "url" | "pdf" | "text";
+type CaptureMode = "url" | "instagram" | "pdf" | "text";
 
 export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const [mode, setMode] = useState<CaptureMode>("url");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [instagramKind, setInstagramKind] = useState<"post" | "reel">("reel");
 
   if (!open) return null;
 
@@ -67,6 +70,39 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
     }
   }
 
+  async function submitInstagram(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const url = form.elements.namedItem("instagram_url");
+    const contract = form.elements.namedItem("instagram_contract");
+    const images = form.elements.namedItem("instagram_media");
+    if (
+      !(url instanceof HTMLInputElement) || !url.value.trim()
+      || !(contract instanceof HTMLInputElement) || !contract.files?.[0]
+      || !(images instanceof HTMLInputElement)
+      || (instagramKind === "post" && !images.files?.length)
+    ) {
+      setMessage(instagramKind === "reel"
+        ? "請提供 Reel 網址、Contract JSON；如 Contract 有 keyframe，也要依序選取。"
+        : "請提供 Instagram 貼文網址、Contract JSON 與全部圖片。");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const files = Array.from(images.files ?? []);
+      if (instagramKind === "reel") await uploadInstagramReel(url.value, contract.files[0], files);
+      else await uploadInstagramPost(url.value, contract.files[0], files);
+      onClose();
+      router.push("/library");
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Instagram 匯入失敗。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 p-0 sm:items-center sm:p-6" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section role="dialog" aria-modal="true" aria-label="新增資料" className="max-h-[92vh] w-full overflow-y-auto rounded-t-[14px] border border-line bg-surface shadow-soft sm:max-w-xl sm:rounded-[10px]">
@@ -74,17 +110,35 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
           <button type="button" aria-label="關閉新增資料" onClick={close} className="rounded-md p-2 text-muted hover:bg-subtle"><X className="h-5 w-5" /></button>
         </header>
         <div className="p-5 sm:p-7">
-          <div role="tablist" aria-label="新增資料方式" className="grid grid-cols-3 border-b border-line">
+          <div role="tablist" aria-label="新增資料方式" className="grid grid-cols-4 border-b border-line">
             {([[
               "url", "貼網址", Link2,
-            ], ["pdf", "上傳 PDF", FileText], ["text", "貼上文字", Type]] as const).map(([id, label, Icon]) => (
+            ], ["instagram", "Instagram", Upload], ["pdf", "上傳 PDF", FileText], ["text", "貼上文字", Type]] as const).map(([id, label, Icon]) => (
               <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => { setMode(id); setMessage(null); }} className={`flex items-center justify-center gap-2 border-b-2 px-2 py-3 text-xs font-medium transition sm:text-sm ${mode === id ? "border-indigo-500 text-indigo-700" : "border-transparent text-muted hover:text-ink"}`}>
                 <Icon className="h-4 w-4" />{label}
               </button>
             ))}
           </div>
 
-          {mode === "pdf" ? (
+          {mode === "instagram" ? (
+            <form onSubmit={submitInstagram} className="mt-6 space-y-4">
+              <fieldset className="flex gap-2" aria-label="Instagram 來源類型">
+                <button type="button" onClick={() => setInstagramKind("reel")} className={`rounded-md border px-3 py-2 text-xs ${instagramKind === "reel" ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "border-line text-muted"}`}>Reel 影片</button>
+                <button type="button" onClick={() => setInstagramKind("post")} className={`rounded-md border px-3 py-2 text-xs ${instagramKind === "post" ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "border-line text-muted"}`}>圖片貼文</button>
+              </fieldset>
+              <label htmlFor="instagram-url" className="block text-sm font-semibold">{instagramKind === "reel" ? "Instagram Reel 網址" : "Instagram 圖片貼文網址"}</label>
+              <input id="instagram-url" name="instagram_url" type="url" required disabled={busy} placeholder={instagramKind === "reel" ? "https://www.instagram.com/reel/…/" : "https://www.instagram.com/p/…/"} className="w-full rounded-md border border-line bg-surface px-3 py-3 text-sm outline-none focus:border-indigo-300" />
+              <label className="block text-sm font-semibold">Mac App 產生的 Contract JSON
+                <input name="instagram_contract" type="file" accept="application/json,.json" required disabled={busy} className="mt-2 block w-full text-xs text-muted" />
+              </label>
+              <label className="block text-sm font-semibold">{instagramKind === "reel" ? "Reel keyframes（依 Contract 順序；沒有 keyframe 可留空）" : "貼文圖片（依貼文順序選取）"}
+                <input name="instagram_media" type="file" accept="image/jpeg,image/png" multiple required={instagramKind === "post"} disabled={busy} className="mt-2 block w-full text-xs text-muted" />
+              </label>
+              <p className="text-xs leading-5 text-muted">目前安全 Bridge 使用本機 Mac App 的輸出；只貼 URL 不會在伺服器上繞過 Instagram 存取限制。</p>
+              {message ? <p role="alert" className="text-xs text-rose-700">{message}</p> : null}
+              <div className="flex justify-end border-t border-line pt-5"><PrimaryButton type="submit" disabled={busy}>{busy ? <><LoaderCircle className="h-4 w-4 animate-spin" />上傳中…</> : "開始匯入"}</PrimaryButton></div>
+            </form>
+          ) : mode === "pdf" ? (
             <form onSubmit={submitPdf} className="mt-6">
               <label htmlFor="capture-pdf" className="grid min-h-44 cursor-pointer place-items-center rounded-lg border border-dashed border-line bg-subtle p-6 text-center">
                 <span><Upload className="mx-auto h-6 w-6 text-indigo-600" /><span className="mt-3 block font-semibold">選擇 PDF 檔案</span><span className="mt-1 block text-xs text-muted">最多 10 MB，檔案會儲存在你的私人空間</span></span>

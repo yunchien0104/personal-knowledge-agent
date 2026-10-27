@@ -34,23 +34,34 @@ class RetrievalSupabaseGateway(SupabaseGateway):
     def enqueue_retrieval_index_jobs(
         self, embedding_model: str, embedding_version: str, *, limit: int = 25
     ) -> int:
-        result = self._rpc(
-            "enqueue_retrieval_index_jobs",
-            {
+        payload = {
                 "p_embedding_model": embedding_model,
                 "p_embedding_version": embedding_version,
                 "p_limit": limit,
-            },
-        )
-        if type(result) is not int or result < 0:
-            raise GatewayError(
-                "invalid_retrieval_enqueue", "Retrieval enqueue response is invalid", retryable=True
-            )
-        return result
+        }
+        total = 0
+        for function_name in (
+            "enqueue_retrieval_index_jobs",
+            "enqueue_instagram_post_retrieval_index_jobs",
+            "enqueue_instagram_reel_retrieval_index_jobs",
+        ):
+            result = self._rpc(function_name, payload)
+            if type(result) is not int or result < 0:
+                raise GatewayError(
+                    "invalid_retrieval_enqueue",
+                    "Retrieval enqueue response is invalid",
+                    retryable=True,
+                )
+            total += result
+        return total
 
     def retrieval_index_context(self, job: Any, worker_id: str) -> Mapping[str, Any] | None:
+        function_name = {
+            "instagram_post": "get_instagram_post_retrieval_index_context",
+            "instagram_reel": "get_instagram_reel_retrieval_index_context",
+        }.get(job.payload.input.get("sourceType"), "get_retrieval_index_context")
         result = self._rpc(
-            "get_retrieval_index_context",
+            function_name,
             {
                 "p_job_id": job.id,
                 "p_worker_id": worker_id,

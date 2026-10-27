@@ -7,6 +7,10 @@ import {
   sourceNoteDisplayState,
   type SourceNoteWorkspace,
 } from "../src/lib/source-notes.ts";
+import {
+  sourceKind,
+  supportsSourceNote,
+} from "../src/components/personal-brain/api.ts";
 
 test("PDF Evidence locator resolves only a positive page", () => {
   assert.equal(pdfPageFromLocator({ kind: "pdf_page", page_number: 3 }), 3);
@@ -45,4 +49,10 @@ test("Source Note display state distinguishes generation, completion, and retry"
   assert.equal(sourceNoteDisplayState(workspace("completed")), "generating");
   assert.equal(sourceNoteDisplayState(workspace("completed", note)), "completed");
   assert.equal(sourceNoteDisplayState(workspace("failed")), "failed");
+});
+
+test("Instagram image posts use the Instagram Library type and support Source Notes", () => {
+  assert.equal(sourceKind("instagram_post"), "IG");
+  assert.equal(supportsSourceNote("instagram_post"), true);
+  assert.equal(supportsSourceNote("instagram_reel"), true);
 });

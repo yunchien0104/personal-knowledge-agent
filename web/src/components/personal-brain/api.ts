@@ -21,12 +21,12 @@ export async function getApi<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function sourceKind(type: Asset["source_type"]): SourceKind {
   if (type === "pdf") return "PDF";
-  if (type === "instagram_reel") return "IG";
+  if (type === "instagram_reel" || type === "instagram_post") return "IG";
   return "TH";
 }
 
 export function supportsSourceNote(type: Asset["source_type"]) {
-  return type === "pdf" || type === "threads";
+  return type === "pdf" || type === "threads" || type === "instagram_post" || type === "instagram_reel";
 }
 
 function statusLabel(status: string): KnowledgeStatus {
@@ -47,6 +47,9 @@ function ingestionMessage(asset: Asset) {
     threads_fetch_timeout: "Threads 暫時逾時，系統會依重試規則再次處理。",
     threads_fetch_failed: "Threads 暫時無法載入，系統會依重試規則再次處理。",
     browser_runtime_missing: "處理服務尚未安裝 Threads 瀏覽器執行環境。",
+    invalid_instagram_contract: "Instagram Contract 或圖片驗證失敗，未發布任何內容。",
+    invalid_storage_path: "Instagram 上傳路徑驗證失敗。",
+    instagram_worker_internal_error: "Instagram 處理服務暫時無法完成工作。",
   };
   return code ? messages[code] ?? "來源處理失敗；未發布任何不完整版本。" : null;
 }
@@ -63,6 +66,8 @@ function pdfName(value: string | null) {
 
 export function assetTitle(asset: Asset) {
   if (asset.source_type === "pdf") return pdfName(asset.source_external_id) ?? `PDF ${asset.id.slice(0, 8)}`;
+  if (asset.source_type === "instagram_post") return "Instagram 圖片貼文";
+  if (asset.source_type === "instagram_reel") return "Instagram Reel";
   if (asset.source_url) {
     try {
       return new URL(asset.source_url).hostname.replace(/^www\./, "");
@@ -70,7 +75,7 @@ export function assetTitle(asset: Asset) {
       return asset.source_url;
     }
   }
-  return asset.source_type === "instagram_reel" ? "Instagram Reel" : "Threads 收藏";
+  return "Threads 收藏";
 }
 
 export function toKnowledgeItems(assets: Asset[], notes: Note[]): KnowledgeItem[] {
@@ -80,7 +85,11 @@ export function toKnowledgeItems(assets: Asset[], notes: Note[]): KnowledgeItem[
     category: "source",
     title: assetTitle(asset),
     meta: `${new Date(asset.created_at).toLocaleDateString("zh-TW")} · ${asset.status}`,
-    status: statusLabel(asset.status),
+    status: statusLabel(
+      asset.source_type === "instagram_post" || asset.source_type === "instagram_reel"
+        ? asset.ingestion_job?.status ?? asset.status
+        : asset.status,
+    ),
     excerpt: ingestionMessage(asset)
       ?? (asset.active_revision_id ? "來源已建立可追溯版本。" : "來源已保存，尚未建立可閱讀摘要。"),
     updatedAt: asset.updated_at,

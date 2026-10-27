@@ -227,6 +227,50 @@ class SourceNoteWorkerTests(unittest.TestCase):
         self.assertEqual(len(gateway.publications), 1)
         self.assertEqual(gateway.failures, [])
 
+    def test_instagram_image_evidence_uses_the_same_grounded_source_note_pipeline(self):
+        gateway = FakeGateway()
+        source_url = "https://www.instagram.com/p/CODEX12345/"
+        locator = {
+            "kind": "instagram_image", "shortcode": "CODEX12345", "image_index": 0,
+            "media_id": "image-0", "start_offset": 0, "end_offset": len(EXCERPT),
+            "source_hash": SOURCE_HASH,
+        }
+        gateway.context.update({"sourceType": "instagram_post", "sourceUrl": source_url})
+        gateway.context["evidence"][0]["locator"] = locator
+        gateway.artifact = {
+            "schema_version": 1,
+            "source_type": "instagram_post",
+            "source_url": source_url,
+            "source_hash": SOURCE_HASH,
+            "segments": [{"text": EXCERPT, "evidence_locator": locator}],
+        }
+
+        result = SourceNoteWorker(gateway, MockModel(), "note-worker").process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.failures, [])
+
+    def test_instagram_reel_evidence_uses_the_same_grounded_source_note_pipeline(self):
+        gateway = FakeGateway()
+        source_url = "https://www.instagram.com/reel/CODEX12345/"
+        locator = {
+            "kind": "video_segment", "start_seconds": 0, "end_seconds": 3.5,
+            "start_offset": 0, "end_offset": len(EXCERPT), "source_hash": SOURCE_HASH,
+            "frame_ids": ["frame-0"],
+        }
+        gateway.context.update({"sourceType": "instagram_reel", "sourceUrl": source_url})
+        gateway.context["evidence"][0]["locator"] = locator
+        gateway.artifact = {
+            "schema_version": 1, "source_type": "instagram_reel",
+            "source_url": source_url, "source_hash": SOURCE_HASH,
+            "segments": [{"text": EXCERPT, "evidence_locator": locator}],
+        }
+        result = SourceNoteWorker(gateway, MockModel(), "note-worker").process_one()
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.failures, [])
+
     def test_unknown_evidence_id_fails_without_publication(self):
         output = valid_output()
         output["facts"][0]["citations"][0]["evidenceId"] = "67000000-0000-4000-8000-000000000007"
