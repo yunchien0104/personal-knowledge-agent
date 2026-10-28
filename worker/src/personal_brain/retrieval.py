@@ -198,7 +198,7 @@ def chunk_normalized_segments(
     full_text = artifact.get("text")
     segments = artifact.get("segments")
     if (
-        artifact.get("schema_version") != 1
+        artifact.get("schema_version") not in {1, 2}
         or source_type not in {"instagram_post", "instagram_reel"}
         or not isinstance(source_hash, str)
         or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
@@ -268,6 +268,120 @@ def chunk_normalized_segments(
         rebuilt = "\n".join(reconstructed)
     if rebuilt != full_text or not chunks:
         raise RetrievalError("invalid_normalized_artifact", "Normalized source text is inconsistent", retryable=False)
+    return chunks
+
+
+def chunk_normalized_threads(
+    artifact: Mapping[str, Any],
+    evidence: Sequence[Mapping[str, Any]],
+    *,
+    max_characters: int = 1200,
+    overlap_characters: int = 180,
+) -> list[RetrievalChunk]:
+    """Chunk a normalized Threads post once while retaining segment Evidence."""
+
+    if not 200 <= max_characters <= 4000:
+        raise ValueError("max_characters must be between 200 and 4000")
+    if not 0 <= overlap_characters < max_characters // 2:
+        raise ValueError("overlap_characters must be less than half the chunk size")
+    source_hash = artifact.get("source_hash")
+    full_text = artifact.get("text")
+    segments = artifact.get("segments")
+    if (
+        artifact.get("schema_version") != 1
+        or artifact.get("source_type") != "threads"
+        or not isinstance(source_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
+        or not isinstance(full_text, str)
+        or not full_text
+        or not isinstance(segments, list)
+        or not segments
+    ):
+        raise RetrievalError(
+            "invalid_normalized_artifact",
+            "Normalized Threads post is invalid",
+            retryable=False,
+        )
+
+    chunks: list[RetrievalChunk] = []
+    previous_end = 0
+    expected_url: str | None = None
+    expected_post_id: str | None = None
+    for segment_index, segment in enumerate(segments):
+        if not isinstance(segment, Mapping) or not isinstance(segment.get("text"), str):
+            raise RetrievalError(
+                "invalid_normalized_artifact", "Threads segment is invalid", retryable=False
+            )
+        text = segment["text"]
+        locator = segment.get("evidence_locator")
+        if not isinstance(locator, Mapping):
+            raise RetrievalError(
+                "invalid_normalized_artifact", "Threads locator is invalid", retryable=False
+            )
+        start = _integer(locator.get("start_offset"), "segment start offset")
+        end = _integer(locator.get("end_offset"), "segment end offset")
+        url = locator.get("url")
+        post_id = locator.get("post_id")
+        if segment_index == 0:
+            expected_url = url if isinstance(url, str) else None
+            expected_post_id = post_id if isinstance(post_id, str) else None
+        offsets_valid = (
+            start == 0 if segment_index == 0
+            else start <= previous_end and end > previous_end
+        )
+        if (
+            locator.get("kind") != "threads_post"
+            or locator.get("source_hash") != source_hash
+            or not expected_url
+            or not expected_post_id
+            or url != expected_url
+            or post_id != expected_post_id
+            or not offsets_valid
+            or end != start + len(text)
+            or full_text[start:end] != text
+        ):
+            raise RetrievalError(
+                "invalid_normalized_artifact",
+                "Threads locator is inconsistent",
+                retryable=False,
+            )
+        matches = [
+            row for row in evidence
+            if row.get("sourceHash") == source_hash
+            and row.get("excerpt") == text
+            and row.get("locator") == locator
+            and isinstance(row.get("id"), str)
+        ]
+        if len(matches) != 1:
+            raise RetrievalError(
+                "invalid_evidence_mapping",
+                "Threads segment does not map to exactly one validated Evidence row",
+                retryable=False,
+            )
+
+        unique_local_start = 0 if segment_index == 0 else previous_end - start
+        unique_text = text[unique_local_start:]
+        for local_start, local_end in _chunk_spans(
+            unique_text, max_characters, overlap_characters
+        ):
+            content = unique_text[local_start:local_end]
+            chunks.append(RetrievalChunk(
+                chunk_index=len(chunks),
+                evidence_id=str(matches[0]["id"]),
+                content=content,
+                search_text=lexical_search_text(normalize_for_retrieval(content)),
+                content_hash=sha256(content.encode()).hexdigest(),
+                start_offset=start + unique_local_start + local_start,
+                end_offset=start + unique_local_start + local_end,
+                locator=dict(locator),
+            ))
+        previous_end = end
+    if previous_end != len(full_text) or not chunks:
+        raise RetrievalError(
+            "invalid_normalized_artifact",
+            "Threads text is inconsistent",
+            retryable=False,
+        )
     return chunks
 
 
@@ -427,11 +541,13 @@ class RetrievalIndexer:
             raise RetrievalError("invalid_normalized_artifact", "Normalized artifact is invalid", retryable=False) from error
         if not isinstance(artifact, Mapping) or artifact.get("source_hash") != context.get("sourceFingerprint"):
             raise RetrievalError("invalid_normalized_artifact", "Artifact fingerprint is invalid", retryable=False)
-        chunks = (
-            chunk_normalized_segments(artifact, evidence)
-            if artifact.get("source_type") in {"instagram_post", "instagram_reel"}
-            else chunk_normalized_pdf(artifact, evidence)
-        )
+        source_type = artifact.get("source_type")
+        if source_type in {"instagram_post", "instagram_reel"}:
+            chunks = chunk_normalized_segments(artifact, evidence)
+        elif source_type == "threads":
+            chunks = chunk_normalized_threads(artifact, evidence)
+        else:
+            chunks = chunk_normalized_pdf(artifact, evidence)
         vectors = self.provider.embed([chunk.search_text for chunk in chunks])
         return [chunk.publication(vector) for chunk, vector in zip(chunks, vectors, strict=True)]
 

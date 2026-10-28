@@ -353,7 +353,8 @@ select is(
   'job retains a safe terminal error code'
 );
 select is(
-  (select count(*) from public.jobs where status = 'failed'),
+  (select count(*) from public.jobs
+   where id = (select job_id from queue_test_state) and status = 'failed'),
   1::bigint,
   'the logical job has one terminal row'
 );

@@ -43,6 +43,23 @@ test("validates caption plus transcript Reel Contract", async () => {
   assert.deepEqual(await validateInstagramReelContract(value), value);
 });
 
+test("accepts Contract v2 with explicit transcript provenance", async () => {
+  const value = contract();
+  const v2 = {
+    ...value,
+    schema_version: 2,
+    metadata: { ...value.metadata, duration_seconds: 4.2 },
+    segments: [value.segments[0], {
+      ...value.segments[1],
+      evidence_locator: {
+        ...value.segments[1].evidence_locator,
+        content_origin: "source_transcript",
+      },
+    }],
+  };
+  assert.equal((await validateInstagramReelContract(v2)).schema_version, 2);
+});
+
 test("accepts caption-only Reel without keyframes", async () => {
   const value = contract();
   const text = value.segments[0].text;

@@ -807,3 +807,62 @@
   headers when it replaces the Supabase response with an anonymous-login redirect.
 - Added focused Auth integration assertions for session-cookie propagation and
   non-cacheable login responses. No Supabase schema or user data was changed.
+
+### Instagram Reel URL-only cloud pipeline (local implementation, 2026-10-29)
+
+- Replaced the Reel UI's Mac Contract/keyframe requirement with a canonical
+  URL-only submission while retaining the old upload API as a rollback path.
+- Added an additive cloud-ingestion RPC and automatic Source Note queue trigger;
+  the existing fenced publication, private Storage, Retrieval and Citation
+  paths remain unchanged.
+- Added a licensed-provider boundary with an explicit media-host allowlist,
+  bounded temporary video download, FFmpeg audio/keyframe extraction, chunked
+  `gpt-transcribe` transcription, Vision observations and Unified Reel Contract
+  v2 provenance. Original video remains temporary and is deleted after a Job.
+- Contract v2 labels AI-derived visual observations separately from source
+  transcript text. It is backward compatible with existing Contract v1 imports.
+- PASS locally: 39 affected Worker tests, including six cloud-pipeline
+  unit/media checks, the bundled FFmpeg binary, silent-video handling and
+  existing Reel/Source Note/Retrieval regressions; Web TypeScript/ESLint, ten
+  Instagram Web tests, Next.js production build, and `git diff --check`.
+- PASS after starting the existing Local Supabase environment: the complete
+  394-assertion pgTAP suite includes the Reel cloud-pipeline protocol and all
+  existing queue/RLS/publication regressions.
+- Cloud migration/deployment and paid live-provider E2E remain pending. They
+  require the acquisition provider endpoint/key/allowlist and Worker FFmpeg
+  runtime configuration; no live paid call or Cloud mutation was performed.
+
+### Threads ingestion workflow restoration (local implementation, 2026-10-29)
+
+- Root cause of the HTTP 500: the merged Web route called
+  `create_threads_asset_and_enqueue`, but this branch did not include the RPC
+  migration or Threads Worker implementation. In addition,
+  `WORKER_CAPABILITY=all` omitted the Threads Worker, the hosted Worker only
+  processed explicit `/run-once` requests, and Retrieval treated Threads JSON
+  as a PDF artifact.
+- Added an additive, undeployed Migration for authenticated atomic Asset/Job
+  creation, safe failed-job requeue, immutable Threads identity, fenced
+  Artifact/Evidence publication, topic-aware Source Note context, and durable
+  Retrieval indexing. Grants remain restricted to authenticated submission and
+  service-role Worker functions, with tenant RLS preserved.
+- Added public single-post ingestion plus an optional user-provided text
+  fallback. Providing text bypasses public fetching and still produces the
+  same canonical URL, immutable artifact, Evidence locators, Source Note, and
+  Retrieval path; inaccessible public posts are never fabricated.
+- Added the missing `all` dispatcher registration, automatic locked queue
+  polling in the existing Worker Web service, Playwright Chromium Docker
+  runtime, Render Blueprint, user-visible fallback input, request correlation
+  IDs for safe 500 diagnostics, and overlap-safe Threads Retrieval chunks.
+- The first real Migration run found and fixed a PL/pgSQL composite-row `INTO`
+  error that static SQL parsing could not detect. The database protocol was also
+  made fixture-scoped so persistent local Jobs cannot contaminate queue claims.
+- PASS locally: complete pgTAP 394/394; Threads Web 5/5; authenticated Product
+  API 6/6; PDF upload integration 5/5; complete Worker suite 110/110;
+  TypeScript, ESLint, Next production build, YAML parse, and `git diff --check`.
+- PASS isolated E2E: authenticated Threads enqueue -> durable Worker claim ->
+  private Storage object -> validated Revision -> Artifact/Evidence -> grounded
+  Source Note/Claim/Citation -> Retrieval chunk. Each expected output existed
+  exactly once and both ingestion and indexing Jobs completed.
+- The E2E also exposed and fixed a PDF cleanup clock-skew edge case between the
+  host and local database. No Cloud migration, Production deploy, or paid
+  external provider call was performed.

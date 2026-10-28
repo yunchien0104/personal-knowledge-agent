@@ -9,7 +9,7 @@ import signal
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Mapping, Protocol
 
 from personal_brain.queue_runtime import ProcessResult
@@ -147,6 +147,32 @@ def _validated_port(environ: Mapping[str, str]) -> int:
     return port
 
 
+def _validated_poll_interval(environ: Mapping[str, str]) -> float:
+    try:
+        interval = float(environ.get("JOB_POLL_INTERVAL_SECONDS", "2"))
+    except ValueError as error:
+        raise ValueError("JOB_POLL_INTERVAL_SECONDS must be a number") from error
+    if interval <= 0 or interval > 60:
+        raise ValueError("JOB_POLL_INTERVAL_SECONDS must be between 0 and 60")
+    return interval
+
+
+def poll_queue(server: WorkerHttpServer, stop_event: Event, interval: float) -> None:
+    """Continuously drain the durable queue without racing the run-once endpoint."""
+
+    while not stop_event.is_set():
+        result: ProcessResult | None = None
+        if server.run_lock.acquire(blocking=False):
+            try:
+                result = server.worker.process_one()
+            except Exception as error:
+                LOGGER.error("background queue poll failed: %s", type(error).__name__)
+            finally:
+                server.run_lock.release()
+        if result is None or result.status == "idle":
+            stop_event.wait(interval)
+
+
 def create_server(
     worker: QueueWorker,
     run_once_secret: str,
@@ -165,6 +191,7 @@ def serve() -> int:
     try:
         run_once_secret = _validated_secret(os.environ)
         port = _validated_port(os.environ)
+        poll_interval = _validated_poll_interval(os.environ)
         worker = build_queue_worker()
         server = create_server(
             worker,
@@ -175,7 +202,15 @@ def serve() -> int:
         print(f"worker web error: {error}", file=sys.stderr)
         return 2
 
+    stop_event = Event()
+    poller = Thread(
+        target=poll_queue,
+        args=(server, stop_event, poll_interval),
+        name="worker-queue-poller",
+    )
+
     def request_shutdown(_signum: int, _frame: object) -> None:
+        stop_event.set()
         Thread(target=server.shutdown, name="worker-http-shutdown", daemon=True).start()
 
     previous_handlers = {
@@ -183,8 +218,11 @@ def serve() -> int:
         for signum in (signal.SIGINT, signal.SIGTERM)
     }
     try:
+        poller.start()
         server.serve_forever()
     finally:
+        stop_event.set()
+        poller.join()
         server.server_close()
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)

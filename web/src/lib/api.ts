@@ -15,8 +15,18 @@ export const createAssetSchema = z
     source_type: z.enum(["pdf", "instagram_reel", "instagram_post", "threads"]),
     source_url: z.url().max(2048).nullable().optional(),
     source_external_id: z.string().trim().min(1).max(512).nullable().optional(),
+    source_text: z.string().trim().min(1).max(100000).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.source_text !== undefined && value.source_type !== "threads") {
+      context.addIssue({
+        code: "custom",
+        path: ["source_text"],
+        message: "Fallback text is only supported for Threads assets.",
+      });
+    }
+  });
 
 export type AuthenticatedApi = {
   supabase: SupabaseClient;

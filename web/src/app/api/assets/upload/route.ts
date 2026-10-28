@@ -19,6 +19,7 @@ import {
 
 const ASSET_COLUMNS = "id,user_id,source_external_id,status,created_at";
 const UPLOAD_WINDOW_MS = 2 * 60 * 60 * 1000;
+const MAX_CLOCK_SKEW_MS = 60 * 1000;
 
 const uploadRequestSchema = z.discriminatedUnion("action", [
   z.object({
@@ -46,7 +47,7 @@ async function ownedPdf(auth: Authenticated, assetId: string) {
 
 function insideUploadWindow(createdAt: string) {
   const age = Date.now() - new Date(createdAt).getTime();
-  return Number.isFinite(age) && age >= 0 && age <= UPLOAD_WINDOW_MS;
+  return Number.isFinite(age) && age >= -MAX_CLOCK_SKEW_MS && age <= UPLOAD_WINDOW_MS;
 }
 
 async function deletePreparedAsset(auth: Authenticated, assetId: string, removeFile: boolean) {

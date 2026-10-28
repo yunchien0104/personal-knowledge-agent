@@ -313,7 +313,10 @@ test("authenticated users create, read, and paginate only their assets", async (
   const payload = await page.json() as ApiEnvelope<Asset[]>;
   assert.equal(page.status, 200);
   assert.equal(payload.data.length, 1);
-  assert.equal(payload.meta?.total, 2);
+  assert.equal(
+    payload.meta?.total,
+    createdAssets.filter((asset) => asset.owner === "a").length,
+  );
   assert(payload.data.every((asset) => asset.user_id === userA.id));
 
   const own = await appRequest(`/api/assets/${createdAssets[0].id}`, {}, userA.jar);

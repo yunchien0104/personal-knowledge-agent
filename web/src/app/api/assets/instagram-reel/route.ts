@@ -11,6 +11,7 @@ import {
 import { PDF_BUCKET } from "@/lib/pdf";
 
 const requestSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("submit_url"), source_url: z.string().trim().min(1).max(2048) }).strict(),
   z.object({ action: z.literal("prepare"), contract: z.unknown() }).strict(),
   z.object({ action: z.literal("complete"), asset_id: uuidSchema }).strict(),
 ]);
@@ -72,6 +73,34 @@ async function prepare(auth: Authenticated, raw: unknown) {
   return jsonSuccess({ asset: { id: assetId }, uploads }, 201);
 }
 
+async function submitUrl(auth: Authenticated, sourceUrl: string) {
+  const identity = normalizeInstagramReelUrl(sourceUrl);
+  if (!identity) return jsonError(400, "INVALID_INSTAGRAM_REEL_URL", "請貼上公開 Instagram Reel 網址。");
+  const { data, error } = await auth.supabase.rpc("create_instagram_reel_asset", {
+    p_source_url: identity.canonicalUrl,
+    p_external_id: identity.shortcode,
+  });
+  const result = data as {
+    duplicate?: boolean;
+    asset?: { id?: string; status?: string; active_revision_id?: string | null };
+  } | null;
+  const assetId = result?.asset?.id;
+  if (error || typeof assetId !== "string") {
+    return jsonError(500, "DATABASE_ERROR", "Reel 匯入無法建立。");
+  }
+  if (result?.duplicate && result.asset?.active_revision_id) {
+    return jsonError(409, "ASSET_CONFLICT", "這支 Reel 已經在 Library 中。", { assetId });
+  }
+  const { data: job, error: jobError } = await auth.supabase.rpc(
+    "enqueue_instagram_reel_cloud_ingestion",
+    { p_asset_id: assetId },
+  );
+  if (jobError || !job) {
+    return jsonError(500, "QUEUE_ERROR", "Reel 已建立，但無法排入雲端處理工作。", { assetId });
+  }
+  return jsonSuccess({ asset: result?.asset, job }, result?.duplicate ? 200 : 201);
+}
+
 async function complete(auth: Authenticated, assetId: string) {
   const { data: asset, error } = await auth.supabase.from("assets")
     .select("id,source_type,source_url,source_external_id,status").eq("id", assetId)
@@ -111,7 +140,10 @@ export async function POST(request: Request) {
   try { body = await request.json(); } catch { return jsonError(400, "INVALID_JSON", "Request 必須是有效 JSON。"); }
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) return validationError(parsed.error);
-  return parsed.data.action === "prepare" ? prepare(auth, parsed.data.contract) : complete(auth, parsed.data.asset_id);
+  if (parsed.data.action === "submit_url") return submitUrl(auth, parsed.data.source_url);
+  return parsed.data.action === "prepare"
+    ? prepare(auth, parsed.data.contract)
+    : complete(auth, parsed.data.asset_id);
 }
 
 export async function DELETE(request: Request) {

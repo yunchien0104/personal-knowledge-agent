@@ -48,8 +48,9 @@ def validate_instagram_reel_contract(value: Any) -> dict[str, Any]:
                 "author", "published_at", "source_hash", "text", "media", "segments",
                 "metadata", "provenance", "warnings"}
     _exact(result, required, set(), "Instagram Reel contract")
-    if result["schema_version"] != 1 or result["status"] != "ok" or result["source_type"] != "instagram_reel":
-        raise InstagramContractError("only successful Instagram Reel Contract v1 is accepted")
+    schema_version = result["schema_version"]
+    if schema_version not in {1, 2} or result["status"] != "ok" or result["source_type"] != "instagram_reel":
+        raise InstagramContractError("only successful Instagram Reel Contract v1 or v2 is accepted")
     shortcode = result["source_external_id"]
     canonical = f"https://www.instagram.com/reel/{shortcode}/"
     if not isinstance(shortcode, str) or not _SHORTCODE.fullmatch(shortcode) or result["source_url"] != canonical:
@@ -96,6 +97,14 @@ def validate_instagram_reel_contract(value: Any) -> dict[str, Any]:
             if item["mime"] not in IMAGE_MIMES or not isinstance(item["sha256"], str) or not _HASH.fullmatch(item["sha256"]) \
                or type(size) is not int or not 1 <= size <= MAX_KEYFRAME_BYTES:
                 raise InstagramContractError("Instagram Reel keyframe is invalid")
+            timestamp = item.get("duration_seconds")
+            if timestamp is not None and (
+                isinstance(timestamp, bool)
+                or not isinstance(timestamp, (int, float))
+                or not math.isfinite(timestamp)
+                or timestamp < 0
+            ):
+                raise InstagramContractError("Instagram Reel keyframe timestamp is invalid")
             frame_ids.add(media_id)
             total += size
         else:
@@ -133,13 +142,23 @@ def validate_instagram_reel_contract(value: Any) -> dict[str, Any]:
                 raise InstagramContractError("Instagram Reel caption locator is invalid")
             saw_caption = True
         elif locator.get("kind") == "video_segment":
-            _exact(locator, {"kind", "start_seconds", "end_seconds", "start_offset", "end_offset", "source_hash"}, {"frame_ids"}, "video locator")
+            optional = {"frame_ids"} if schema_version == 1 else {"frame_ids", "content_origin", "model_name"}
+            _exact(locator, {"kind", "start_seconds", "end_seconds", "start_offset", "end_offset", "source_hash"}, optional, "video locator")
             start_seconds, end_seconds = locator["start_seconds"], locator["end_seconds"]
             refs = locator.get("frame_ids", [])
             if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in (start_seconds, end_seconds)) \
-               or start_seconds < previous_seconds or end_seconds <= start_seconds \
+               or (schema_version == 1 and start_seconds < previous_seconds) or end_seconds <= start_seconds \
                or not isinstance(refs, list) or not set(refs).issubset(frame_ids):
                 raise InstagramContractError("Instagram Reel video locator is invalid")
+            if schema_version == 2:
+                origin = locator.get("content_origin")
+                if origin not in {"source_transcript", "ai_visual_observation"}:
+                    raise InstagramContractError("Instagram Reel content origin is invalid")
+                model_name = locator.get("model_name")
+                if (origin == "ai_visual_observation") != isinstance(model_name, str) or (
+                    isinstance(model_name, str) and (not model_name or len(model_name) > 128)
+                ):
+                    raise InstagramContractError("Instagram Reel visual model provenance is invalid")
             previous_seconds = float(end_seconds)
         else:
             raise InstagramContractError("Instagram Reel locator kind is invalid")
@@ -149,7 +168,8 @@ def validate_instagram_reel_contract(value: Any) -> dict[str, Any]:
     if rebuilt != text:
         raise InstagramContractError("Instagram Reel segments do not reconstruct text")
     metadata = _obj(result["metadata"], "metadata")
-    _exact(metadata, {"reel_shortcode"}, {"transcript_language"}, "metadata")
+    metadata_optional = {"transcript_language"} if schema_version == 1 else {"transcript_language", "duration_seconds"}
+    _exact(metadata, {"reel_shortcode"}, metadata_optional, "metadata")
     if metadata["reel_shortcode"] != shortcode:
         raise InstagramContractError("Instagram Reel metadata is invalid")
     if metadata.get("transcript_language") is not None and (
@@ -158,6 +178,13 @@ def validate_instagram_reel_contract(value: Any) -> dict[str, Any]:
         or len(metadata["transcript_language"]) > 64
     ):
         raise InstagramContractError("Instagram Reel transcript language is invalid")
+    if metadata.get("duration_seconds") is not None and (
+        isinstance(metadata["duration_seconds"], bool)
+        or not isinstance(metadata["duration_seconds"], (int, float))
+        or not math.isfinite(metadata["duration_seconds"])
+        or not 0 < metadata["duration_seconds"] <= 21600
+    ):
+        raise InstagramContractError("Instagram Reel metadata duration is invalid")
     provenance = _obj(result["provenance"], "provenance")
     _exact(provenance, {"retrieved_at", "processor_version", "retrieval_method"}, set(), "provenance")
     processor = provenance["processor_version"]

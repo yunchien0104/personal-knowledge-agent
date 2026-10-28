@@ -62,11 +62,16 @@ export const threadsEnqueueResultSchema = z.object({
   }).nullable(),
 });
 
-export async function submitThreadsUrl(url: string) {
+export async function submitThreadsUrl(url: string, sourceText?: string) {
+  const fallback = sourceText?.trim();
   const response = await fetch("/api/assets", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_type: "threads", source_url: url }),
+    body: JSON.stringify({
+      source_type: "threads",
+      source_url: url,
+      ...(fallback ? { source_text: fallback } : {}),
+    }),
   });
   const payload = await response.json() as {
     data: unknown;

@@ -73,14 +73,19 @@ def build_instagram_post_worker():
 
 
 def build_instagram_reel_worker():
+    from personal_brain.instagram_reel_cloud import InstagramReelCloudPipeline
     from personal_brain.instagram_reel_ingestion import InstagramReelIngestionWorker
     from personal_brain.supabase_gateway import SupabaseGateway
     worker_id = os.environ.get("WORKER_ID", "").strip()
     if not worker_id:
         raise ValueError("WORKER_ID is required")
+    cloud_pipeline = None
+    if os.environ.get("REEL_ACQUISITION_API_URL", "").strip():
+        cloud_pipeline = InstagramReelCloudPipeline.from_environment()
     return InstagramReelIngestionWorker(
         SupabaseGateway.from_environment(), worker_id,
         lease_seconds=int(os.environ.get("JOB_LEASE_SECONDS", "120")),
+        cloud_pipeline=cloud_pipeline,
     )
 
 
@@ -249,6 +254,7 @@ def build_queue_worker():
         workers = [
             build_deletion_worker(),
             build_ingestion_worker(),
+            build_threads_worker(),
             build_instagram_post_worker(),
             build_instagram_reel_worker(),
             build_source_note_worker(),

@@ -5,7 +5,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from personal_brain.http_server import create_server
+from personal_brain.http_server import create_server, poll_queue
 from personal_brain.ingestion import ProcessResult
 
 
@@ -34,6 +34,19 @@ class BlockingWorker(FakeWorker):
         if not self.release.wait(timeout=5):
             raise TimeoutError("test worker did not release")
         return self.result
+
+
+class SequenceWorker(FakeWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.idle_reached = Event()
+
+    def process_one(self) -> ProcessResult:
+        self.calls += 1
+        if self.calls == 1:
+            return ProcessResult("completed", "job-1")
+        self.idle_reached.set()
+        return ProcessResult("idle")
 
 
 class WorkerHttpServerTests(unittest.TestCase):
@@ -125,6 +138,20 @@ class WorkerHttpServerTests(unittest.TestCase):
     def test_short_secret_is_rejected_at_startup(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least 32"):
             create_server(self.worker, "too-short", host="127.0.0.1", port=0)
+
+    def test_background_poller_drains_jobs_until_queue_is_idle(self) -> None:
+        worker = SequenceWorker()
+        server = create_server(worker, SECRET, host="127.0.0.1", port=0)
+        stopped = Event()
+        poller = Thread(target=poll_queue, args=(server, stopped, 60))
+        poller.start()
+        self.assertTrue(worker.idle_reached.wait(timeout=5))
+        stopped.set()
+        poller.join(timeout=5)
+        server.server_close()
+
+        self.assertFalse(poller.is_alive())
+        self.assertEqual(worker.calls, 2)
 
 
 if __name__ == "__main__":

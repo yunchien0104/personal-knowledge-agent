@@ -58,6 +58,8 @@ const videoLocatorSchema = z.object({
   end_offset: z.number().int().positive(),
   source_hash: hashSchema,
   frame_ids: z.array(mediaIdSchema).max(INSTAGRAM_REEL_MAX_KEYFRAMES).optional(),
+  content_origin: z.enum(["source_transcript", "ai_visual_observation"]).optional(),
+  model_name: z.string().min(1).max(128).optional(),
 }).strict();
 
 const segmentSchema = z.object({
@@ -68,7 +70,7 @@ const segmentSchema = z.object({
 }).strict();
 
 const reelContractSchema = z.object({
-  schema_version: z.literal(1),
+  schema_version: z.union([z.literal(1), z.literal(2)]),
   status: z.literal("ok"),
   source_type: z.literal("instagram_reel"),
   source_url: z.url().max(2048),
@@ -82,6 +84,7 @@ const reelContractSchema = z.object({
   metadata: z.object({
     reel_shortcode: shortcodeSchema,
     transcript_language: z.string().min(1).max(64).nullable().optional(),
+    duration_seconds: z.number().positive().max(21_600).optional(),
   }).strict(),
   provenance: z.object({
     retrieved_at: z.iso.datetime({ offset: true }),
@@ -167,8 +170,15 @@ export async function validateInstagramReelContract(input: unknown) {
       }
       sawCaption = true;
     } else {
-      if (locator.end_seconds <= locator.start_seconds || locator.start_seconds < previousSeconds) {
+      if (locator.end_seconds <= locator.start_seconds
+        || (contract.schema_version === 1 && locator.start_seconds < previousSeconds)) {
         throw new Error("Instagram Reel 時間定位不正確。");
+      }
+      if (contract.schema_version === 2) {
+        const visual = locator.content_origin === "ai_visual_observation";
+        if (!locator.content_origin || visual !== Boolean(locator.model_name)) {
+          throw new Error("Instagram Reel 內容來源標記不正確。");
+        }
       }
       if ((locator.frame_ids ?? []).some((frameId) => !frameIds.has(frameId))) {
         throw new Error("Instagram Reel frame locator 不正確。");

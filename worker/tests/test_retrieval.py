@@ -12,6 +12,7 @@ from personal_brain.retrieval import (
     RetrievalIndexer,
     chunk_normalized_pdf,
     chunk_normalized_segments,
+    chunk_normalized_threads,
 )
 
 
@@ -133,6 +134,40 @@ class FixedProvider:
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_threads_overlap_is_indexed_once_with_exact_evidence(self):
+        full_text = "x" * 210
+        segments = [
+            {"text": full_text[:150], "evidence_locator": {
+                "kind": "threads_post", "url": "https://www.threads.net/t/DewcDm5n4FD",
+                "post_id": "DewcDm5n4FD", "start_offset": 0, "end_offset": 150,
+                "source_hash": SOURCE_HASH,
+            }},
+            {"text": full_text[130:], "evidence_locator": {
+                "kind": "threads_post", "url": "https://www.threads.net/t/DewcDm5n4FD",
+                "post_id": "DewcDm5n4FD", "start_offset": 130, "end_offset": 210,
+                "source_hash": SOURCE_HASH,
+            }},
+        ]
+        artifact = {
+            "schema_version": 1, "source_type": "threads", "source_hash": SOURCE_HASH,
+            "text": full_text, "segments": segments,
+        }
+        evidence = [
+            {"id": EVIDENCE_1, "sourceHash": SOURCE_HASH, "excerpt": segments[0]["text"],
+             "locator": segments[0]["evidence_locator"]},
+            {"id": EVIDENCE_2, "sourceHash": SOURCE_HASH, "excerpt": segments[1]["text"],
+             "locator": segments[1]["evidence_locator"]},
+        ]
+
+        chunks = chunk_normalized_threads(
+            artifact, evidence, max_characters=200, overlap_characters=0
+        )
+
+        self.assertEqual("".join(chunk.content for chunk in chunks), full_text)
+        self.assertEqual([chunk.evidence_id for chunk in chunks], [EVIDENCE_1, EVIDENCE_2])
+        self.assertEqual([(chunk.start_offset, chunk.end_offset) for chunk in chunks],
+                         [(0, 150), (150, 210)])
+
     def test_reel_segments_preserve_caption_and_timestamp_evidence(self):
         caption, transcript = "Reel caption", "Transcript evidence"
         text = caption + "\n\n" + transcript

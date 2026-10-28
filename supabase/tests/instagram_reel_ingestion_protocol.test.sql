@@ -1,12 +1,14 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path=public,extensions;
-select plan(29);
+select plan(32);
 
 select ok(not has_function_privilege('anon','public.create_instagram_reel_asset(text,text)','execute'),'anon cannot create Reel Assets');
 select ok(has_function_privilege('authenticated','public.create_instagram_reel_asset(text,text)','execute'),'authenticated can create Reel Assets');
 select ok(not has_function_privilege('anon','public.enqueue_instagram_reel_ingestion(uuid)','execute'),'anon cannot enqueue Reel ingestion');
 select ok(has_function_privilege('authenticated','public.enqueue_instagram_reel_ingestion(uuid)','execute'),'authenticated can enqueue owned Reel ingestion');
+select ok(not has_function_privilege('anon','public.enqueue_instagram_reel_cloud_ingestion(uuid)','execute'),'anon cannot enqueue cloud Reel ingestion');
+select ok(has_function_privilege('authenticated','public.enqueue_instagram_reel_cloud_ingestion(uuid)','execute'),'authenticated can enqueue owned cloud Reel ingestion');
 select ok(not has_function_privilege('authenticated','public.publish_instagram_reel_ingestion(uuid,text,bigint,text,text,text,text,bigint,jsonb,jsonb)','execute'),'authenticated cannot publish Reel ingestion');
 select ok(has_function_privilege('service_role','public.publish_instagram_reel_ingestion(uuid,text,bigint,text,text,text,text,bigint,jsonb,jsonb)','execute'),'service role can publish Reel ingestion');
 select ok(not has_function_privilege('authenticated','public.get_instagram_reel_source_note_context(uuid,text,bigint)','execute'),'user cannot read Worker Source Note context');
@@ -60,6 +62,7 @@ select is((select status from public.assets where id=(select asset_id from reel_
 select is((select count(*) from public.asset_artifacts where revision_id=(select revision_id from reel_state)),2::bigint,'publication stores Contract and keyframe artifacts');
 select is((select count(*) from public.asset_evidence where revision_id=(select revision_id from reel_state)),2::bigint,'publication stores caption and transcript Evidence');
 select ok((select content_object_key like '%/keyframes/frame-001' from public.asset_evidence where revision_id=(select revision_id from reel_state) and locator_json->>'kind'='video_segment'),'video Evidence points to referenced keyframe');
+select is((select count(*) from public.jobs where asset_id=(select asset_id from reel_state) and job_type='generate_source_note'),1::bigint,'ready Reel automatically enters Source Note queue');
 
 reset role;
 set local role authenticated;

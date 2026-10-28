@@ -3,9 +3,49 @@ import test from "node:test";
 
 import {
   normalizeThreadsUrl,
+  submitThreadsUrl,
   threadsCitationUrl,
   threadsEnqueueResultSchema,
 } from "../src/lib/threads.ts";
+
+test("sends optional user-provided text as the public-fetch fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody: unknown;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return Response.json({ data: {
+      duplicate: false,
+      asset: {
+        id: "73000000-0000-4000-8000-000000000003",
+        source_type: "threads",
+        source_url: "https://www.threads.net/t/DewcDm5n4FD",
+        source_external_id: "DewcDm5n4FD",
+        status: "pending",
+        active_revision_id: null,
+        created_at: "2026-10-22T00:00:00Z",
+        updated_at: "2026-10-22T00:00:00Z",
+      },
+      job: {
+        id: "71000000-0000-4000-8000-000000000001",
+        status: "queued",
+        idempotencyKey: "ingest_threads:73000000-0000-4000-8000-000000000003:source-v1",
+      },
+    } });
+  };
+  try {
+    await submitThreadsUrl(
+      "https://www.threads.net/t/DewcDm5n4FD",
+      "  User-provided evidence.  ",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(requestBody, {
+    source_type: "threads",
+    source_url: "https://www.threads.net/t/DewcDm5n4FD",
+    source_text: "User-provided evidence.",
+  });
+});
 
 test("normalizes supported Threads post links to one canonical identity", () => {
   assert.deepEqual(

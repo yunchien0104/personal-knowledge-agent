@@ -82,10 +82,21 @@ export async function POST(request: Request) {
     }
     const { data, error } = await auth.supabase.rpc(
       "create_threads_asset_and_enqueue",
-      { p_source_url: target.canonicalUrl, p_external_id: target.postId },
+      {
+        p_source_url: target.canonicalUrl,
+        p_external_id: target.postId,
+        p_source_text: parsed.data.source_text ?? null,
+      },
     );
     if (error) {
-      return jsonError(500, "DATABASE_ERROR", "Threads 匯入工作無法建立。");
+      const requestId = crypto.randomUUID();
+      console.error("Threads enqueue RPC failed", { requestId, code: error.code });
+      return jsonError(
+        500,
+        "DATABASE_ERROR",
+        "Threads 匯入工作無法建立，請稍後再試。",
+        { requestId },
+      );
     }
     const result = threadsEnqueueResultSchema.safeParse(data);
     if (!result.success) {
@@ -104,7 +115,12 @@ export async function POST(request: Request) {
 
   const { data, error } = await auth.supabase
     .from("assets")
-    .insert({ ...parsed.data, user_id: auth.user.id })
+    .insert({
+      source_type: parsed.data.source_type,
+      source_url: parsed.data.source_url,
+      source_external_id: parsed.data.source_external_id,
+      user_id: auth.user.id,
+    })
     .select(ASSET_COLUMNS)
     .single();
 

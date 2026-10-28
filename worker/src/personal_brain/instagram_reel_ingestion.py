@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from personal_brain.instagram_contract import InstagramContractError
 from personal_brain.instagram_ingestion import _matches_mime
 from personal_brain.instagram_reel_contract import validate_instagram_reel_contract
+from personal_brain.instagram_reel_cloud import InstagramReelCloudPipeline
 from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
@@ -22,10 +23,12 @@ class ReelGateway(Protocol):
 
 
 class InstagramReelIngestionWorker:
-    def __init__(self, gateway: ReelGateway, worker_id: str, *, lease_seconds: int = 120) -> None:
+    def __init__(self, gateway: ReelGateway, worker_id: str, *, lease_seconds: int = 120,
+                 cloud_pipeline: InstagramReelCloudPipeline | None = None) -> None:
         if not 30 <= lease_seconds <= 600:
             raise ValueError("lease_seconds must be between 30 and 600")
         self.gateway, self.worker_id, self.lease_seconds = gateway, worker_id, lease_seconds
+        self.cloud_pipeline = cloud_pipeline
 
     def _failure(self, job: ClaimedJob, error: Exception) -> ProcessResult:
         retryable = isinstance(error, GatewayError) and error.retryable
@@ -45,10 +48,22 @@ class InstagramReelIngestionWorker:
             return self._failure(job, GatewayError("invalid_claim", "Worker received an unsupported Job", retryable=False))
         try:
             with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
-                raw = self.gateway.download_instagram_reel_contract(job)
-                if len(raw) > 2 * 1024 * 1024:
-                    raise InstagramContractError("Instagram Reel contract is too large")
-                contract = validate_instagram_reel_contract(json.loads(raw))
+                cloud_mode = job.payload.input.get("acquisitionMode") == "cloud"
+                frame_contents: dict[str, bytes] = {}
+                if cloud_mode:
+                    if self.cloud_pipeline is None:
+                        raise GatewayError("reel_cloud_not_configured", "Cloud Reel processing is not configured", retryable=True)
+                    source_url = job.payload.input.get("sourceUrl")
+                    external_id = job.payload.input.get("sourceExternalId")
+                    if not isinstance(source_url, str) or not isinstance(external_id, str):
+                        raise InstagramContractError("Instagram Reel Job identity is invalid")
+                    generated, frame_contents = self.cloud_pipeline.process(source_url, external_id, lease.pulse)
+                    contract = validate_instagram_reel_contract(generated)
+                else:
+                    raw = self.gateway.download_instagram_reel_contract(job)
+                    if len(raw) > 2 * 1024 * 1024:
+                        raise InstagramContractError("Instagram Reel contract is too large")
+                    contract = validate_instagram_reel_contract(json.loads(raw))
                 if contract["source_url"] != job.payload.input.get("sourceUrl") or contract["source_external_id"] != job.payload.input.get("sourceExternalId"):
                     raise InstagramContractError("Instagram Reel Job identity does not match contract")
                 source_hash = contract["source_hash"]
@@ -61,7 +76,9 @@ class InstagramReelIngestionWorker:
                 for media in contract["media"]:
                     if media["kind"] != "keyframe":
                         continue
-                    content = self.gateway.download_instagram_reel_keyframe(job, media["id"])
+                    content = frame_contents.get(media["id"]) if cloud_mode else self.gateway.download_instagram_reel_keyframe(job, media["id"])
+                    if content is None:
+                        raise InstagramContractError("Instagram Reel keyframe is missing")
                     digest = sha256(content).hexdigest()
                     if len(content) != media["size_bytes"] or digest != media["sha256"] or not _matches_mime(content, media["mime"]):
                         raise InstagramContractError("Instagram Reel keyframe bytes do not match contract")

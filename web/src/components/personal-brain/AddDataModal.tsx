@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 
 import { uploadPdf } from "@/lib/pdf-upload-client";
 import { uploadInstagramPost } from "@/lib/instagram-upload-client";
-import { uploadInstagramReel } from "@/lib/instagram-reel-upload-client";
+import { submitInstagramReelUrl } from "@/lib/instagram-reel-upload-client";
 import { submitThreadsUrl } from "@/lib/threads";
 import { PrimaryButton } from "./ui";
 
@@ -52,6 +52,7 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
   async function submitUrl(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const input = event.currentTarget.elements.namedItem("url");
+    const fallback = event.currentTarget.elements.namedItem("source_text");
     if (!(input instanceof HTMLInputElement) || !input.value.trim()) {
       setMessage("請先貼上 Threads 貼文網址。");
       return;
@@ -59,7 +60,10 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
     setBusy(true);
     setMessage(null);
     try {
-      await submitThreadsUrl(input.value);
+      await submitThreadsUrl(
+        input.value,
+        fallback instanceof HTMLTextAreaElement ? fallback.value : undefined,
+      );
       onClose();
       router.push("/library");
       router.refresh();
@@ -78,21 +82,25 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
     const images = form.elements.namedItem("instagram_media");
     if (
       !(url instanceof HTMLInputElement) || !url.value.trim()
-      || !(contract instanceof HTMLInputElement) || !contract.files?.[0]
-      || !(images instanceof HTMLInputElement)
-      || (instagramKind === "post" && !images.files?.length)
+      || (instagramKind === "post" && (
+        !(contract instanceof HTMLInputElement) || !contract.files?.[0]
+        || !(images instanceof HTMLInputElement) || !images.files?.length
+      ))
     ) {
       setMessage(instagramKind === "reel"
-        ? "請提供 Reel 網址、Contract JSON；如 Contract 有 keyframe，也要依序選取。"
+        ? "請提供公開 Reel 網址。"
         : "請提供 Instagram 貼文網址、Contract JSON 與全部圖片。");
       return;
     }
     setBusy(true);
     setMessage(null);
     try {
-      const files = Array.from(images.files ?? []);
-      if (instagramKind === "reel") await uploadInstagramReel(url.value, contract.files[0], files);
-      else await uploadInstagramPost(url.value, contract.files[0], files);
+      if (instagramKind === "reel") {
+        await submitInstagramReelUrl(url.value);
+      } else if (contract instanceof HTMLInputElement && contract.files?.[0]
+        && images instanceof HTMLInputElement) {
+        await uploadInstagramPost(url.value, contract.files[0], Array.from(images.files ?? []));
+      }
       onClose();
       router.push("/library");
       router.refresh();
@@ -128,13 +136,14 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
               </fieldset>
               <label htmlFor="instagram-url" className="block text-sm font-semibold">{instagramKind === "reel" ? "Instagram Reel 網址" : "Instagram 圖片貼文網址"}</label>
               <input id="instagram-url" name="instagram_url" type="url" required disabled={busy} placeholder={instagramKind === "reel" ? "https://www.instagram.com/reel/…/" : "https://www.instagram.com/p/…/"} className="w-full rounded-md border border-line bg-surface px-3 py-3 text-sm outline-none focus:border-indigo-300" />
-              <label className="block text-sm font-semibold">Mac App 產生的 Contract JSON
-                <input name="instagram_contract" type="file" accept="application/json,.json" required disabled={busy} className="mt-2 block w-full text-xs text-muted" />
-              </label>
-              <label className="block text-sm font-semibold">{instagramKind === "reel" ? "Reel keyframes（依 Contract 順序；沒有 keyframe 可留空）" : "貼文圖片（依貼文順序選取）"}
-                <input name="instagram_media" type="file" accept="image/jpeg,image/png" multiple required={instagramKind === "post"} disabled={busy} className="mt-2 block w-full text-xs text-muted" />
-              </label>
-              <p className="text-xs leading-5 text-muted">目前安全 Bridge 使用本機 Mac App 的輸出；只貼 URL 不會在伺服器上繞過 Instagram 存取限制。</p>
+              {instagramKind === "post" ? <>
+                <label className="block text-sm font-semibold">Mac App 產生的 Contract JSON
+                  <input name="instagram_contract" type="file" accept="application/json,.json" required disabled={busy} className="mt-2 block w-full text-xs text-muted" />
+                </label>
+                <label className="block text-sm font-semibold">貼文圖片（依貼文順序選取）
+                  <input name="instagram_media" type="file" accept="image/jpeg,image/png" multiple required disabled={busy} className="mt-2 block w-full text-xs text-muted" />
+                </label>
+              </> : <p className="text-xs leading-5 text-muted">系統會在背景取得公開 Reel、轉錄人聲、分析關鍵畫面並自動建立筆記。</p>}
               {message ? <p role="alert" className="text-xs text-rose-700">{message}</p> : null}
               <div className="flex justify-end border-t border-line pt-5"><PrimaryButton type="submit" disabled={busy}>{busy ? <><LoaderCircle className="h-4 w-4 animate-spin" />上傳中…</> : "開始匯入"}</PrimaryButton></div>
             </form>
@@ -164,6 +173,19 @@ export function AddDataModal({ open, onClose }: { open: boolean; onClose: () => 
                 className="mt-3 w-full rounded-md border border-line bg-surface px-3 py-3 text-sm outline-none transition placeholder:text-faint focus:border-indigo-300"
               />
               <p className="mt-2 text-xs leading-5 text-muted">只處理你明確送出的這一則公開貼文；不會追蹤帳號、串文或排程抓取。</p>
+              <label htmlFor="capture-threads-text" className="mt-5 block text-sm font-semibold">
+                貼文全文（選填）
+              </label>
+              <textarea
+                id="capture-threads-text"
+                name="source_text"
+                rows={5}
+                maxLength={100000}
+                disabled={busy}
+                placeholder="若公開貼文無法自動讀取，可將貼文全文貼在這裡。"
+                className="mt-3 w-full resize-y rounded-md border border-line bg-surface px-3 py-3 text-sm outline-none transition placeholder:text-faint focus:border-indigo-300"
+              />
+              <p className="mt-2 text-xs leading-5 text-muted">有提供全文時會直接建立可引用的來源內容，不會再向 Threads 抓取。</p>
               {message ? <p role="alert" className="mt-3 text-xs text-rose-700">{message}</p> : null}
               <div className="mt-7 flex justify-end border-t border-line pt-5">
                 <PrimaryButton type="submit" disabled={busy}>{busy ? <><LoaderCircle className="h-4 w-4 animate-spin" />建立匯入工作…</> : "開始匯入"}</PrimaryButton>

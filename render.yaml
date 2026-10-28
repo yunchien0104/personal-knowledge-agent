@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: personal-brain-worker
+    runtime: docker
+    plan: free
+    dockerContext: ./worker
+    dockerfilePath: ./worker/Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: WORKER_CAPABILITY
+        value: all
+      - key: JOB_POLL_INTERVAL_SECONDS
+        value: "2"
+      - key: WORKER_ID
+        generateValue: true
+      - key: WORKER_RUN_ONCE_SECRET
+        generateValue: true
+      - key: SUPABASE_SERVER_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: LLM_API_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: SOURCE_NOTE_MODEL
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: RESEARCH_MODEL
+        sync: false

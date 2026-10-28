@@ -46,6 +46,15 @@ async function cleanup(assetId: string) {
   })).ok;
 }
 
+export async function submitInstagramReelUrl(sourceUrl: string) {
+  const identity = normalizeInstagramReelUrl(sourceUrl);
+  if (!identity) throw new Error("請貼上公開 Instagram Reel 網址。");
+  return request<{ asset: { id: string }; job: { id: string; status: string } }>({
+    action: "submit_url",
+    source_url: identity.canonicalUrl,
+  });
+}
+
 export async function uploadInstagramReel(sourceUrl: string, contractFile: File, keyframes: File[]) {
   if (!contractFile.size || contractFile.size > INSTAGRAM_CONTRACT_MAX_BYTES) {
     throw new Error("Instagram Reel Contract 必須小於 2 MB。");
