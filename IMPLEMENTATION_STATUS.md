@@ -796,3 +796,14 @@
 - This remains local and undeployed. No Cloud mutation, migration push, commit,
   Git push or deployment was performed. A real authorized Reel still requires
   one local Mac App smoke test before hosted release.
+
+### Hosted Auth redirect hardening (2026-10-28)
+
+- Fixed Auth Route redirects so password login, registration, sign-out, password
+  reset and PKCE callback explicitly carry Supabase session-cookie mutations and
+  the required private/no-store cache headers on the exact response returned to
+  the browser.
+- Fixed the Next.js proxy to preserve refreshed or cleared Auth cookies and cache
+  headers when it replaces the Supabase response with an anonymous-login redirect.
+- Added focused Auth integration assertions for session-cookie propagation and
+  non-cacheable login responses. No Supabase schema or user data was changed.

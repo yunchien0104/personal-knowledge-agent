@@ -18,13 +18,16 @@ export async function proxy(request: NextRequest) {
   const supabase = createServerClient(url, publishableKey, {
     cookies: {
       getAll: () => request.cookies.getAll(),
-      setAll: (cookiesToSet) => {
+      setAll: (cookiesToSet, headersToSet) => {
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value),
         );
         response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options),
+        );
+        Object.entries(headersToSet).forEach(([name, value]) =>
+          response.headers.set(name, value),
         );
       },
     },
@@ -33,7 +36,13 @@ export async function proxy(request: NextRequest) {
   const { data, error } = await supabase.auth.getClaims();
   if (error || !data?.claims?.sub) {
     const loginUrl = new URL("/auth/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    const redirect = NextResponse.redirect(loginUrl);
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+    ["cache-control", "expires", "pragma"].forEach((name) => {
+      const value = response.headers.get(name);
+      if (value) redirect.headers.set(name, value);
+    });
+    return redirect;
   }
 
   return response;

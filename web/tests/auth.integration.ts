@@ -117,6 +117,9 @@ test("registration creates a real session", async () => {
   const body = new URLSearchParams({ email, password });
   const response = await request("/auth/actions/sign-up", { method: "POST", body });
   assert.equal(response.status, 303);
+  assert(response.headers.getSetCookie().length > 0, "registration redirect did not carry the session cookie");
+  assert.match(response.headers.get("cache-control") ?? "", /private/);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
   assert.equal(new URL(response.headers.get("location")!).pathname, "/");
   const protectedResponse = await request("/protected");
   assert.equal(protectedResponse.status, 200);
@@ -140,6 +143,7 @@ test("the server ignores a user supplied user_id", async () => {
 test("sign out removes access to the protected page", async () => {
   const response = await request("/auth/actions/sign-out", { method: "POST" });
   assert.equal(response.status, 303);
+  assert(response.headers.getSetCookie().length > 0, "sign-out redirect did not clear the session cookie");
   const protectedResponse = await request("/protected");
   assert.equal(protectedResponse.status, 307);
 });
@@ -148,6 +152,9 @@ test("password login restores the session", async () => {
   const body = new URLSearchParams({ email, password });
   const response = await request("/auth/actions/sign-in", { method: "POST", body });
   assert.equal(response.status, 303);
+  assert(response.headers.getSetCookie().length > 0, "sign-in redirect did not carry the session cookie");
+  assert.match(response.headers.get("cache-control") ?? "", /private/);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/);
   assert.equal((await request("/protected")).status, 200);
 });
 
