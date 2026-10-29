@@ -1,5 +1,19 @@
 # Personal Brain Implementation Status
 
+## 2026-10-30 Ask Knowledge Base integration
+
+- PASS locally: `/ask` now reuses the authenticated Research pipeline instead of
+  stopping at raw Retrieval results: `start_research` -> Render Worker -> Hybrid
+  Retrieval -> grounded generation -> verification -> persisted Research Note.
+- PASS locally: completed answers render their verified Evidence quotes and source
+  links; insufficient or failed runs keep the existing safe, allowlisted errors.
+- PASS: 23 focused Web tests for Research, Retrieval, Threads, Instagram Post, and
+  Instagram Reel; Web typecheck, ESLint, and production build.
+- PASS: 35 focused Worker tests for Research and the three social ingestion paths.
+- HOSTED BASELINE: Instagram Reel has completed ingestion, Source Note, and 10
+  Retrieval chunks. Threads and Instagram Post require isolated hosted fixtures
+  before their E2E status can be marked PASS.
+
 ## 2026-10-29 Instagram Reel hosted E2E
 
 - PASS: Cloud backup and isolated restore verification completed before the three

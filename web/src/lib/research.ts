@@ -155,3 +155,26 @@ export function safeResearchError(code: string | null) {
   };
   return code ? messages[code] ?? "Research Agent 執行失敗，請稍後重試。" : null;
 }
+
+const terminalResearchStatuses = new Set(["completed", "failed", "unsupported", "cancelled"]);
+
+export function isResearchTerminal(status: string) {
+  return terminalResearchStatuses.has(status);
+}
+
+export async function waitForResearchRun<T extends { status: string }>(
+  runId: string,
+  load: (id: string) => Promise<T>,
+  options: { intervalMs?: number; maxAttempts?: number } = {},
+): Promise<T> {
+  const intervalMs = options.intervalMs ?? 2_000;
+  const maxAttempts = options.maxAttempts ?? 60;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const run = await load(runId);
+    if (isResearchTerminal(run.status)) return run;
+    if (attempt < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  throw new Error("Research answer timed out.");
+}
