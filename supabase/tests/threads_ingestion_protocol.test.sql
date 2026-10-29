@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(23);
+select plan(26);
 
 select ok(not has_function_privilege('anon', 'public.create_threads_asset_and_enqueue(text,text,text)', 'execute'), 'anon cannot submit Threads URLs');
 select ok(has_function_privilege('authenticated', 'public.create_threads_asset_and_enqueue(text,text,text)', 'execute'), 'authenticated users can submit Threads URLs');
@@ -57,6 +57,25 @@ select is((select source_url from public.assets where id = (select asset_id from
 select is((select status from public.jobs where id = (select job_id from threads_state)), 'queued', 'Threads ingestion is queued');
 select ok((public.create_threads_asset_and_enqueue('https://www.threads.net/t/DewcDm5n4FD', 'DewcDm5n4FD', null) ->> 'duplicate')::boolean, 'duplicate submission is reported');
 select is((select count(*) from public.assets where user_id = '81000000-0000-4000-8000-000000000001' and source_type = 'threads'), 1::bigint, 'duplicate creates no second Asset');
+
+reset role;
+set local role service_role;
+update public.jobs set status = 'failed' where id = (select job_id from threads_state);
+update public.assets set status = 'failed' where id = (select asset_id from threads_state);
+
+reset role;
+set local role authenticated;
+set local request.jwt.claim.sub = '81000000-0000-4000-8000-000000000001';
+select ok(not (public.create_threads_asset_and_enqueue(
+  'https://www.threads.net/@author/post/DewcDm5n4FD', 'DewcDm5n4FD', null
+) ->> 'duplicate')::boolean, 'failed import can be resubmitted with the account-qualified URL');
+select is((select source_url from public.assets where id = (select asset_id from threads_state)), 'https://www.threads.net/@author/post/DewcDm5n4FD', 'retry preserves the fetchable account-qualified URL');
+select is((select payload_json #>> '{input,sourceUrl}' from public.jobs where id = (select job_id from threads_state)), 'https://www.threads.net/@author/post/DewcDm5n4FD', 'retry updates the typed Job source URL');
+update threads_state set segments = jsonb_set(
+  segments,
+  '{0,evidence_locator,url}',
+  to_jsonb('https://www.threads.net/@author/post/DewcDm5n4FD'::text)
+);
 select throws_ok(
   $$update public.assets set source_url = 'https://www.threads.net/t/OtherPost1'
     where id = (select asset_id from threads_state)$$,

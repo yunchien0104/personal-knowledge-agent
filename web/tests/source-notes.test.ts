@@ -5,6 +5,7 @@ import {
   pdfPageFromLocator,
   safeSourceNoteError,
   sourceNoteDisplayState,
+  shouldPollSourceNoteWorkspaces,
   type SourceNoteWorkspace,
 } from "../src/lib/source-notes.ts";
 import {
@@ -49,6 +50,27 @@ test("Source Note display state distinguishes generation, completion, and retry"
   assert.equal(sourceNoteDisplayState(workspace("completed")), "generating");
   assert.equal(sourceNoteDisplayState(workspace("completed", note)), "completed");
   assert.equal(sourceNoteDisplayState(workspace("failed")), "failed");
+});
+
+test("polls while a source note job can still publish into all knowledge", () => {
+  const workspace = (status: string, note: SourceNoteWorkspace["note"] = null) => ({
+    asset: { id: "asset", status: "ready", activeRevisionId: "revision" },
+    job: { id: "job", status, errorCode: null },
+    note,
+  });
+  const note = {
+    id: "note", title: "Title", body: "Summary", bodyRevision: 1,
+    updatedAt: "2026-10-22T00:00:00Z", modelProvider: "openai", modelName: "sol",
+    promptVersion: "source-note-v1", revisionId: "revision", pdfUrl: null,
+    sourceUrl: null, topics: [], manualTopicOverride: false, claims: [],
+  };
+  assert.equal(shouldPollSourceNoteWorkspaces({ asset: workspace("queued") }), true);
+  assert.equal(shouldPollSourceNoteWorkspaces({ asset: workspace("completed") }), true);
+  assert.equal(
+    shouldPollSourceNoteWorkspaces({ asset: workspace("completed", note) }),
+    false,
+  );
+  assert.equal(shouldPollSourceNoteWorkspaces({ asset: workspace("failed") }), false);
 });
 
 test("Instagram image posts use the Instagram Library type and support Source Notes", () => {

@@ -144,7 +144,10 @@ class ThreadsIngestionTests(unittest.TestCase):
         target = normalize_threads_url(
             f"https://www.threads.com/@author/post/{POST_ID}?xmt=tracking#fragment"
         )
-        self.assertEqual(target.canonical_url, SOURCE_URL)
+        self.assertEqual(
+            target.canonical_url,
+            f"https://www.threads.net/@author/post/{POST_ID}",
+        )
         self.assertEqual(target.post_id, POST_ID)
         with self.assertRaises(ThreadsFetchError):
             normalize_threads_url("https://example.com/@author/post/DewcDm5n4FD")

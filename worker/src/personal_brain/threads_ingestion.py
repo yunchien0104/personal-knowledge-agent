@@ -94,7 +94,11 @@ def normalize_threads_url(value: str) -> ThreadsTarget:
             "invalid_threads_url", "A public Threads post URL is required"
         )
     post_id = match.group(1)
-    return ThreadsTarget(f"https://www.threads.net/t/{post_id}", post_id)
+    # Preserve the account-qualified path because /t/:id can return a generic shell.
+    canonical_path = (
+        f"/t/{post_id}" if parsed.path.startswith("/t/") else parsed.path.rstrip("/")
+    )
+    return ThreadsTarget(f"https://www.threads.net{canonical_path}", post_id)
 
 
 def _normalize_text(value: str) -> str:

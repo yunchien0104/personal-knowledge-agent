@@ -73,6 +73,14 @@ export function sourceNoteDisplayState(workspace: SourceNoteWorkspace | null) {
   return "idle" as const;
 }
 
+export function shouldPollSourceNoteWorkspaces(
+  workspaces: Record<string, SourceNoteWorkspace | null>,
+) {
+  return Object.values(workspaces).some(
+    (workspace) => sourceNoteDisplayState(workspace) === "generating",
+  );
+}
+
 export async function loadSourceNoteWorkspace(
   supabase: SupabaseClient,
   userId: string,

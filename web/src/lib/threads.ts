@@ -22,8 +22,12 @@ export function normalizeThreadsUrl(value: string): ThreadsTarget | null {
       || url.port
       || !match
     ) return null;
+    const canonicalPath = url.pathname.startsWith("/t/")
+      ? `/t/${match[1]}`
+      : url.pathname.replace(/\/$/, "");
     return {
-      canonicalUrl: `https://www.threads.net/t/${match[1]}`,
+      // Preserve the account-qualified path because /t/:id can return a generic shell.
+      canonicalUrl: `https://www.threads.net${canonicalPath}`,
       postId: match[1],
     };
   } catch {

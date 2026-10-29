@@ -47,13 +47,13 @@ test("sends optional user-provided text as the public-fetch fallback", async () 
   });
 });
 
-test("normalizes supported Threads post links to one canonical identity", () => {
+test("normalizes supported Threads links while preserving the fetchable account path", () => {
   assert.deepEqual(
     normalizeThreadsUrl(
       "https://www.threads.com/@benjaminmarketlab/post/DewcDm5n4FD?xmt=tracking#share",
     ),
     {
-      canonicalUrl: "https://www.threads.net/t/DewcDm5n4FD",
+      canonicalUrl: "https://www.threads.net/@benjaminmarketlab/post/DewcDm5n4FD",
       postId: "DewcDm5n4FD",
     },
   );

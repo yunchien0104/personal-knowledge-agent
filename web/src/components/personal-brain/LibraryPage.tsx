@@ -4,7 +4,11 @@ import { ExternalLink, FileText, RefreshCw, Sparkles, Trash2 } from "lucide-reac
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { sourceNoteDisplayState, type SourceNoteWorkspace } from "@/lib/source-notes";
+import {
+  shouldPollSourceNoteWorkspaces,
+  sourceNoteDisplayState,
+  type SourceNoteWorkspace,
+} from "@/lib/source-notes";
 
 import { assetTitle, getApi, getApiEnvelope, sourceKind, supportsSourceNote } from "./api";
 import { DeleteAssetDialog } from "./DeleteAssetDialog";
@@ -12,6 +16,18 @@ import type { Asset, AssetDeletion, KnowledgeItem, SourceKind } from "./types";
 import { PageTitle, PendingState, SourceIcon, StatusBadge } from "./ui";
 
 const kindLabel: Record<SourceKind, string> = { PDF: "PDF", IG: "Instagram", TH: "Threads", NOTE: "筆記" };
+
+async function fetchSourceNoteWorkspaces(assets: Asset[]) {
+  const eligible = assets.filter((asset) => supportsSourceNote(asset.source_type));
+  const rows = await Promise.all(eligible.map(async (asset) => {
+    try {
+      return [asset.id, await getApi<SourceNoteWorkspace>(`/api/assets/${asset.id}/source-note`)] as const;
+    } catch {
+      return [asset.id, null] as const;
+    }
+  }));
+  return Object.fromEntries(rows) as Record<string, SourceNoteWorkspace | null>;
+}
 
 function readableStatus(asset: Asset) {
   if (["ready", "completed"].includes(asset.status)) return "已完成" as const;
@@ -76,15 +92,29 @@ export function LibraryPage() {
   }, [activeWork, loadData]);
 
   useEffect(() => {
-    const eligible = assets.filter((asset) => supportsSourceNote(asset.source_type));
-    if (!eligible.length) return;
+    if (!assets.some((asset) => supportsSourceNote(asset.source_type))) return;
     let active = true;
-    void Promise.all(eligible.map(async (asset) => {
-      try { return [asset.id, await getApi<SourceNoteWorkspace>(`/api/assets/${asset.id}/source-note`)] as const; }
-      catch { return [asset.id, null] as const; }
-    })).then((rows) => { if (active) setWorkspaces(Object.fromEntries(rows)); });
+    void fetchSourceNoteWorkspaces(assets).then((next) => {
+      if (active) setWorkspaces(next);
+    });
     return () => { active = false; };
   }, [assets]);
+
+  const activeNoteGeneration = shouldPollSourceNoteWorkspaces(workspaces);
+  useEffect(() => {
+    if (!activeNoteGeneration) return;
+    let active = true;
+    const refresh = () => {
+      void fetchSourceNoteWorkspaces(assets).then((next) => {
+        if (active) setWorkspaces(next);
+      });
+    };
+    const timer = window.setInterval(refresh, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [activeNoteGeneration, assets]);
 
   const filtered = useMemo(() => assets.filter((asset) => {
     const term = query.trim().toLocaleLowerCase();
