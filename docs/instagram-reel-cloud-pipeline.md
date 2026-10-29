@@ -27,6 +27,23 @@ content. Visual observations augment source text but do not replace this rule.
 
 ## Acquisition provider contract
 
+### Apify official Reel Scraper (recommended)
+
+Set `REEL_ACQUISITION_PROVIDER=apify`. The Worker calls the official
+`apify/instagram-reel-scraper` synchronous dataset endpoint with exactly one
+canonical Reel URL, `resultsLimit=1`, and `includeDownloadedVideo=true`.
+
+The response is identity-checked against `shortCode`. The Worker uses only the
+`downloadedVideo` URL hosted on `api.apify.com`; it deliberately ignores the
+short-lived Instagram `videoUrl` and `audioUrl`. It maps `caption`, `ownerId`,
+`ownerUsername`, `ownerFullName`, and `timestamp` into the shared Contract.
+Comments, likes, hashtags, and profile-picture URLs are not ingested.
+
+Apify mode fails closed when the result is missing, ambiguous, not a Reel, has
+the wrong shortcode, or lacks `downloadedVideo`.
+
+### Generic provider
+
 The Worker sends an authenticated HTTPS `POST` request:
 
 ```json
@@ -54,6 +71,9 @@ is responsible for lawful, authorized access to public Reel media.
 
 ## Required server-only environment
 
+- `REEL_ACQUISITION_PROVIDER`: `apify` (recommended) or `generic`.
+- `APIFY_API_TOKEN`: required only in Apify mode.
+- `APIFY_REEL_ACTOR_ID`: defaults to `apify~instagram-reel-scraper`.
 - `REEL_ACQUISITION_API_URL`: exact licensed-provider HTTPS endpoint.
 - `REEL_ACQUISITION_API_KEY`: provider token.
 - `REEL_MEDIA_ALLOWED_HOSTS`: comma-separated exact media host allowlist.
@@ -64,14 +84,28 @@ is responsible for lawful, authorized access to public Reel media.
 These variables belong only on the Reel Worker. Do not expose them through
 `NEXT_PUBLIC_*`, Vercel client variables, logs, fixtures, or Git.
 
+For Apify mode, the three generic-provider variables are not used. The Worker
+sends the Apify token only to `api.apify.com`, including the private stored-video
+download; it never forwards that credential to an Instagram CDN host.
+
 ## Deployment order
 
-1. Add the server-only variables to the Reel Worker without deploying Web.
+1. Use the existing paid Render Background Worker `personal-knowledge-agent`.
+   Confirm `APIFY_API_TOKEN` and `OPENAI_API_KEY` are present without exposing
+   their values. Do not add either secret to Vercel.
 2. Deploy the additive Supabase migration and verify only the new RPC/trigger.
-3. Deploy the Reel Worker and run one synthetic provider-boundary smoke test.
+3. Deploy the Reel Worker. Confirm the non-secret settings are
+   `REEL_ACQUISITION_PROVIDER=apify`,
+   `APIFY_REEL_ACTOR_ID=apify~instagram-reel-scraper`, and
+   `JOB_LEASE_SECONDS=420`, then run one isolated authorized Reel smoke test.
 4. Deploy Web, then submit one authorized public Reel from an isolated user.
 5. Verify Job completion, private artifacts, Retrieval, Citation, and automatic
    Source Note before enabling the entry point broadly.
+
+The repository's existing `render.yaml` describes a separate Free Web Service
+and is not the deployment source for this integration. Do not apply it for this
+release: doing so could create a duplicate service. The active target is the
+already-paid `personal-knowledge-agent` Background Worker on `0.5c-512mb`.
 
 The legacy Contract-upload API remains available as rollback compatibility; the
 current UI no longer asks users for Contract JSON or keyframes.

@@ -819,9 +819,20 @@
   bounded temporary video download, FFmpeg audio/keyframe extraction, chunked
   `gpt-transcribe` transcription, Vision observations and Unified Reel Contract
   v2 provenance. Original video remains temporary and is deleted after a Job.
+- Added a concrete adapter for the official Apify Reel Scraper's real All-fields
+  array output. It requests one downloaded public Reel, verifies the shortcode,
+  maps caption/author/publish time, and uses only the stored `downloadedVideo`
+  on `api.apify.com`; expiring Instagram CDN video/audio URLs are ignored.
+- Apify credentials stay server-side and are sent only to `api.apify.com`.
+  Missing or mismatched results and outputs without a stored video fail closed.
+- The existing paid Render Background Worker is the deployment target. Its
+  server-only environment contains the Apify/OpenAI credentials; deployment
+  must also set the provider mode and a 420-second queue lease so a bounded
+  provider or model call cannot outlive the lease. The unrelated Free Web
+  Service Blueprint is intentionally unchanged to avoid creating a duplicate.
 - Contract v2 labels AI-derived visual observations separately from source
   transcript text. It is backward compatible with existing Contract v1 imports.
-- PASS locally: 39 affected Worker tests, including six cloud-pipeline
+- PASS locally: 59 affected Worker tests, including twelve cloud-pipeline
   unit/media checks, the bundled FFmpeg binary, silent-video handling and
   existing Reel/Source Note/Retrieval regressions; Web TypeScript/ESLint, ten
   Instagram Web tests, Next.js production build, and `git diff --check`.
@@ -829,8 +840,14 @@
   394-assertion pgTAP suite includes the Reel cloud-pipeline protocol and all
   existing queue/RLS/publication regressions.
 - Cloud migration/deployment and paid live-provider E2E remain pending. They
-  require the acquisition provider endpoint/key/allowlist and Worker FFmpeg
-  runtime configuration; no live paid call or Cloud mutation was performed.
+  require `APIFY_API_TOKEN`, `OPENAI_API_KEY`, the Apify provider mode and Worker
+  FFmpeg runtime configuration; no live paid call or Cloud mutation was performed.
+- PASS with the authorized sample output: its stored 5,101,953-byte MP4
+  downloaded without redirect, FFmpeg measured 106.25 seconds and extracted
+  four audio chunks plus four keyframes; the temporary directory was removed.
+- The intended hosted target is the existing always-on paid Render Background
+  Worker (`personal-knowledge-agent`, 0.5c-512mb), not the unrelated Free Web
+  Service described by `render.yaml`.
 
 ### Threads ingestion workflow restoration (local implementation, 2026-10-29)
 

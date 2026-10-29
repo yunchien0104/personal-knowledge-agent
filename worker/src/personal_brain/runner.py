@@ -80,7 +80,13 @@ def build_instagram_reel_worker():
     if not worker_id:
         raise ValueError("WORKER_ID is required")
     cloud_pipeline = None
-    if os.environ.get("REEL_ACQUISITION_API_URL", "").strip():
+    provider = os.environ.get("REEL_ACQUISITION_PROVIDER", "generic").strip().lower()
+    provider_configured = (
+        bool(os.environ.get("APIFY_API_TOKEN", "").strip())
+        if provider == "apify"
+        else bool(os.environ.get("REEL_ACQUISITION_API_URL", "").strip())
+    )
+    if provider_configured:
         cloud_pipeline = InstagramReelCloudPipeline.from_environment()
     return InstagramReelIngestionWorker(
         SupabaseGateway.from_environment(), worker_id,

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import json
+import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from imageio_ffmpeg import get_ffmpeg_exe
 
 from personal_brain.instagram_reel_cloud import (
     AcquiredReel,
+    ApifyReelAcquisitionProvider,
+    InstagramReelCloudPipeline,
     Keyframe,
     ReelAcquisitionProvider,
     ReelMediaProcessor,
@@ -116,6 +121,112 @@ class InstagramReelCloudTests(unittest.TestCase):
             ReelAcquisitionProvider("http://provider.test/reel", "secret", {"media.test"})
         with self.assertRaises(ValueError):
             ReelAcquisitionProvider("https://provider.test/reel", "secret", set())
+
+    def test_apify_all_fields_output_maps_to_contract_boundary(self):
+        acquired = ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [{
+            "inputUrl": SOURCE_URL,
+            "id": "4000000000000000000",
+            "type": "Video",
+            "shortCode": "C10udReel",
+            "caption": "公開說明文字",
+            "videoUrl": "https://instagram.cdn.example/short-lived.mp4",
+            "audioUrl": "https://instagram.cdn.example/short-lived-audio.mp4",
+            "downloadedVideo": "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+            "timestamp": "2026-10-11T13:53:50.000Z",
+            "ownerId": "123456789",
+            "ownerUsername": "example_author",
+            "ownerFullName": "Example Author",
+            "productType": "clips",
+            "videoDuration": 106.166664,
+        }])
+        self.assertEqual(
+            acquired.video_url,
+            "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+        )
+        self.assertEqual(acquired.caption, "公開說明文字")
+        self.assertEqual(acquired.author, {
+            "external_id": "123456789",
+            "handle": "example_author",
+            "display_name": "Example Author",
+        })
+        self.assertEqual(acquired.published_at, "2026-10-11T13:53:50.000Z")
+
+    def test_apify_fetch_requests_one_downloaded_reel(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self):
+                return json.dumps([{
+                    "type": "Video",
+                    "shortCode": "C10udReel",
+                    "productType": "clips",
+                    "downloadedVideo": "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+                }]).encode()
+
+        class Opener:
+            request = None
+            timeout = None
+
+            def open(self, request, timeout):
+                self.request = request
+                self.timeout = timeout
+                return Response()
+
+        provider = ApifyReelAcquisitionProvider("server-secret")
+        opener = Opener()
+        provider._opener = opener
+        provider.fetch(SOURCE_URL)
+        request_payload = json.loads(opener.request.data)
+        self.assertEqual(request_payload, {
+            "username": [SOURCE_URL],
+            "resultsLimit": 1,
+            "includeDownloadedVideo": True,
+            "includeTranscript": False,
+            "includeSharesCount": False,
+        })
+        self.assertEqual(opener.request.get_header("Authorization"), "Bearer server-secret")
+        self.assertEqual(opener.timeout, 300)
+
+    def test_apify_output_must_match_shortcode_and_include_stored_video(self):
+        item = {
+            "type": "Video",
+            "shortCode": "DifferentReel",
+            "productType": "clips",
+            "downloadedVideo": "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+        }
+        with self.assertRaisesRegex(Exception, "uniquely match"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+        item["shortCode"] = "C10udReel"
+        item.pop("downloadedVideo")
+        with self.assertRaisesRegex(Exception, "stored Reel video"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+
+    def test_apify_stored_video_and_timestamp_fail_closed(self):
+        item = {
+            "type": "Video",
+            "shortCode": "C10udReel",
+            "productType": "clips",
+            "downloadedVideo": "https://attacker@api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+        }
+        with self.assertRaisesRegex(Exception, "stored Reel video"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+        item["downloadedVideo"] = "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4"
+        item["timestamp"] = "2026-10-11"
+        with self.assertRaisesRegex(Exception, "timestamp is invalid"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+
+    def test_apify_provider_rejects_actor_id_injection(self):
+        with self.assertRaises(ValueError):
+            ApifyReelAcquisitionProvider("secret", actor_id="actor?token=leak")
+
+    def test_cloud_pipeline_selects_apify_from_server_environment(self):
+        with patch.dict(os.environ, {
+            "REEL_ACQUISITION_PROVIDER": "apify",
+            "APIFY_API_TOKEN": "server-secret",
+            "OPENAI_API_KEY": "openai-secret",
+        }, clear=True):
+            pipeline = InstagramReelCloudPipeline.from_environment()
+        self.assertIsInstance(pipeline.provider, ApifyReelAcquisitionProvider)
 
     def test_bundled_ffmpeg_extracts_audio_and_keyframe(self):
         with TemporaryDirectory() as raw:
