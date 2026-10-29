@@ -899,3 +899,24 @@
 - The E2E also exposed and fixed a PDF cleanup clock-skew edge case between the
   host and local database. No Cloud migration, Production deploy, or paid
   external provider call was performed.
+
+### Hosted Instagram Reel URL-only E2E (2026-10-30)
+
+- Fixed the shared media queue so one dispatcher claims each Job once and routes
+  `ingest_instagram_reel`, `ingest_instagram_post`, and `ingest_threads` to the
+  matching handler. This prevents a different media handler from claiming and
+  rejecting a valid Reel Job.
+- Fixed the Apify synchronous Actor call to use the supported endpoint without
+  unsupported dataset query parameters; the one-result cost bound remains in
+  Actor input. Provider errors expose only a safe Apify error type.
+- PASS hosted URL-only E2E with Reel `DeWz1ZQN7cA`: API acquisition, caption,
+  audio transcription, keyframe analysis, Contract v2, private artifacts,
+  validated Revision, nine Evidence rows, grounded Source Note and Citations,
+  ten Retrieval chunks, Library reading and Hybrid Retrieval all completed.
+- Render deploy `dep-dbhj0bqvcj2c73856vj0` is Live on commit `c0590dd`.
+  The affected Worker suite passed 32/32 before deployment.
+- Fixed the Web retrieval presentation to infer Instagram Reel, Instagram Post,
+  and Threads labels from immutable citation locators instead of showing every
+  original-source result as a PDF. Retrieval tests pass 4/4; TypeScript and
+  focused ESLint pass. This final Web-only display fix still requires a Vercel
+  deployment before it is visible on the hosted Preview.

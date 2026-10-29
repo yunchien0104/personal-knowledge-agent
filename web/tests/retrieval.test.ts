@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   citationPdfPage,
+  knowledgeResultTitle,
+  knowledgeSourceKind,
   originLabel,
   parseRetrievalInput,
 } from "../src/lib/retrieval.ts";
@@ -35,4 +37,29 @@ test("citation locator exposes only a valid positive PDF page", () => {
   assert.equal(citationPdfPage({ ...base, locator: { page_number: 7 } }), 7);
   assert.equal(citationPdfPage({ ...base, locator: { page_number: 0 } }), null);
   assert.equal(citationPdfPage({ ...base, locator: { start_seconds: 5 } }), null);
+});
+
+test("retrieval display identifies Instagram Reel and Threads evidence from locators", () => {
+  const citation = (kind: string) => ({
+    assetId: "asset",
+    revisionId: "revision",
+    evidenceId: "evidence",
+    validityStatus: "valid",
+    locator: { kind },
+  });
+  const reel = {
+    resultType: "evidence" as const,
+    title: "PDF source page ?",
+    citations: [citation("video_segment")],
+  };
+  assert.equal(knowledgeSourceKind(reel), "IG");
+  assert.equal(knowledgeResultTitle(reel), "Instagram Reel 來源片段");
+
+  const threads = {
+    resultType: "evidence" as const,
+    title: "PDF source page ?",
+    citations: [citation("threads_post")],
+  };
+  assert.equal(knowledgeSourceKind(threads), "TH");
+  assert.equal(knowledgeResultTitle(threads), "Threads 來源片段");
 });
