@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isResearchTerminal,
+  isResearchReady,
   researchPdfPage,
   researchRequestSchema,
   safeResearchError,
@@ -50,10 +51,13 @@ test("research errors reveal only allowlisted safe messages", () => {
 test("knowledge answers stop polling only at a terminal research status", async () => {
   assert.equal(isResearchTerminal("queued"), false);
   assert.equal(isResearchTerminal("running"), false);
+  assert.equal(isResearchTerminal("draft_ready"), true);
   assert.equal(isResearchTerminal("completed"), true);
   assert.equal(isResearchTerminal("failed"), true);
+  assert.equal(isResearchReady("draft_ready"), true);
+  assert.equal(isResearchReady("running"), false);
 
-  const statuses = ["queued", "running", "completed"];
+  const statuses = ["queued", "running", "draft_ready"];
   let calls = 0;
   const result = await waitForResearchRun("run-id", async () => ({
     id: "run-id",
@@ -71,6 +75,6 @@ test("knowledge answers stop polling only at a terminal research status", async 
     note: null,
     citations: [],
   }), { intervalMs: 0, maxAttempts: 4 });
-  assert.equal(result.status, "completed");
+  assert.equal(result.status, "draft_ready");
   assert.equal(calls, 3);
 });

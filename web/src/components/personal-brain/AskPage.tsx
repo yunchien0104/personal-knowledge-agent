@@ -6,7 +6,7 @@ import { useState, type FormEvent } from "react";
 
 import { instagramCitation } from "@/lib/instagram";
 import { instagramReelCitation } from "@/lib/instagram-reel";
-import { safeResearchError, waitForResearchRun } from "@/lib/research";
+import { isResearchReady, safeResearchError, waitForResearchRun } from "@/lib/research";
 import { knowledgeResultTitle, knowledgeSourceKind, originLabel } from "@/lib/retrieval";
 import { threadsCitationUrl } from "@/lib/threads";
 
@@ -73,7 +73,7 @@ export function AskPage() {
         (id) => getApi<ResearchRun>(`/api/research?id=${encodeURIComponent(id)}`),
       );
       setAnswer(run);
-      if (run.status === "completed" && run.note) {
+      if (isResearchReady(run.status) && run.note) {
         setMessage(`回答已完成，並綁定 ${run.citations.length} 筆真實 Evidence。`);
       } else {
         setMessage(safeResearchError(run.errorCode) ?? "知識庫沒有足夠證據產生回答。");

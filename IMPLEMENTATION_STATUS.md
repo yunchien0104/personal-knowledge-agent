@@ -7,6 +7,8 @@
   Retrieval -> grounded generation -> verification -> persisted Research Note.
 - PASS locally: completed answers render their verified Evidence quotes and source
   links; insufficient or failed runs keep the existing safe, allowlisted errors.
+- FIXED: the database's successful terminal status is `draft_ready`; Ask and
+  Research UI now treat it as ready instead of polling until timeout.
 - PASS: 23 focused Web tests for Research, Retrieval, Threads, Instagram Post, and
   Instagram Reel; Web typecheck, ESLint, and production build.
 - PASS: 35 focused Worker tests for Research and the three social ingestion paths.

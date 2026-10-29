@@ -7,6 +7,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { getApi } from "./api";
 import { instagramCitation } from "@/lib/instagram";
 import { instagramReelCitation } from "@/lib/instagram-reel";
+import { isResearchReady } from "@/lib/research";
 import { threadsCitationUrl } from "@/lib/threads";
 import type { ResearchRun, ResearchRunSummary } from "./types";
 import { PageTitle, PendingState, PrimaryButton, SoftButton, SourceIcon } from "./ui";
@@ -76,7 +77,7 @@ export function ResearchPage() {
   }
 
   const running = selected ? ["queued", "running", "processing", "planned"].includes(selected.status) : false;
-  const completed = selected?.status === "completed";
+  const completed = selected ? isResearchReady(selected.status) : false;
   const planEntries = selected?.plan ? Object.entries(selected.plan) : [];
 
   return (

@@ -156,7 +156,13 @@ export function safeResearchError(code: string | null) {
   return code ? messages[code] ?? "Research Agent 執行失敗，請稍後重試。" : null;
 }
 
-const terminalResearchStatuses = new Set(["completed", "failed", "unsupported", "cancelled"]);
+const terminalResearchStatuses = new Set([
+  "draft_ready", "completed", "failed", "unsupported", "cancelled",
+]);
+
+export function isResearchReady(status: string) {
+  return status === "draft_ready" || status === "completed";
+}
 
 export function isResearchTerminal(status: string) {
   return terminalResearchStatuses.has(status);
