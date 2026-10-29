@@ -236,6 +236,70 @@ class WorkerDispatcher:
         return result
 
 
+class _PreclaimedGateway:
+    """Expose one already-leased Job through an existing worker gateway."""
+
+    def __init__(self, gateway, job):
+        self._gateway = gateway
+        self._job = job
+        self._claimed = False
+
+    def claim(self, worker_id: str, lease_seconds: int, resource_class: str):
+        if self._claimed:
+            return None
+        self._claimed = True
+        return self._job
+
+    def __getattr__(self, name):
+        return getattr(self._gateway, name)
+
+
+class MediaJobDispatcher:
+    """Claim a media Job once, then route it to the matching ingestion worker."""
+
+    def __init__(self, workers):
+        self.workers = workers
+        first_worker = next(iter(workers.values()))
+        self.gateway = first_worker.gateway
+        self.worker_id = first_worker.worker_id
+        self.lease_seconds = first_worker.lease_seconds
+
+    def process_one(self):
+        from personal_brain.queue_runtime import ProcessResult
+
+        job = self.gateway.claim(self.worker_id, self.lease_seconds, "media")
+        if job is None:
+            return ProcessResult("idle")
+        worker = self.workers.get(job.payload.job_type)
+        if worker is None:
+            self.gateway.report_failure(
+                job,
+                self.worker_id,
+                error_class="permanent",
+                error_code="invalid_claim",
+                error_message="Worker received an unsupported media Job",
+                retryable=False,
+            )
+            return ProcessResult("failed", job.id)
+
+        original_gateway = worker.gateway
+        worker.gateway = _PreclaimedGateway(original_gateway, job)
+        try:
+            return worker.process_one()
+        finally:
+            worker.gateway = original_gateway
+
+
+def build_media_dispatcher():
+    return MediaJobDispatcher(
+        {
+            "ingest_threads": build_threads_worker(),
+            "ingest_instagram_post": build_instagram_post_worker(),
+            "ingest_instagram_reel": build_instagram_reel_worker(),
+        }
+    )
+
+
 def build_queue_worker():
     capability = os.environ.get("WORKER_CAPABILITY", "pdf").strip()
     if capability == "pdf":
@@ -260,9 +324,7 @@ def build_queue_worker():
         workers = [
             build_deletion_worker(),
             build_ingestion_worker(),
-            build_threads_worker(),
-            build_instagram_post_worker(),
-            build_instagram_reel_worker(),
+            build_media_dispatcher(),
             build_source_note_worker(),
             build_retrieval_index_worker(),
             build_research_worker(),

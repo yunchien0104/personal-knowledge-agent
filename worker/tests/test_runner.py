@@ -7,7 +7,9 @@ import unittest
 from unittest.mock import patch
 
 from personal_brain.models import JobPayloadV1
-from personal_brain.runner import build_queue_worker, main
+from personal_brain.queue_runtime import ProcessResult
+from personal_brain.runner import MediaJobDispatcher, build_queue_worker, main
+from personal_brain.supabase_gateway import ClaimedJob
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = REPOSITORY_ROOT / "packages/contracts/fixtures/job-payload.v1.json"
@@ -30,15 +32,12 @@ class RunnerTests(unittest.TestCase):
 
     def test_all_capability_registers_threads_worker(self) -> None:
         workers = {name: object() for name in (
-            "deletion", "pdf", "threads", "instagram_post", "instagram_reel",
-            "source_note", "retrieval", "research",
+            "deletion", "pdf", "media", "source_note", "retrieval", "research",
         )}
         builders = {
             "build_deletion_worker": workers["deletion"],
             "build_ingestion_worker": workers["pdf"],
-            "build_threads_worker": workers["threads"],
-            "build_instagram_post_worker": workers["instagram_post"],
-            "build_instagram_reel_worker": workers["instagram_reel"],
+            "build_media_dispatcher": workers["media"],
             "build_source_note_worker": workers["source_note"],
             "build_retrieval_index_worker": workers["retrieval"],
             "build_research_worker": workers["research"],
@@ -57,7 +56,60 @@ class RunnerTests(unittest.TestCase):
                 for builder_patch in reversed(patchers):
                     builder_patch.stop()
 
-        self.assertIn(workers["threads"], dispatcher.workers)
+        self.assertIn(workers["media"], dispatcher.workers)
+
+    def test_media_dispatcher_routes_reel_without_other_handlers_claiming_it(self) -> None:
+        payload = JobPayloadV1.from_dict({
+            "schemaVersion": 1,
+            "jobId": "11111111-1111-4111-8111-111111111111",
+            "userId": "22222222-2222-4222-8222-222222222222",
+            "jobType": "ingest_instagram_reel",
+            "idempotencyKey": "reel:test",
+            "input": {"assetId": "33333333-3333-4333-8333-333333333333"},
+        })
+        job = ClaimedJob(
+            payload.job_id,
+            payload.user_id,
+            payload.input["assetId"],
+            1,
+            payload,
+        )
+
+        class Gateway:
+            def __init__(self):
+                self.claims = 0
+
+            def claim(self, *_args):
+                self.claims += 1
+                return job if self.claims == 1 else None
+
+        class Worker:
+            def __init__(self, gateway, status):
+                self.gateway = gateway
+                self.worker_id = "worker-test"
+                self.lease_seconds = 120
+                self.status = status
+                self.called = False
+
+            def process_one(self):
+                claimed = self.gateway.claim(self.worker_id, self.lease_seconds, "media")
+                self.called = claimed is job
+                return ProcessResult(self.status, claimed.id)
+
+        gateway = Gateway()
+        threads = Worker(gateway, "threads")
+        reel = Worker(gateway, "completed")
+        dispatcher = MediaJobDispatcher({
+            "ingest_threads": threads,
+            "ingest_instagram_reel": reel,
+        })
+
+        result = dispatcher.process_one()
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(reel.called)
+        self.assertFalse(threads.called)
+        self.assertEqual(gateway.claims, 1)
 
 
 if __name__ == "__main__":

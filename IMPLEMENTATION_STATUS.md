@@ -1,5 +1,17 @@
 # Personal Brain Implementation Status
 
+## 2026-10-29 Instagram Reel hosted E2E
+
+- PASS: Cloud backup and isolated restore verification completed before the three
+  approved Reel/Threads migrations; Cloud migration history is now aligned.
+- PASS: URL-only Reel submission now creates an Asset and enqueues a durable Job.
+- FIXED LOCALLY: `WORKER_CAPABILITY=all` now claims each `media` Job once and
+  dispatches by `job_type`, preventing Threads/Instagram Post handlers from
+  consuming Reel Jobs as unsupported.
+- PASS: 32 focused runner, Reel, Instagram Post, and Threads unit tests.
+- NEXT: deploy the worker dispatch fix, retry the failed Reel Job, then verify
+  publication, Source Note generation, and retrieval through the hosted Preview.
+
 ## Current phase
 
 - R1 Unified Hybrid Retrieval is implemented locally and awaits isolated Staging
