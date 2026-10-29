@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(26);
+select plan(27);
 
 select ok(not has_function_privilege('anon', 'public.create_threads_asset_and_enqueue(text,text,text)', 'execute'), 'anon cannot submit Threads URLs');
 select ok(has_function_privilege('authenticated', 'public.create_threads_asset_and_enqueue(text,text,text)', 'execute'), 'authenticated users can submit Threads URLs');
@@ -96,6 +96,7 @@ select is((select status from public.jobs where id = (select job_id from threads
 select is((select status from public.assets where id = (select asset_id from threads_state)), 'ready', 'fenced publication promotes Asset');
 select is((select count(*) from public.asset_artifacts where revision_id = (select revision_id from threads_state) and kind = 'threads_post_text'), 1::bigint, 'publication records normalized Artifact');
 select is((select count(*) from public.asset_evidence where revision_id = (select revision_id from threads_state) and locator_type = 'post'), 1::bigint, 'publication records citation Evidence');
+select is((select count(*) from public.jobs where asset_id = (select asset_id from threads_state) and job_type = 'generate_source_note'), 1::bigint, 'ready Threads source automatically enters Source Note queue');
 
 reset role;
 set local role authenticated;

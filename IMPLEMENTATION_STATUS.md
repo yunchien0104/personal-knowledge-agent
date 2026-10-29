@@ -15,6 +15,13 @@
 - HOSTED BASELINE: Instagram Reel has completed ingestion, Source Note, and 10
   Retrieval chunks. Threads and Instagram Post require isolated hosted fixtures
   before their E2E status can be marked PASS.
+- ADDED: ready Threads, Instagram Post, and Instagram Reel Assets now
+  automatically enqueue the existing idempotent Source Note job. A one-time
+  additive backfill covers ready social sources that predate the trigger.
+- PASS: focused local pgTAP for all three social protocols is 99/99; Local DB
+  lint has no error (one unrelated pre-existing unused-variable warning).
+- PASS: 30 focused Source Note/social Worker tests plus the affected Web tests,
+  typecheck, and ESLint.
 
 ## 2026-10-29 Instagram Reel hosted E2E
 
