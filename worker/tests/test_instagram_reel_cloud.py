@@ -185,6 +185,10 @@ class InstagramReelCloudTests(unittest.TestCase):
             "includeSharesCount": False,
         })
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer server-secret")
+        self.assertEqual(
+            opener.request.full_url,
+            "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items",
+        )
         self.assertEqual(opener.timeout, 300)
 
     def test_apify_output_must_match_shortcode_and_include_stored_video(self):

@@ -9,8 +9,12 @@
   dispatches by `job_type`, preventing Threads/Instagram Post handlers from
   consuming Reel Jobs as unsupported.
 - PASS: 32 focused runner, Reel, Instagram Post, and Threads unit tests.
-- NEXT: deploy the worker dispatch fix, retry the failed Reel Job, then verify
-  publication, Source Note generation, and retrieval through the hosted Preview.
+- PASS: Render worker dispatch fix `ed363e6` is Live and the Reel Job reaches the
+  correct handler; the previous `invalid_claim` failure is resolved.
+- FIXED LOCALLY: removed unsupported dataset-export query parameters from the
+  generated Apify sync endpoint and retained a one-result Actor input limit.
+- NEXT: deploy the Apify endpoint fix, then verify publication, Source Note
+  generation, and retrieval through the hosted Preview.
 
 ## Current phase
 

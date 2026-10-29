@@ -157,7 +157,7 @@ class ApifyReelAcquisitionProvider(ReelAcquisitionProvider):
             raise ValueError("APIFY_REEL_ACTOR_ID is invalid")
         endpoint = (
             f"https://api.apify.com/v2/acts/{actor_id}/"
-            "run-sync-get-dataset-items?format=json&clean=true&maxItems=1"
+            "run-sync-get-dataset-items"
         )
         super().__init__(
             endpoint,
@@ -197,9 +197,17 @@ class ApifyReelAcquisitionProvider(ReelAcquisitionProvider):
             with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 payload = json.loads(response.read())
         except HTTPError as error:
+            detail = ""
+            try:
+                payload = json.loads(error.read(2048))
+                error_type = payload.get("error", {}).get("type")
+                if isinstance(error_type, str) and re.fullmatch(r"[a-z0-9-]{1,80}", error_type):
+                    detail = f" ({error_type})"
+            except (json.JSONDecodeError, OSError, TypeError, AttributeError):
+                pass
             raise GatewayError(
                 "reel_provider_http_error",
-                f"Reel provider failed with status {error.code}",
+                f"Reel provider failed with status {error.code}{detail}",
                 retryable=error.code == 429 or error.code >= 500,
             ) from error
         except (TimeoutError, URLError, json.JSONDecodeError) as error:
