@@ -158,7 +158,14 @@ export type ResearchRun = {
   createdAt: string;
   updatedAt: string;
   errorCode: string | null;
-  note: { id: string; title: string; body: string; publicationState: string } | null;
+  jobProgress: { percent: number; stage: string } | null;
+  note: {
+    id: string;
+    title: string;
+    body: string;
+    publicationState: string;
+    topics: TopicChip[];
+  } | null;
   citations: ResearchCitation[];
 };
 

@@ -414,8 +414,18 @@ class ResearchAgentWorker:
             with LeaseGuard(
                 self.gateway, job, self.worker_id, self.lease_seconds
             ) as lease:
+                def report_progress(percent: int, stage: str) -> None:
+                    reporter = getattr(self.gateway, "progress", None)
+                    if callable(reporter) and not reporter(
+                        job, self.worker_id, percent, stage
+                    ):
+                        raise LeaseLostError(
+                            "Worker lease expired before progress update"
+                        )
+                    lease.pulse()
 
                 # 1. Planning
+                report_progress(8, "planning_research")
                 stage_started = time.monotonic()
                 plan = validate_plan(
                     self.model.plan(question), question
@@ -424,6 +434,7 @@ class ResearchAgentWorker:
                 lease.pulse()
 
                 # 2. R1 Retrieval
+                report_progress(30, "searching_sources")
                 stage_started = time.monotonic()
                 context = self.gateway.research_context(
                     job, self.worker_id, plan
@@ -457,6 +468,7 @@ class ResearchAgentWorker:
                 lease.pulse()
 
                 # 3. R2 Generate -> Verify -> Repair -> Gate
+                report_progress(60, "drafting_findings")
                 stage_started = time.monotonic()
                 if self.orchestrator is None:
                     output = self.model.synthesize(question, plan, evidence)
@@ -492,6 +504,7 @@ class ResearchAgentWorker:
                 lease.pulse()
 
                 # 4. Verification Gate
+                report_progress(82, "verifying_claims")
                 if execution is not None and not execution.gate.can_publish:
                     raise ModelError(
                         "research_verification_failed",
@@ -513,6 +526,7 @@ class ResearchAgentWorker:
                 lease.pulse()
 
                 # 6. Supabase Publication
+                report_progress(94, "publishing_research")
                 stage_started = time.monotonic()
                 publication = self.gateway.publish_research_draft(
                     job,

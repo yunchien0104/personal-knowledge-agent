@@ -6,6 +6,7 @@ import {
   isResearchReady,
   researchPdfPage,
   researchRequestSchema,
+  researchWorkflowProgress,
   safeResearchError,
   waitForResearchRun,
 } from "../src/lib/research.ts";
@@ -48,6 +49,18 @@ test("research errors reveal only allowlisted safe messages", () => {
   assert.equal(safeResearchError("provider-secret"), "Research Agent 執行失敗，請稍後重試。");
 });
 
+test("research workflow exposes a human-readable stage and bounded progress", () => {
+  assert.deepEqual(researchWorkflowProgress({
+    status: "running", progress: {}, jobProgress: { percent: 60, stage: "drafting_findings" },
+  }), { percent: 60, label: "撰寫研究內容", state: "active" });
+  assert.deepEqual(researchWorkflowProgress({
+    status: "draft_ready", progress: {}, jobProgress: { percent: 94, stage: "publishing_research" },
+  }), { percent: 100, label: "研究完成", state: "completed" });
+  assert.deepEqual(researchWorkflowProgress({
+    status: "failed", progress: {}, jobProgress: { percent: 82, stage: "verifying_claims" },
+  }), { percent: 82, label: "研究未完成", state: "failed" });
+});
+
 test("knowledge answers stop polling only at a terminal research status", async () => {
   assert.equal(isResearchTerminal("queued"), false);
   assert.equal(isResearchTerminal("running"), false);
@@ -72,6 +85,7 @@ test("knowledge answers stop polling only at a terminal research status", async 
     createdAt: "2026-10-30T00:00:00Z",
     updatedAt: "2026-10-30T00:00:00Z",
     errorCode: null,
+    jobProgress: null,
     note: null,
     citations: [],
   }), { intervalMs: 0, maxAttempts: 4 });

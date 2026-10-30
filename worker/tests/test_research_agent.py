@@ -130,6 +130,7 @@ class FakeGateway:
         self.failures = []
         self.publications = []
         self.hybrid_calls = []
+        self.progress_updates = []
         self.context = {
             "researchRunId": RUN_ID,
             "question": QUESTION,
@@ -153,6 +154,10 @@ class FakeGateway:
 
     def heartbeat(self, _job, _worker_id, _lease_seconds):
         return self.heartbeat_results.pop(0) if self.heartbeat_results else True
+
+    def progress(self, _job, _worker_id, percent, stage):
+        self.progress_updates.append((percent, stage))
+        return True
 
     def research_context(self, _job, _worker_id, plan):
         self.plan = plan
@@ -276,6 +281,13 @@ class ResearchAgentWorkerTests(unittest.TestCase):
         self.assertEqual(model.evidence[0]["excerpt"], EXCERPT)
         self.assertEqual(model.evidence[0]["retrievalStatus"], "ready")
         self.assertEqual(len(gateway.publications), 1)
+        self.assertEqual(gateway.progress_updates, [
+            (8, "planning_research"),
+            (30, "searching_sources"),
+            (60, "drafting_findings"),
+            (82, "verifying_claims"),
+            (94, "publishing_research"),
+        ])
         publication = gateway.publications[0]
         self.assertIn(f"[Evidence {EVIDENCE_ID}]", publication["body"])
         self.assertEqual(publication["findings"][0]["citations"][0]["quote"],

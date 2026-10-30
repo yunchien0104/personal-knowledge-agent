@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(21);
+select plan(22);
 
 select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.topics'::regclass), 'topics use forced RLS');
 select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.note_topics'::regclass), 'note topics use forced RLS');
@@ -49,9 +49,10 @@ select is((select classification_status from public.note_topic_states where note
 reset role;
 set local role authenticated;
 set local request.jwt.claim.sub = '91000000-0000-4000-8000-000000000001';
-select is((select count(*) from public.list_knowledge_notes(null,null,false,20,0)),3::bigint,'knowledge list contains current notes only');
+select is((select count(*) from public.list_knowledge_notes(null,null,false,20,0)),2::bigint,'knowledge list contains current non-research notes only');
+select is((select count(*) from public.list_knowledge_notes('Research',null,false,20,0)),0::bigint,'research notes stay in the research workspace');
 select is((select source_status from public.list_knowledge_notes('Current',null,false,20,0)),'source_removed','removed source note remains with status');
-select is((select count(*) from public.list_knowledge_notes(null,null,true,20,0)),3::bigint,'unclassified count uses same effective set');
+select is((select count(*) from public.list_knowledge_notes(null,null,true,20,0)),2::bigint,'unclassified count uses same effective set');
 select is((select count(*) from public.list_knowledge_notes('Archived',null,false,20,0)),0::bigint,'archived notes are excluded');
 select throws_matching($$select public.set_note_topics('93000000-0000-4000-8000-000000000006','{}'::uuid[])$$,'owned note not found','cross-account note edit is denied');
 

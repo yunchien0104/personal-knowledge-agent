@@ -996,3 +996,23 @@
 - Knowledge cards now resolve their source asset type and label generated notes
   as PDF, Threads, Reels, or Instagram post Source Notes; manual and research
   note labels remain unchanged.
+
+### Research workspace presentation and ownership (2026-10-30)
+
+- Replaced the exposed Research plan JSON, raw Run ID and database status with
+  a user-facing, automatically refreshed workflow progress bar. The Research
+  Worker now reports planning, retrieval, drafting, verification and publication
+  checkpoints through the existing lease-fenced Job progress RPC.
+- Completed Research notes are rendered inside their Research project and can
+  use the existing owner-scoped topic selection API. Project navigation now
+  shows each creation date above the question instead of an ordinal number.
+- Added a non-destructive `list_knowledge_notes` projection change so Research
+  notes remain stored and RLS-protected but no longer appear in All Knowledge.
+  No note, citation, topic assignment or user data is deleted or moved.
+- PASS locally: Research Web tests 5/5, Research Worker tests 16/16 plus three subtests, TypeScript,
+  focused ESLint, Next production build and `git diff --check`. The targeted
+  pgTAP run is pending because this sandbox cannot access the existing OrbStack
+  Docker socket.
+- Linked Cloud dry-run showed only the new projection migration; migration
+  `20261030144112` was applied successfully and subsequent migration history
+  verification shows Local and Remote aligned. No table data was rewritten.
