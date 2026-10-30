@@ -8,6 +8,7 @@ from personal_brain.threads_ingestion import (
     ThreadsFetchError,
     ThreadsFetchResult,
     ThreadsIngestionWorker,
+    classify_playwright_error,
     normalize_threads_url,
     parse_threads_post,
 )
@@ -140,6 +141,20 @@ class SourceNoteGateway:
 
 
 class ThreadsIngestionTests(unittest.TestCase):
+    def test_missing_browser_runtime_is_permanent_and_actionable(self):
+        error = classify_playwright_error(
+            RuntimeError("BrowserType.launch: Executable doesn't exist; playwright install")
+        )
+
+        self.assertEqual(error.code, "browser_runtime_missing")
+        self.assertFalse(error.retryable)
+
+    def test_remote_browser_failure_remains_retryable(self):
+        error = classify_playwright_error(RuntimeError("net::ERR_CONNECTION_RESET"))
+
+        self.assertEqual(error.code, "threads_fetch_failed")
+        self.assertTrue(error.retryable)
+
     def test_url_normalization_strips_tracking_and_deduplicates_by_post_id(self):
         target = normalize_threads_url(
             f"https://www.threads.com/@author/post/{POST_ID}?xmt=tracking#fragment"

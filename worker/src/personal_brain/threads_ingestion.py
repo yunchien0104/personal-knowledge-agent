@@ -17,6 +17,13 @@ PROCESSOR_VERSION = "threads-playwright-v1"
 POST_PATH = re.compile(r"^/(?:@[^/]+/post|t)/([A-Za-z0-9_-]{5,64})/?$")
 ALLOWED_HOSTS = {"threads.net", "www.threads.net", "threads.com", "www.threads.com"}
 BOILERPLATE_PREFIXES = ("threads, say more", "join threads", "log in")
+BROWSER_RUNTIME_ERROR_MARKERS = (
+    "executable doesn't exist",
+    "playwright install",
+    "error while loading shared libraries",
+    "host system is missing dependencies",
+    "chrome-sandbox",
+)
 
 
 class ThreadsFetchError(RuntimeError):
@@ -115,6 +122,20 @@ def _usable_text(value: str | None) -> str | None:
     return text
 
 
+def classify_playwright_error(error: Exception) -> ThreadsFetchError:
+    """Keep deployment faults distinct from transient Threads failures."""
+
+    message = str(error).lower()
+    if any(marker in message for marker in BROWSER_RUNTIME_ERROR_MARKERS):
+        return ThreadsFetchError(
+            "browser_runtime_missing",
+            "Threads browser runtime is not installed correctly",
+        )
+    return ThreadsFetchError(
+        "threads_fetch_failed", "Threads could not be loaded", retryable=True
+    )
+
+
 def fetch_threads_post(target: ThreadsTarget) -> ThreadsFetchResult:
     """Retrieve one public post with no login or access-control bypass."""
 
@@ -207,9 +228,7 @@ def fetch_threads_post(target: ThreadsTarget) -> ThreadsFetchResult:
             "threads_fetch_timeout", "Threads timed out while loading", retryable=True
         ) from error
     except PlaywrightError as error:
-        raise ThreadsFetchError(
-            "threads_fetch_failed", "Threads could not be loaded", retryable=True
-        ) from error
+        raise classify_playwright_error(error) from error
 
 
 def parse_threads_post(

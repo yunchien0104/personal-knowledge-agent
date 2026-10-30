@@ -971,3 +971,17 @@
 - PASS locally: affected Worker tests 26/26, Web progress 4/4, actual prior
   All-fields fixture maps to the direct `fbcdn.net` path, TypeScript, ESLint,
   Python compilation, Next production build and `git diff --check`.
+
+### Hosted Threads browser runtime repair (2026-10-30)
+
+- Confirmed three URL-only Threads Jobs exhausted all three attempts with
+  `threads_fetch_failed`, while the text-fallback fixture succeeded because it
+  correctly bypassed public fetching.
+- Root cause: the hosted Render service uses the native Python runtime with a
+  build command that installs the Python package only; the repository's Docker
+  Chromium installation is therefore not part of the deployed service.
+- Added a native Render build script that installs Playwright Chromium plus OS
+  dependencies and launches the browser during the build so a broken runtime
+  cannot be released.
+- Browser installation faults now report non-retryable
+  `browser_runtime_missing`; genuine remote fetch failures remain retryable.
