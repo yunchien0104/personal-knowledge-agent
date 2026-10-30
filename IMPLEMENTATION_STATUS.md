@@ -986,3 +986,7 @@
   cannot elevate to root, so the script deliberately avoids `--with-deps`.
 - Browser installation faults now report non-retryable
   `browser_runtime_missing`; genuine remote fetch failures remain retryable.
+- The first native build confirmed root elevation is unavailable. The second
+  build confirmed Chromium can launch, but hosted retry showed the runtime user
+  could not see the build user's browser cache. The final repair uses
+  Playwright's hermetic package-local browser path for both build and runtime.

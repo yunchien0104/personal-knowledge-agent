@@ -136,9 +136,18 @@ def classify_playwright_error(error: Exception) -> ThreadsFetchError:
     )
 
 
+def configure_playwright_browser_path() -> str:
+    """Use a build artifact path visible to Render's runtime user."""
+
+    return os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
+
+
 def fetch_threads_post(target: ThreadsTarget) -> ThreadsFetchResult:
     """Retrieve one public post with no login or access-control bypass."""
 
+    # Keep the browser inside the installed Playwright package so Render's
+    # runtime user sees the same binary that the build user verified.
+    configure_playwright_browser_path()
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError

@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 from personal_brain.models import JobPayloadV1
 from personal_brain.source_notes import LocalExtractiveStructuredNoteModel, SourceNoteWorker
@@ -9,6 +11,7 @@ from personal_brain.threads_ingestion import (
     ThreadsFetchResult,
     ThreadsIngestionWorker,
     classify_playwright_error,
+    configure_playwright_browser_path,
     normalize_threads_url,
     parse_threads_post,
 )
@@ -141,6 +144,16 @@ class SourceNoteGateway:
 
 
 class ThreadsIngestionTests(unittest.TestCase):
+    def test_public_fetch_uses_hermetic_browser_location(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+            self.assertEqual(configure_playwright_browser_path(), "0")
+            self.assertEqual(os.environ["PLAYWRIGHT_BROWSERS_PATH"], "0")
+
+    def test_public_fetch_preserves_explicit_browser_location(self):
+        with patch.dict(os.environ, {"PLAYWRIGHT_BROWSERS_PATH": "/custom"}):
+            self.assertEqual(configure_playwright_browser_path(), "/custom")
+
     def test_missing_browser_runtime_is_permanent_and_actionable(self):
         error = classify_playwright_error(
             RuntimeError("BrowserType.launch: Executable doesn't exist; playwright install")

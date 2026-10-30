@@ -6,11 +6,11 @@ python -m pip install .
 # cannot be installed with Playwright's --with-deps option. Install the pinned
 # browser binary without privilege escalation and verify the existing runtime
 # libraries by launching it below.
-python -m playwright install chromium
+PLAYWRIGHT_BROWSERS_PATH=0 python -m playwright install chromium
 
 # Fail the release build if the browser binary or its shared libraries cannot
 # start. This prevents URL-only Threads ingestion from failing only at runtime.
-python - <<'PY'
+PLAYWRIGHT_BROWSERS_PATH=0 python - <<'PY'
 from playwright.sync_api import sync_playwright
 
 with sync_playwright() as playwright:
