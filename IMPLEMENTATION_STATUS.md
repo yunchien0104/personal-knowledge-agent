@@ -980,8 +980,9 @@
 - Root cause: the hosted Render service uses the native Python runtime with a
   build command that installs the Python package only; the repository's Docker
   Chromium installation is therefore not part of the deployed service.
-- Added a native Render build script that installs Playwright Chromium plus OS
-  dependencies and launches the browser during the build so a broken runtime
-  cannot be released.
+- Added a native Render build script that installs the pinned Playwright
+  Chromium binary and launches it during the build so a missing binary or
+  incompatible runtime library cannot be released. Render's native build user
+  cannot elevate to root, so the script deliberately avoids `--with-deps`.
 - Browser installation faults now report non-retryable
   `browser_runtime_missing`; genuine remote fetch failures remain retryable.

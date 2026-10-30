@@ -2,7 +2,11 @@
 set -euo pipefail
 
 python -m pip install .
-python -m playwright install --with-deps chromium
+# Render's native runtime build user cannot elevate to root, so OS packages
+# cannot be installed with Playwright's --with-deps option. Install the pinned
+# browser binary without privilege escalation and verify the existing runtime
+# libraries by launching it below.
+python -m playwright install chromium
 
 # Fail the release build if the browser binary or its shared libraries cannot
 # start. This prevents URL-only Threads ingestion from failing only at runtime.
