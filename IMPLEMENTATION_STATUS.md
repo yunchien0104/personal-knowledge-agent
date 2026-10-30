@@ -990,3 +990,6 @@
   build confirmed Chromium can launch, but hosted retry showed the runtime user
   could not see the build user's browser cache. The final repair uses
   Playwright's hermetic package-local browser path for both build and runtime.
+- Source Note pages now live inside the authenticated workspace route group and
+  use the shared App Shell. Their editor, provenance, Claims, and citation cards
+  are responsive and no longer collapse into browser-default narrow controls.
