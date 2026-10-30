@@ -180,6 +180,20 @@ class SupabaseGateway:
             },
         ) is True
 
+    def progress(
+        self, job: ClaimedJob, worker_id: str, percent: int, stage: str
+    ) -> bool:
+        return self._rpc(
+            "report_job_progress",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_progress_percent": percent,
+                "p_progress_stage": stage,
+            },
+        ) is True
+
     def report_failure(
         self,
         job: ClaimedJob,

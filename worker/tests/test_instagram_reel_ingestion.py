@@ -66,12 +66,15 @@ def claimed_job() -> ClaimedJob:
 class Gateway:
     def __init__(self, frame: bytes = JPEG) -> None:
         self.job, self.frame, self.claimed = claimed_job(), frame, False
-        self.uploads, self.publications, self.failures = [], [], []
+        self.uploads, self.publications, self.failures, self.progress_events = [], [], [], []
     def claim(self, *_args):
         if self.claimed: return None
         self.claimed = True
         return self.job
     def heartbeat(self, *_args): return True
+    def progress(self, _job, _worker, percent, stage):
+        self.progress_events.append((percent, stage))
+        return True
     def download_instagram_reel_contract(self, _job): return json.dumps(reel_contract(), ensure_ascii=False).encode()
     def download_instagram_reel_keyframe(self, _job, _media_id): return self.frame
     def upload_immutable(self, path, content, content_hash, content_type="application/json"):
@@ -111,6 +114,16 @@ class ReelContractTests(unittest.TestCase):
         self.assertEqual([upload[3] for upload in gateway.uploads], ["application/json", "image/jpeg"])
         self.assertEqual(len(gateway.publications), 1)
         self.assertEqual(gateway.failures, [])
+        self.assertEqual(
+            gateway.progress_events,
+            [
+                (2, "starting"),
+                (35, "loading_contract"),
+                (94, "validating_contract"),
+                (96, "uploading_artifacts"),
+                (99, "publishing_source"),
+            ],
+        )
 
     def test_worker_rejects_tampered_keyframe(self) -> None:
         gateway = Gateway(JPEG + b"tampered")

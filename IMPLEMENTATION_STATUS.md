@@ -943,3 +943,17 @@
   original-source result as a PDF. Retrieval tests pass 4/4; TypeScript and
   focused ESLint pass. This final Web-only display fix still requires a Vercel
   deployment before it is visible on the hosted Preview.
+
+### Library workflow progress (2026-10-30)
+
+- Added monotonic progress fields to the existing RLS-protected durable Job and
+  a lease/generation-fenced service-role-only progress RPC. Status transitions
+  still control completion and failure; the browser cannot write progress.
+- Reel cloud ingestion now reports acquisition, download, transcription,
+  keyframe extraction, visual analysis, validation, upload and publication.
+  Library aggregates ingestion (0–70%), automatic Source Note (70–90%) and
+  Retrieval indexing (90–100%) and displays the real stage plus percentage.
+- PASS locally: progress pgTAP 13/13, affected Worker tests 24/24, Web progress
+  tests 4/4, TypeScript, ESLint, Next production build and `git diff --check`.
+- Cloud migration, Worker deploy and Vercel deploy remain pending until the
+  linked-project dry-run confirms this is the only Cloud migration.

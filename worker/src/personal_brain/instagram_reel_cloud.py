@@ -455,21 +455,41 @@ class InstagramReelCloudPipeline:
             raise ValueError("REEL_ACQUISITION_PROVIDER must be generic or apify")
         return cls(provider, OpenAIReelUnderstanding.from_environment())
 
-    def process(self, source_url: str, external_id: str, pulse: Callable[[], None]) -> tuple[dict[str, Any], dict[str, bytes]]:
+    def process(
+        self,
+        source_url: str,
+        external_id: str,
+        pulse: Callable[[], None],
+        progress: Callable[[int, str], None],
+    ) -> tuple[dict[str, Any], dict[str, bytes]]:
+        progress(5, "acquiring_source")
         acquired = self.provider.fetch(source_url)
         with TemporaryDirectory(prefix="personal-brain-reel-") as temporary:
             directory = Path(temporary)
             video = directory / "source-video"
+            progress(15, "downloading_media")
             self.provider.download_video(acquired.video_url, video)
             pulse()
+            progress(30, "preparing_media")
             duration = self.media.duration(video)
+            progress(40, "transcribing_audio")
             transcript = self.understanding.transcribe(self.media.audio_chunks(video, directory))
             pulse()
+            progress(65, "extracting_keyframes")
             raw_frames = self.media.keyframes(video, directory, duration)
-            frames = [Keyframe(frame_id, timestamp, content, self.understanding.describe_frame(content, timestamp)) for frame_id, timestamp, content in raw_frames]
+            frames: list[Keyframe] = []
+            for index, (frame_id, timestamp, content) in enumerate(raw_frames, 1):
+                progress(70 + round(20 * index / max(len(raw_frames), 1)), "analyzing_frames")
+                frames.append(Keyframe(
+                    frame_id,
+                    timestamp,
+                    content,
+                    self.understanding.describe_frame(content, timestamp),
+                ))
             pulse()
         if not acquired.caption and not transcript:
             raise InstagramContractError("Reel has neither a caption nor a usable transcript")
+        progress(92, "assembling_contract")
         return build_cloud_contract(source_url, external_id, acquired, duration, transcript, frames, self.understanding.vision_model), {frame.id: frame.content for frame in frames}
 
 

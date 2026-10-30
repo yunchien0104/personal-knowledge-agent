@@ -70,9 +70,11 @@ def cloud_job():
 
 
 class FakePipeline:
-    def process(self, source_url, external_id, pulse):
+    def process(self, source_url, external_id, pulse, progress):
         assert source_url == SOURCE_URL
         assert external_id == "C10udReel"
+        progress(40, "transcribing_audio")
+        progress(92, "assembling_contract")
         pulse()
         return cloud_contract(), {"frame-001": JPEG}
 
@@ -84,6 +86,7 @@ class Gateway:
         self.uploads = []
         self.publications = []
         self.failures = []
+        self.progress_events = []
 
     def claim(self, *_args):
         if self.claimed:
@@ -92,6 +95,10 @@ class Gateway:
         return self.job
 
     def heartbeat(self, *_args): return True
+
+    def progress(self, _job, _worker, percent, stage):
+        self.progress_events.append((percent, stage))
+        return True
 
     def upload_immutable(self, path, content, content_hash, content_type="application/json"):
         assert sha256(content).hexdigest() == content_hash
@@ -271,6 +278,17 @@ class InstagramReelCloudTests(unittest.TestCase):
         self.assertEqual([content_type for _, content_type in gateway.uploads], ["application/json", "image/jpeg"])
         self.assertEqual(len(gateway.publications), 1)
         self.assertEqual(gateway.failures, [])
+        self.assertEqual(
+            gateway.progress_events,
+            [
+                (2, "starting"),
+                (40, "transcribing_audio"),
+                (92, "assembling_contract"),
+                (94, "validating_contract"),
+                (96, "uploading_artifacts"),
+                (99, "publishing_source"),
+            ],
+        )
 
     def test_cloud_job_fails_closed_when_provider_is_not_configured(self):
         gateway = Gateway()

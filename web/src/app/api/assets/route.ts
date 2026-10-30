@@ -7,6 +7,7 @@ import {
   validationError,
 } from "@/lib/api";
 import { normalizeThreadsUrl, threadsEnqueueResultSchema } from "@/lib/threads";
+import { buildWorkflowProgress, type WorkflowJob } from "@/lib/workflow-progress";
 
 const ASSET_COLUMNS =
   "id,user_id,source_type,source_url,source_external_id,status,active_revision_id,created_at,updated_at";
@@ -37,19 +38,30 @@ export async function GET(request: Request) {
   }
   const { data: jobs, error: jobsError } = await auth.supabase
     .from("jobs")
-    .select("id,asset_id,job_type,status,last_error_code,last_error_message,created_at")
+    .select("id,asset_id,job_type,status,progress_percent,progress_stage,last_error_code,last_error_message,created_at")
     .in("asset_id", assetIds)
-    .in("job_type", ["ingest_pdf", "ingest_threads", "ingest_instagram_post", "ingest_instagram_reel"])
+    .in("job_type", ["ingest_pdf", "ingest_threads", "ingest_instagram_post", "ingest_instagram_reel", "generate_source_note", "index_retrieval"])
     .order("created_at", { ascending: false });
   if (jobsError) {
     return jsonError(500, "DATABASE_ERROR", "Asset processing status could not be loaded.");
   }
-  const latestJobs = new Map<string, NonNullable<typeof jobs>[number]>();
+  const jobsByAsset = new Map<string, WorkflowJob[]>();
   for (const job of jobs ?? []) {
-    if (job.asset_id && !latestJobs.has(job.asset_id)) latestJobs.set(job.asset_id, job);
+    if (!job.asset_id) continue;
+    const rows = jobsByAsset.get(job.asset_id) ?? [];
+    rows.push(job);
+    jobsByAsset.set(job.asset_id, rows);
   }
   return jsonSuccess(
-    data?.map((asset) => ({ ...asset, ingestion_job: latestJobs.get(asset.id) ?? null })),
+    data?.map((asset) => {
+      const assetJobs = jobsByAsset.get(asset.id) ?? [];
+      const ingestionJob = assetJobs.find((job) => job.job_type.startsWith("ingest_")) ?? null;
+      return {
+        ...asset,
+        ingestion_job: ingestionJob,
+        workflow_progress: buildWorkflowProgress(asset, assetJobs),
+      };
+    }),
     200,
     { ...pagination, total: count ?? 0 },
   );

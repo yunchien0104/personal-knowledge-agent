@@ -9,9 +9,17 @@ export type Asset = {
   updated_at: string;
   ingestion_job: {
     id: string;
+    job_type: string;
     status: string;
+    progress_percent: number;
+    progress_stage: string;
     last_error_code: string | null;
     last_error_message: string | null;
+  } | null;
+  workflow_progress: {
+    percent: number;
+    stage: string;
+    state: "active" | "completed" | "failed";
   } | null;
 };
 
