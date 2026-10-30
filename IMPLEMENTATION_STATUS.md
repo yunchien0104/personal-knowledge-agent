@@ -957,3 +957,17 @@
   tests 4/4, TypeScript, ESLint, Next production build and `git diff --check`.
 - Cloud migration, Worker deploy and Vercel deploy remain pending until the
   linked-project dry-run confirms this is the only Cloud migration.
+
+### Instagram Reel direct-download fast path (2026-10-30)
+
+- Changed Apify acquisition to request metadata plus the short-lived direct
+  Instagram video URL instead of making Apify download and store every video.
+  The Worker downloads it immediately, avoiding the previous double transfer.
+- Direct media remains fail-closed: HTTPS only, no redirects or URL credentials,
+  bounded MIME/size/timeouts, and only Meta-controlled `.fbcdn.net` and
+  `.cdninstagram.com` suffixes. Apify credentials are never sent to either CDN.
+- If the signed direct URL is missing, expired, or unavailable, the Worker runs
+  the existing stored-video acquisition exactly once as a safe fallback.
+- PASS locally: affected Worker tests 26/26, Web progress 4/4, actual prior
+  All-fields fixture maps to the direct `fbcdn.net` path, TypeScript, ESLint,
+  Python compilation, Next production build and `git diff --check`.

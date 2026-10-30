@@ -27,6 +27,7 @@ const STAGE_LABELS: Record<string, string> = {
   queued: "等待開始",
   starting: "啟動處理",
   acquiring_source: "取得來源資料",
+  acquiring_fallback: "直接影片失效，改用安全備援",
   downloading_media: "下載媒體",
   preparing_media: "準備影音",
   transcribing_audio: "轉錄影片人聲",
