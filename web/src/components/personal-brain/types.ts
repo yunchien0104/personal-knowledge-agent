@@ -57,6 +57,7 @@ export type KnowledgeNote = {
   manual_topic_override: boolean;
   source_asset_id: string | null;
   source_status: string | null;
+  source_type: Asset["source_type"] | null;
 };
 
 export type Opportunity = {

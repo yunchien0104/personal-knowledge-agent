@@ -993,3 +993,6 @@
 - Source Note pages now live inside the authenticated workspace route group and
   use the shared App Shell. Their editor, provenance, Claims, and citation cards
   are responsive and no longer collapse into browser-default narrow controls.
+- Knowledge cards now resolve their source asset type and label generated notes
+  as PDF, Threads, Reels, or Instagram post Source Notes; manual and research
+  note labels remain unchanged.

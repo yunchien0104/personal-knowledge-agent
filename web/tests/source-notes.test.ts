@@ -12,6 +12,7 @@ import {
   sourceKind,
   supportsSourceNote,
 } from "../src/components/personal-brain/api.ts";
+import { knowledgeNoteLabel } from "../src/lib/knowledge-labels.ts";
 
 test("PDF Evidence locator resolves only a positive page", () => {
   assert.equal(pdfPageFromLocator({ kind: "pdf_page", page_number: 3 }), 3);
@@ -77,4 +78,14 @@ test("Instagram image posts use the Instagram Library type and support Source No
   assert.equal(sourceKind("instagram_post"), "IG");
   assert.equal(supportsSourceNote("instagram_post"), true);
   assert.equal(supportsSourceNote("instagram_reel"), true);
+});
+
+test("knowledge cards identify the source behind each generated note", () => {
+  assert.equal(knowledgeNoteLabel("source_note", "threads"), "Threads 來源筆記");
+  assert.equal(knowledgeNoteLabel("source_note", "instagram_reel"), "Reels 來源筆記");
+  assert.equal(knowledgeNoteLabel("source_note", "instagram_post"), "Instagram 貼文來源筆記");
+  assert.equal(knowledgeNoteLabel("source_note", "pdf"), "PDF 來源筆記");
+  assert.equal(knowledgeNoteLabel("source_note", null), "來源筆記");
+  assert.equal(knowledgeNoteLabel("manual_note", null), "手寫筆記");
+  assert.equal(knowledgeNoteLabel("research_note", "instagram_reel"), "研究筆記");
 });
