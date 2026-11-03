@@ -25,7 +25,13 @@ Last updated: 2026-11-03
   - Added disabled-by-default `DEEP_RESEARCH_ENABLED` feature flag.
   - Added additive Deep request/account settings/plan persistence migration and
     separate `start_deep_research` RPC. Existing `start_research` is unchanged.
-- [ ] Phase 2 — R2B planning engine
+- [x] Phase 2 — R2B planning engine
+  - Added access-scope filtering, provenance-preserving deduplication, bounded
+    Context Packs, and explicit untrusted-source prompt separation.
+  - Added structured planning, backend-owned stable IDs, graph/coverage quality
+    gates, one repair attempt, and a bounded internal-only safe fallback.
+  - Added lease-generation-fenced, idempotent plan-version persistence. Runtime
+    handoff is exposed for the Phase 4 Deep Coordinator without changing Legacy.
 - [ ] Phase 3 — R2C evidence evaluation
 - [ ] Phase 4 — R2D controller, durability, budgets, resume
 - [ ] Phase 5 — Web evidence and publication integration
@@ -33,7 +39,7 @@ Last updated: 2026-11-03
 
 ## Verified tests
 
-- Worker offline regression: 140 passed.
+- Worker offline regression: 143 passed.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -52,5 +58,5 @@ Last updated: 2026-11-03
 
 ## Next exact step
 
-Implement Phase 2 R2B Context Pack, strict Deep Planner, quality gate,
-single-repair/fallback behavior, and fenced versioned plan persistence.
+Implement Phase 3 R2C deterministic evidence pre-check, source-lineage analysis,
+Requirement Coverage, conflict classification, gap ranking, and persistence.

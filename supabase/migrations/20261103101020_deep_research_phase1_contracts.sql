@@ -281,3 +281,101 @@ revoke all on function public.start_deep_research(text,uuid,uuid[],text,jsonb,js
   from public, anon, authenticated, service_role;
 grant execute on function public.start_deep_research(text,uuid,uuid[],text,jsonb,jsonb)
   to authenticated;
+
+create or replace function public.record_deep_research_plan(
+  p_job_id uuid,
+  p_worker_id text,
+  p_lease_generation bigint,
+  p_plan jsonb,
+  p_quality_gate text,
+  p_model_provider text,
+  p_model_name text,
+  p_prompt_version text
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_job public.jobs%rowtype;
+  v_run public.research_runs%rowtype;
+  v_plan_id uuid;
+  v_plan_version integer;
+begin
+  select * into v_job from public.jobs where id = p_job_id for update;
+  if not found or v_job.job_type <> 'execute_research'
+     or v_job.status <> 'running' or v_job.lease_owner <> p_worker_id
+     or v_job.lease_generation <> p_lease_generation
+     or v_job.lease_expires_at <= now()
+     or v_job.payload_json #>> '{input,researchMode}' <> 'deep' then
+    return null;
+  end if;
+  select * into v_run from public.research_runs
+  where id = (v_job.payload_json #>> '{input,researchRunId}')::uuid
+    and user_id = v_job.user_id and job_id = v_job.id
+    and research_mode = 'deep'
+  for update;
+  if not found then return null; end if;
+  if p_quality_gate not in ('hard_fail', 'needs_revision', 'acceptable')
+     or p_quality_gate <> 'acceptable'
+     or jsonb_typeof(p_plan) <> 'object'
+     or p_plan ->> 'schemaVersion' <> 'research-plan-v1'
+     or p_plan ->> 'runId' <> v_run.id::text
+     or p_plan ->> 'requestId' <> v_run.request_id::text
+     or p_plan ->> 'objective' <> v_run.request_json ->> 'objective'
+     or jsonb_typeof(p_plan -> 'subquestions') <> 'array'
+     or jsonb_array_length(p_plan -> 'subquestions') not between 1 and 8
+     or jsonb_typeof(p_plan -> 'evidenceRequirements') <> 'array'
+     or jsonb_array_length(p_plan -> 'evidenceRequirements') not between 1 and 40
+     or jsonb_typeof(p_plan -> 'retrievalProposals') <> 'array'
+     or jsonb_array_length(p_plan -> 'retrievalProposals') not between 1 and 32
+     or (v_run.web_policy = 'disabled' and jsonb_path_exists(
+       p_plan, '$.retrievalProposals[*] ? (@.source == "web")'
+     )) then
+    raise invalid_parameter_value using message = 'deep research plan is invalid';
+  end if;
+  begin
+    v_plan_id := (p_plan ->> 'planId')::uuid;
+    v_plan_version := (p_plan ->> 'planVersion')::integer;
+  exception when invalid_text_representation or numeric_value_out_of_range then
+    raise invalid_parameter_value using message = 'deep research plan identity is invalid';
+  end;
+  insert into public.research_plan_versions (
+    id, user_id, research_run_id, request_id, plan_version, schema_version,
+    plan_json, parent_plan_id, revision_reason, quality_gate,
+    model_provider, model_name, prompt_version
+  ) values (
+    v_plan_id, v_job.user_id, v_run.id, v_run.request_id, v_plan_version,
+    'research-plan-v1', p_plan,
+    nullif(p_plan ->> 'revisionParentPlanId', '')::uuid,
+    p_plan ->> 'revisionReason', p_quality_gate,
+    p_model_provider, p_model_name, p_prompt_version
+  ) on conflict (research_run_id, plan_version) do nothing;
+  if not exists (
+    select 1 from public.research_plan_versions
+    where research_run_id = v_run.id and plan_version = v_plan_version
+      and id = v_plan_id and plan_json = p_plan
+  ) then
+    raise integrity_constraint_violation using message = 'plan version conflicts with persisted plan';
+  end if;
+  update public.research_runs set
+    plan_json = p_plan,
+    status = 'running',
+    progress_json = jsonb_build_object(
+      'stage', 'deep_plan_ready', 'planVersion', v_plan_version, 'updatedAt', now()
+    )
+  where id = v_run.id;
+  return jsonb_build_object(
+    'researchRunId', v_run.id, 'planId', v_plan_id,
+    'planVersion', v_plan_version, 'qualityGate', p_quality_gate
+  );
+end;
+$$;
+
+revoke all on function public.record_deep_research_plan(
+  uuid,text,bigint,jsonb,text,text,text,text
+) from public, anon, authenticated, service_role;
+grant execute on function public.record_deep_research_plan(
+  uuid,text,bigint,jsonb,text,text,text,text
+) to service_role;

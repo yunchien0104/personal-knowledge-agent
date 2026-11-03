@@ -4,9 +4,11 @@
 
 - Phase 1 Contracts & Compatibility is complete on local branch
   `feat/deep-research-r2b-r2d`; see `docs/DEEP_RESEARCH_IMPLEMENTATION.md`.
+- Phase 2 R2B is complete locally: bounded Context Pack, strict Deep Planner,
+  quality/repair/fallback path, and fenced versioned plan persistence.
 - Added strict Deep Research contracts, separate Deep/Legacy routing, a
   disabled-by-default feature flag, and an additive Local-validated migration.
-- PASS: 140 offline Worker regressions, 4 Web Research tests, TypeScript,
+- PASS: 143 offline Worker regressions, 4 Web Research tests, TypeScript,
   ESLint, and transactional Local migration apply/rollback.
 - No Cloud, production, hosted database, Storage, Worker, deployment, or paid
   model operation was performed.
