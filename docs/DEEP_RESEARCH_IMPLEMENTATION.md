@@ -32,14 +32,21 @@ Last updated: 2026-11-03
     gates, one repair attempt, and a bounded internal-only safe fallback.
   - Added lease-generation-fenced, idempotent plan-version persistence. Runtime
     handoff is exposed for the Phase 4 Deep Coordinator without changing Legacy.
-- [ ] Phase 3 — R2C evidence evaluation
+- [x] Phase 3 — R2C evidence evaluation
+  - Added deterministic ownership/provenance/validity pre-checks, content and
+    lineage deduplication, and bounded untrusted evidence prompts.
+  - Added six-dimensional structured evaluation, complete Requirement Coverage,
+    strict ID validation, derivative-source independence correction, conflict
+    classification support, conservative fallback, and ranked gaps.
+  - Added separately persisted gaps plus lease-fenced, idempotent assessment
+    persistence with model/token/latency/cost telemetry.
 - [ ] Phase 4 — R2D controller, durability, budgets, resume
 - [ ] Phase 5 — Web evidence and publication integration
 - [ ] Phase 6 — Full integration and rollout readiness
 
 ## Verified tests
 
-- Worker offline regression: 143 passed.
+- Worker offline regression: 146 passed.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -58,5 +65,5 @@ Last updated: 2026-11-03
 
 ## Next exact step
 
-Implement Phase 3 R2C deterministic evidence pre-check, source-lineage analysis,
-Requirement Coverage, conflict classification, gap ranking, and persistence.
+Implement Phase 4 R2D Deep Coordinator, multi-round evidence accumulation,
+checkpoint/operation state, budget reservations, stop decisions, and resume.
