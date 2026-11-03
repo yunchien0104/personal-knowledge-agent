@@ -10,9 +10,8 @@
   truthful partial/timeout states, publication replay, and authenticated Deep/Web
   read mapping without changing Legacy, R1, R2A, R2E, or R2F.
 - PASS: 157 offline Worker tests; 34 offline Web tests; TypeScript; ESLint.
-- BLOCKED: clean local migration replay, pgTAP, RLS/RPC runtime checks, and the
-  authored two-session budget test because no disposable local PostgreSQL/Supabase
-  endpoint is available and Docker socket access is denied.
+- RESOLVED by the local database verification below: clean migration replay,
+  pgTAP, RLS/RPC checks, and real two-session budget tests now pass.
 - BLOCKED by environment: eight Worker HTTP tests cannot bind loopback; Next build
   cannot resolve Google Fonts. These failures occurred before product assertions
   or a completed production bundle.
@@ -20,6 +19,22 @@
 - Canonical current detail: `docs/DEEP_RESEARCH_INFRA_REPAIR.md` and
   `docs/DEEP_RESEARCH_IMPLEMENTATION.md`. Older sections below are historical and
   do not override the current verification matrix.
+
+## Deep Research real local database verification (2026-11-04)
+
+- PASS: clean isolated replay of all 32 migrations on PostgreSQL 15.19.
+- PASS: all 18 pgTAP files, 490/490 assertions, including 93 Deep-specific checks.
+- PASS: actual two-session reservation and duplicate-settlement serialization.
+- PASS: real database container restart retained deadline and checkpoint state;
+  lease generation 2 recovered both while stale generation 1 was fenced.
+- Fixed a generic Job trigger that overwrote `partial_ready` with `failed`; the
+  additive follow-up migration preserves Deep terminal states without changing
+  Legacy status mapping.
+- Fixed concurrency tests to use the database bridge address instead of a hard-coded
+  host port, preventing accidental connection to another local stack.
+- PASS: DB lint with zero errors (five warnings across four functions), Worker
+  157/157, Web Research 7/7, TypeScript, and ESLint.
+- Detailed evidence: `docs/DEEP_RESEARCH_LOCAL_DB_VERIFICATION.md`.
 
 ## Deep Research R2B/R2C/R2D implementation (2026-11-03)
 

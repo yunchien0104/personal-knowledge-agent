@@ -4,6 +4,11 @@ Date: 2026-11-04
 Branch: `fix/deep-research-infrastructure`
 Baseline: `7c0a4ea`
 
+Postscript: the isolated PostgreSQL verification that was blocked during this
+repair session was completed on 2026-11-04. See
+`docs/DEEP_RESEARCH_LOCAL_DB_VERIFICATION.md` for the clean 32-migration replay,
+490/490 pgTAP result, real concurrency, restart recovery, and follow-up fix.
+
 ## 1. Original findings and root causes
 
 1. Migration history was not reproducible because versions `20261030090000` and
@@ -30,8 +35,8 @@ Baseline: `7c0a4ea`
   `20261030090100_add_job_workflow_progress.sql` without editing their contents.
 - Confirmed their local history origins (`d234228` and `fd6a805`) and identical
   hashes across the available repositories.
-- Clean replay remains blocked because this environment cannot create or reach a
-  disposable Supabase Local database.
+- Clean replay was initially blocked in this repair session and was subsequently
+  completed in the isolated Step 3 verification documented above.
 
 ### Phases 2–3 — operations and budget
 
