@@ -1,5 +1,26 @@
 # Personal Brain Implementation Status
 
+## Deep Research infrastructure repair (2026-11-04)
+
+- Current branch: `fix/deep-research-infrastructure` from baseline `7c0a4ea`.
+- Restored the two authentic missing historical migrations and added additive
+  durability/state repair migrations.
+- Implemented abandoned-reservation lease recovery, original-period/idempotent
+  settlement, explicit release accounting, durable deadlines/query limits,
+  truthful partial/timeout states, publication replay, and authenticated Deep/Web
+  read mapping without changing Legacy, R1, R2A, R2E, or R2F.
+- PASS: 157 offline Worker tests; 34 offline Web tests; TypeScript; ESLint.
+- BLOCKED: clean local migration replay, pgTAP, RLS/RPC runtime checks, and the
+  authored two-session budget test because no disposable local PostgreSQL/Supabase
+  endpoint is available and Docker socket access is denied.
+- BLOCKED by environment: eight Worker HTTP tests cannot bind loopback; Next build
+  cannot resolve Google Fonts. These failures occurred before product assertions
+  or a completed production bundle.
+- No hosted resource, provider, deployment, push, merge, or paid call was used.
+- Canonical current detail: `docs/DEEP_RESEARCH_INFRA_REPAIR.md` and
+  `docs/DEEP_RESEARCH_IMPLEMENTATION.md`. Older sections below are historical and
+  do not override the current verification matrix.
+
 ## Deep Research R2B/R2C/R2D implementation (2026-11-03)
 
 - Phase 1 Contracts & Compatibility is complete on local branch
