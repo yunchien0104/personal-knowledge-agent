@@ -131,6 +131,7 @@ def build_research_worker():
     from personal_brain.research.llm import OpenAICompatibleResearchModel
     from personal_brain.research.verifier import LLMClaimJudge
     from personal_brain.research.orchestrator import ResearchOrchestrator
+    from personal_brain.research.deep_coordinator import DeepResearchCoordinator
 
     worker_id = os.environ.get("WORKER_ID", "").strip()
     if not worker_id:
@@ -154,6 +155,11 @@ def build_research_worker():
         gateway,
         OpenAICompatibleEmbeddingProvider(EmbeddingSettings.from_environment()),
     )
+    deep_processor = None
+    if os.environ.get("DEEP_RESEARCH_ENABLED", "false").strip().lower() == "true":
+        deep_processor = DeepResearchCoordinator(
+            gateway, retrieval, orchestrator=orchestrator
+        )
 
     return ResearchAgentWorker(
         gateway,
@@ -161,6 +167,7 @@ def build_research_worker():
         retrieval,
         worker_id,
         orchestrator=orchestrator,
+        deep_processor=deep_processor,
         lease_seconds=lease_seconds,
     )
 

@@ -1,6 +1,6 @@
 # Deep Research Implementation Progress
 
-Last updated: 2026-11-03
+Last updated: 2026-11-04
 
 ## Safety boundary
 
@@ -40,20 +40,35 @@ Last updated: 2026-11-03
     classification support, conservative fallback, and ranked gaps.
   - Added separately persisted gaps plus lease-fenced, idempotent assessment
     persistence with model/token/latency/cost telemetry.
-- [ ] Phase 4 — R2D controller, durability, budgets, resume
+- [x] Phase 4 — R2D controller, durability, budgets, resume
   - Implemented pure deterministic action selection, internal-first ordering,
     normalized query fingerprints, coverage-based information gain, hard limit,
     quality, budget-reserve, authorization, and diminishing-return stops.
-  - Remaining: wire the Deep Coordinator into the Worker; add atomic checkpoint,
-    operation and budget-ledger migrations/RPCs; accumulate multi-round Evidence;
-    resume from committed checkpoints; prove stale-lease and concurrent-reservation
-    invariants; hand the stopped result to existing R2A/R2E/R2F.
+  - Added a disabled-by-default `DeepResearchCoordinator` wired to the existing
+    leased Research Worker. It executes R2B/R1/R2C/R2D without a second queue,
+    accumulates Evidence across rounds, resumes from durable state, and keeps
+    publication behind the existing R2E/R2F verification gate.
+  - Added lease-generation-fenced checkpoint CAS, operation reservation/start/
+    settlement, cumulative Evidence, state reload, and no-publication terminal RPCs.
+  - Added transactionally locked account-period and run budgets, a protected final
+    report reserve, append-only ledger, conservative `outcome_unknown` accounting,
+    idempotency-key conflict detection, and rejection when actual cost exceeds the
+    atomic reservation.
+  - Paid/external operations that may have crossed the side-effect boundary are not
+    retried after lease takeover. Zero-cost internal operations remain safely
+    idempotent. Stale workers cannot reserve, checkpoint, append, settle, or finish.
+  - Added multi-round accumulation, resume/no-reexecute, uncertain-outcome, and
+    stale-worker unit coverage plus 23 pgTAP durability/RLS/budget/fencing checks.
 - [ ] Phase 5 — Web evidence and publication integration
 - [ ] Phase 6 — Full integration and rollout readiness
 
 ## Verified tests
 
-- Worker offline regression: 149 passed.
+- Worker offline regression: 153 passed.
+- Focused Deep Coordinator and R2B/R2C/R2D suite: 19 passed.
+- Phase 4 Local PostgreSQL migration apply plus pgTAP: 23 passed; all three Deep
+  migrations and test fixtures were executed in one verified loopback transaction
+  and rolled back.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -64,14 +79,20 @@ Last updated: 2026-11-03
 
 - Three existing provider-backed Research tests require real LLM environment
   variables and were excluded; no credentials were loaded.
-- Docker-dependent `supabase test db` was not run because the Docker socket is
-  unavailable. SQL migration validation used direct Local Postgres transaction
-  rollback instead.
+- `supabase migration up --local` is blocked by two pre-existing Local migration
+  history entries (`20261030090000`, `20261030090100`) whose files are absent from
+  this feature worktree. No history repair or destructive reset was performed.
+  SQL validation instead applied Phase 1/3/4 and pgTAP directly to the verified
+  loopback Local Postgres inside a transaction and rolled everything back.
+- True multi-session budget contention is still a Phase 6 verification item. The
+  Phase 4 database tests prove row-locked competing reservation limits,
+  idempotency, accounting balance, stale-lease rejection, and takeover fencing;
+  a parallel two-session run awaits an isolated resettable Local database.
 - Staging/production migration, E2E, deployment, and paid provider calls were not
   run and are not authorized by this task.
 
 ## Next exact step
 
-Continue Phase 4 with atomic checkpoint/operation/budget schema and RPCs, then
-wire `DeepResearchCoordinator` into the existing leased Research Worker and add
-crash/resume, multi-round accumulation, stale-lease, and concurrency tests.
+Continue Phase 5 with Web policy enforcement, run-scoped Web Evidence capture,
+source lifecycle handling, verified partial-result persistence, and Web citation
+publication without weakening the existing R2E/R2F gate.

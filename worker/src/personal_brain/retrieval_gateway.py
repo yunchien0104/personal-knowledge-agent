@@ -229,3 +229,152 @@ class RetrievalSupabaseGateway(SupabaseGateway):
             },
         )
         return result if isinstance(result, dict) else None
+
+    def load_deep_research_state(
+        self, job: Any, worker_id: str
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "load_deep_research_state",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def reserve_deep_research_operation(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        operation_id: str,
+        idempotency_key: str,
+        action_type: str,
+        cost_category: str,
+        parameters_hash: str,
+        estimated_cost_usd: str,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "reserve_deep_research_operation",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+                "p_idempotency_key": idempotency_key,
+                "p_action_type": action_type,
+                "p_cost_category": cost_category,
+                "p_parameters_hash": parameters_hash,
+                "p_estimated_cost_usd": estimated_cost_usd,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def start_deep_research_operation(
+        self, job: Any, worker_id: str, operation_id: str
+    ) -> bool:
+        result = self._rpc(
+            "start_deep_research_operation",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+            },
+        )
+        return result is True
+
+    def settle_deep_research_operation(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        operation_id: str,
+        status: str,
+        actual_cost_usd: str,
+        result_ref: str | None = None,
+        error_code: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "settle_deep_research_operation",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+                "p_status": status,
+                "p_actual_cost_usd": actual_cost_usd,
+                "p_result_ref": result_ref,
+                "p_error_code": error_code,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def append_deep_research_evidence(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        operation_id: str,
+        round_number: int,
+        query_fingerprint: str,
+        evidence: list[Mapping[str, Any]],
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "append_deep_research_evidence",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+                "p_round_number": round_number,
+                "p_query_fingerprint": query_fingerprint,
+                "p_evidence": evidence,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def commit_deep_research_checkpoint(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        expected_checkpoint_version: int,
+        state: Mapping[str, Any],
+        plan_id: str | None = None,
+        assessment_id: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "commit_deep_research_checkpoint",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_expected_checkpoint_version": expected_checkpoint_version,
+                "p_state": state,
+                "p_plan_id": plan_id,
+                "p_assessment_id": assessment_id,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def complete_deep_research_without_publication(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        outcome: str,
+        stop_reason: str,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "complete_deep_research_without_publication",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_outcome": outcome,
+                "p_stop_reason": stop_reason,
+            },
+        )
+        return result if isinstance(result, dict) else None
