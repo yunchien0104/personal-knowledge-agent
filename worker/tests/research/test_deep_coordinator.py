@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from personal_brain.models import JobPayloadV1
@@ -59,7 +60,8 @@ def job(run_id: UUID, user_id: UUID) -> ClaimedJob:
 class FakeGateway:
     def __init__(self, request: dict, plan: dict, catalog: dict[str, dict]) -> None:
         self.bundle = {"request": request, "plan": plan, "state": None, "assessment": None,
-                       "budget": None, "evidence": [], "operations": []}
+                       "budget": None, "evidence": [], "operations": [],
+                       "deadlineAt": "2099-01-01T00:00:00+00:00"}
         self.catalog = catalog
         self.operations: dict[str, str] = {}
         self.checkpoints: list[dict] = []
@@ -256,3 +258,84 @@ def test_stale_worker_stops_before_any_side_effect() -> None:
     assert result.status == "lease_lost"
     assert gateway.checkpoints == []
     assert gateway.operations == {}
+
+
+def test_deadline_before_planning_starts_no_operation() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    gateway = FakeGateway(request, None, {})
+    gateway.bundle["deadlineAt"] = "2026-01-01T00:00:00+00:00"
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}),
+        clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert gateway.operations == {}
+    assert gateway.completed == {
+        "outcome": "insufficient", "stop_reason": "duration_exhausted"
+    }
+
+
+def test_deadline_after_retrieval_stops_before_evaluation() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    gateway = FakeGateway(request, plan_json(request), {first["id"]: first})
+    gateway.bundle["deadlineAt"] = "2026-01-01T00:00:01+00:00"
+    moments = iter([
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+    ])
+    evaluator = ProgressiveEvaluator()
+
+    class NoPostDeadlineOrchestrator:
+        def run(self, *_args, **_kwargs):
+            raise AssertionError("post-deadline synthesis must not start")
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({"first record": [first]}), evaluator=evaluator,
+        orchestrator=NoPostDeadlineOrchestrator(),
+        clock=lambda: next(moments),
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert evaluator.calls == 0
+    assert gateway.checkpoints[-1]["stopReason"] == "duration_exhausted"
+    assert gateway.completed == {
+        "outcome": "qualified_partial", "stop_reason": "duration_exhausted"
+    }
+
+
+def test_expired_deadline_is_reapplied_after_checkpoint_resume() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    gateway = FakeGateway(request, plan_json(request), {})
+    gateway.bundle["deadlineAt"] = "2026-01-01T00:00:00+00:00"
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}),
+        clock=lambda: datetime(2026, 1, 2, tzinfo=timezone.utc),
+    ).process_claimed(job(run_id, user_id), "worker-2", 120)
+
+    assert result.status == "completed"
+    assert gateway.operations == {}
+    assert gateway.checkpoints[-1]["stopReason"] == "duration_exhausted"
+
+
+def test_query_limit_stops_before_second_retrieval() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    request["effectiveLimits"]["maxQueries"] = 1
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    gateway = FakeGateway(request, plan_json(request), {first["id"]: first})
+    retrieval = FakeRetrieval({"first record": [first]})
+
+    result = DeepResearchCoordinator(
+        gateway, retrieval, evaluator=ProgressiveEvaluator()
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert retrieval.calls == ["first record"]
+    assert gateway.checkpoints[-1]["stopReason"] == "max_queries_exhausted"

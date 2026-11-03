@@ -7,7 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 import json
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
@@ -140,6 +140,7 @@ class DeepResearchCoordinator:
         orchestrator: Any | None = None,
         web_provider: WebResearchProvider | None = None,
         web_operation_estimate_usd: Decimal = Decimal("0.0100"),
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.gateway = gateway
         self.retrieval = retrieval
@@ -149,6 +150,40 @@ class DeepResearchCoordinator:
         self.orchestrator = orchestrator
         self.web_provider = web_provider
         self.web_operation_estimate_usd = web_operation_estimate_usd
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def _deadline_exhausted(self, bundle: Mapping[str, Any]) -> bool:
+        raw = bundle.get("deadlineAt")
+        if not isinstance(raw, str):
+            raise GatewayError(
+                "missing_research_deadline",
+                "Deep Research deadline is unavailable",
+                retryable=False,
+            )
+        deadline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            raise GatewayError(
+                "invalid_research_deadline",
+                "Deep Research deadline is invalid",
+                retryable=False,
+            )
+        return self.clock() >= deadline
+
+    def _terminal_state(
+        self,
+        state: ResearchIterationStateV1,
+        *,
+        reason: str,
+        outcome: str = "qualified_partial",
+    ) -> ResearchIterationStateV1:
+        return state.model_copy(update={
+            "checkpointVersion": state.checkpointVersion + 1,
+            "executionPhase": "terminal",
+            "stopReason": reason,
+            "outcome": outcome,
+            "proposedActions": [],
+            "approvedActionIds": [],
+        })
 
     def _load(self, job: Any, worker_id: str) -> Mapping[str, Any]:
         value = self.gateway.load_deep_research_state(job, worker_id)
@@ -296,6 +331,14 @@ class DeepResearchCoordinator:
                 state = ResearchIterationStateV1.model_validate(bundle["state"]) if bundle.get("state") else None
 
                 if plan is None:
+                    if self._deadline_exhausted(bundle):
+                        result = self.gateway.complete_deep_research_without_publication(
+                            job, worker_id, outcome="insufficient",
+                            stop_reason="duration_exhausted",
+                        )
+                        if result is None:
+                            raise LeaseLostError("Worker lease is no longer valid")
+                        return ProcessResult("completed", job.id)
                     operation_id, status = self._reserve_start(
                         job, worker_id, request, "plan:v1", "plan_research", "r2b",
                         {"objective": request.objective},
@@ -351,7 +394,24 @@ class DeepResearchCoordinator:
                 assessment = EvidenceAssessmentV1.model_validate(bundle["assessment"]) if bundle.get("assessment") else None
                 while state.executionPhase != "terminal":
                     lease.pulse()
+                    current = self._load(job, worker_id)
+                    if self._deadline_exhausted(current):
+                        state = self._terminal_state(state, reason="duration_exhausted")
+                        self._checkpoint(
+                            job, worker_id, state, plan_id=plan.planId,
+                            assessment_id=assessment.assessmentId if assessment else None,
+                        )
+                        break
                     if state.executionPhase in {"planning", "deciding"}:
+                        if state.currentRound >= request.effectiveLimits.maxQueries:
+                            state = self._terminal_state(
+                                state, reason="max_queries_exhausted"
+                            )
+                            self._checkpoint(
+                                job, worker_id, state, plan_id=plan.planId,
+                                assessment_id=assessment.assessmentId if assessment else None,
+                            )
+                            break
                         if state.executionPhase == "planning":
                             query = next((p.query for p in plan.retrievalProposals if p.source == "internal"), request.originalQuestion)
                             action = ResearchActionV1(
@@ -420,6 +480,15 @@ class DeepResearchCoordinator:
                         })
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
 
+                    current = self._load(job, worker_id)
+                    if self._deadline_exhausted(current):
+                        state = self._terminal_state(state, reason="duration_exhausted")
+                        self._checkpoint(
+                            job, worker_id, state, plan_id=plan.planId,
+                            assessment_id=assessment.assessmentId if assessment else None,
+                        )
+                        break
+
                     evaluation_id, evaluation_status = self._reserve_start(
                         job, worker_id, request, f"round:{state.currentRound}:evaluate",
                         "evaluate_evidence", "r2c",
@@ -474,7 +543,12 @@ class DeepResearchCoordinator:
                     self._checkpoint(job, worker_id, state, plan_id=plan.planId,
                                      assessment_id=assessment.assessmentId)
 
-                if state.outcome in {"complete", "qualified_partial"} and self.orchestrator is not None and records:
+                if (
+                    state.outcome in {"complete", "qualified_partial"}
+                    and state.stopReason != "duration_exhausted"
+                    and self.orchestrator is not None
+                    and records
+                ):
                     publication_rows = _publication_rows(records)
                     execution = self.orchestrator.run(
                         request.originalQuestion, plan.model_dump(mode="json"), publication_rows

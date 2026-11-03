@@ -405,7 +405,8 @@ class ResearchIterationStateV1(DeepStrictModel):
     consecutiveNoInformationGainRounds: int = Field(ge=0, le=10)
     stopReason: Literal[
         "quality_reached", "diminishing_returns", "budget_exhausted", "max_rounds_reached",
-        "duration_exhausted", "cancelled", "authorization_blocked", "lease_lost", "no_permitted_action"
+        "max_queries_exhausted", "duration_exhausted", "cancelled",
+        "authorization_blocked", "lease_lost", "no_permitted_action"
     ] | None = None
     outcome: Literal["complete", "qualified_partial", "insufficient", "cancelled", "failed"] | None = None
 

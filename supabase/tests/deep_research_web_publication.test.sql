@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(27);
+select plan(33);
 
 select has_table('public', 'deep_web_sources', 'Web source lifecycle table exists');
 select has_table('public', 'deep_web_evidence', 'run-scoped Web Evidence table exists');
@@ -20,6 +20,10 @@ insert into auth.users (
 ) values (
   '00000000-0000-0000-0000-000000000000', 'e1000000-0000-4000-8000-000000000001',
   'authenticated', 'authenticated', 'deep-web@example.test', '', now(),
+  '{"provider":"email","providers":["email"]}', '{}', now(), now()
+), (
+  '00000000-0000-0000-0000-000000000000', 'e1000000-0000-4000-8000-000000000002',
+  'authenticated', 'authenticated', 'deep-web-other@example.test', '', now(),
   '{"provider":"email","providers":["email"]}', '{}', now(), now()
 );
 insert into public.deep_research_account_settings (
@@ -155,6 +159,33 @@ select is((select canonical_url from public.deep_web_citations),
   'https://example.org/current', 'Web citation snapshot retains canonical URL');
 select is((select result_status from public.deep_research_results),
   'verified_complete', 'published Web result replaces the partial result atomically');
+select is((public.publish_deep_research_draft(
+  (select job_id from web_state), 'web-worker', 1,
+  'mock','mock-v1','deep-r2ef-v1',repeat('3',64),
+  'Verified Web draft','Verified body',
+  '[{"text":"Current verified claim","uncertainty":"Source-supported fact.","citations":[{"evidenceId":"e4000000-0000-4000-8000-000000000003","quote":"Current verified statement","relationType":"supports"}]}]'::jsonb
+) ->> 'idempotent')::boolean, true, 'lost publication response can be replayed');
+select is((select count(*) from public.notes where title = 'Verified Web draft'),
+  1::bigint, 'publication replay creates no duplicate Note');
+select is((select count(*) from public.deep_web_citations
+  where research_run_id = (select run_id from web_state)), 1::bigint,
+  'publication replay creates no duplicate citation');
+set local role authenticated;
+set local request.jwt.claim.sub = 'e1000000-0000-4000-8000-000000000002';
+select is((select count(*) from public.deep_research_results
+  where research_run_id = (select run_id from web_state)), 0::bigint,
+  'RLS hides Deep results from another authenticated user');
+select is((select count(*) from public.deep_web_citations
+  where research_run_id = (select run_id from web_state)), 0::bigint,
+  'RLS hides Web citation provenance from another authenticated user');
+select throws_ok(
+  $$select public.publish_deep_research_draft(
+    (select job_id from web_state), 'web-worker', 1,
+    'mock','mock-v1','deep-r2ef-v1',repeat('3',64),
+    'Verified Web draft','Verified body',
+    '[{"text":"Current verified claim","uncertainty":"Source-supported fact.","citations":[{"evidenceId":"e4000000-0000-4000-8000-000000000003","quote":"Current verified statement","relationType":"supports"}]}]'::jsonb
+  )$$,
+  '42501', null, 'authenticated clients cannot replay Worker publication');
 
 select * from finish();
 rollback;
