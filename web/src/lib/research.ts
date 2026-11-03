@@ -40,20 +40,37 @@ export function newResearchRequestKey() {
 
 export type ResearchCitation = {
   id: string;
+  origin: "internal" | "web";
   findingIndex: number;
   citationIndex: number;
   relationType: "supports" | "contradicts" | "contextualizes";
   evidenceId: string;
-  assetId: string;
-  revisionId: string;
+  assetId: string | null;
+  revisionId: string | null;
   locator: Record<string, unknown>;
   quote: string;
-  validityStatus: "valid" | "source_deleted";
+  validityStatus: "valid" | "invalid" | "source_deleted" | "superseded";
+  canonicalUrl?: string;
+  sourceTitle?: string;
+  contentHash?: string;
   sourceUrl?: string;
+};
+
+export type DeepResearchResult = {
+  status: "verified_complete" | "verified_partial" | "insufficient";
+  stopReason: string;
+  title: string | null;
+  body: string | null;
+  findings: unknown[];
+  verification: Record<string, unknown>;
+  outputHash: string | null;
+  publishedNoteId: string | null;
+  updatedAt: string;
 };
 
 export type ResearchRun = {
   id: string;
+  mode: "legacy" | "deep";
   question: string;
   plan: Record<string, unknown> | null;
   scopeAssetIds: string[] | null;
@@ -67,6 +84,7 @@ export type ResearchRun = {
   errorCode: string | null;
   note: { id: string; title: string; body: string; publicationState: string } | null;
   citations: ResearchCitation[];
+  deepResult: DeepResearchResult | null;
 };
 
 export async function startResearch(
@@ -111,13 +129,14 @@ export async function getResearchRun(
 ): Promise<ResearchRun | null> {
   const { data: run, error } = await supabase
     .from("research_runs")
-    .select("id,question,plan_json,scope_asset_ids,retrieval_status,progress_json,status,job_id,output_note_id,created_at,updated_at")
+    .select("id,question,research_mode,plan_json,scope_asset_ids,retrieval_status,progress_json,status,job_id,output_note_id,created_at,updated_at")
     .eq("id", runId)
     .maybeSingle();
   if (error) throw new Error("Research run could not be loaded.");
   if (!run) return null;
 
-  const [jobResult, noteResult, citationResult] = await Promise.all([
+  const deep = run.research_mode === "deep";
+  const [jobResult, noteResult, citationResult, deepResult, webCitationResult] = await Promise.all([
     run.job_id
       ? supabase.from("jobs").select("last_error_code").eq("id", run.job_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -130,12 +149,81 @@ export async function getResearchRun(
       .eq("research_run_id", run.id)
       .order("finding_index")
       .order("citation_index"),
+    deep
+      ? supabase
+        .from("deep_research_results")
+        .select("result_status,stop_reason,title,body,findings_json,verification_json,output_hash,published_note_id,updated_at")
+        .eq("research_run_id", run.id)
+        .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    deep
+      ? supabase
+        .from("deep_web_citations")
+        .select("id,finding_index,citation_index,relation_type,web_evidence_id,web_evidence_id_snapshot,canonical_url,source_title,content_hash,locator_json,supporting_quote")
+        .eq("research_run_id", run.id)
+        .order("finding_index")
+        .order("citation_index")
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  if (jobResult.error || noteResult.error || citationResult.error) {
+  if (
+    jobResult.error || noteResult.error || citationResult.error
+    || deepResult.error || webCitationResult.error
+  ) {
     throw new Error("Research draft could not be loaded.");
   }
+  const webEvidenceIds = (webCitationResult.data ?? [])
+    .map((row) => row.web_evidence_id)
+    .filter((value): value is string => typeof value === "string");
+  const webValidity = new Map<string, ResearchCitation["validityStatus"]>();
+  if (webEvidenceIds.length) {
+    const { data, error: webEvidenceError } = await supabase
+      .from("deep_web_evidence")
+      .select("id,validity_status,citation_eligible")
+      .in("id", [...new Set(webEvidenceIds)]);
+    if (webEvidenceError) throw new Error("Research Web Evidence could not be loaded.");
+    for (const row of data ?? []) {
+      webValidity.set(
+        row.id,
+        row.citation_eligible ? row.validity_status :
+          row.validity_status === "source_deleted" ? "source_deleted" : "invalid",
+      );
+    }
+  }
+  const internalCitations: ResearchCitation[] = (citationResult.data ?? []).map((row) => ({
+    id: row.id,
+    origin: "internal",
+    findingIndex: row.finding_index,
+    citationIndex: row.citation_index,
+    relationType: row.relation_type,
+    evidenceId: row.evidence_id_snapshot,
+    assetId: row.asset_id_snapshot,
+    revisionId: row.source_revision_id_snapshot,
+    locator: row.locator_json,
+    quote: row.supporting_quote,
+    validityStatus:
+      row.evidence_id && row.asset_id && row.source_revision_id ? "valid" : "source_deleted",
+  }));
+  const webCitations: ResearchCitation[] = (webCitationResult.data ?? []).map((row) => ({
+    id: row.id,
+    origin: "web",
+    findingIndex: row.finding_index,
+    citationIndex: row.citation_index,
+    relationType: row.relation_type,
+    evidenceId: row.web_evidence_id_snapshot,
+    assetId: null,
+    revisionId: null,
+    locator: row.locator_json,
+    quote: row.supporting_quote,
+    validityStatus: row.web_evidence_id
+      ? webValidity.get(row.web_evidence_id) ?? "invalid"
+      : "source_deleted",
+    canonicalUrl: row.canonical_url,
+    sourceTitle: row.source_title,
+    contentHash: row.content_hash,
+  }));
   return {
     id: run.id,
+    mode: run.research_mode,
     question: run.question,
     plan: run.plan_json,
     scopeAssetIds: run.scope_asset_ids,
@@ -153,19 +241,21 @@ export async function getResearchRun(
       body: noteResult.data.body,
       publicationState: noteResult.data.publication_state,
     } : null,
-    citations: (citationResult.data ?? []).map((row) => ({
-      id: row.id,
-      findingIndex: row.finding_index,
-      citationIndex: row.citation_index,
-      relationType: row.relation_type,
-      evidenceId: row.evidence_id_snapshot,
-      assetId: row.asset_id_snapshot,
-      revisionId: row.source_revision_id_snapshot,
-      locator: row.locator_json,
-      quote: row.supporting_quote,
-      validityStatus:
-        row.evidence_id && row.asset_id && row.source_revision_id ? "valid" : "source_deleted",
-    })),
+    citations: [...internalCitations, ...webCitations].sort(
+      (left, right) => left.findingIndex - right.findingIndex
+        || left.citationIndex - right.citationIndex,
+    ),
+    deepResult: deepResult.data ? {
+      status: deepResult.data.result_status,
+      stopReason: deepResult.data.stop_reason,
+      title: deepResult.data.title,
+      body: deepResult.data.body,
+      findings: deepResult.data.findings_json,
+      verification: deepResult.data.verification_json,
+      outputHash: deepResult.data.output_hash,
+      publishedNoteId: deepResult.data.published_note_id,
+      updatedAt: deepResult.data.updated_at,
+    } : null,
   };
 }
 

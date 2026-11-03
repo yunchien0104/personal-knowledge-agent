@@ -46,12 +46,22 @@ export async function GET(request: Request) {
     const pdfUrls = new Map<string, string>();
     const citationUrls = new Map<string, string>();
     for (const citation of run.citations) {
+      if (
+        citation.origin === "web" && citation.validityStatus === "valid"
+        && citation.canonicalUrl
+      ) {
+        citationUrls.set(citation.id, citation.canonicalUrl);
+        continue;
+      }
       const sourceUrl = threadsCitationUrl(citation.locator) ?? instagramCitation(citation.locator)?.sourceUrl;
       if (sourceUrl) citationUrls.set(citation.id, sourceUrl);
     }
     const verifiableAssetIds = run.citations
-      .filter((item) => item.validityStatus === "valid" && !citationUrls.has(item.id))
-      .map((item) => item.assetId);
+      .filter((item) => (
+        item.validityStatus === "valid" && item.assetId !== null
+        && !citationUrls.has(item.id)
+      ))
+      .map((item) => item.assetId as string);
     const uniqueAssetIds = [...new Set(verifiableAssetIds)];
     if (uniqueAssetIds.length) {
       const { data: assets, error: assetError } = await auth.supabase
@@ -78,7 +88,8 @@ export async function GET(request: Request) {
       ...run,
       citations: run.citations.map((citation) => ({
         ...citation,
-        sourceUrl: citationUrls.get(citation.id) ?? pdfUrls.get(citation.assetId),
+        sourceUrl: citationUrls.get(citation.id)
+          ?? (citation.assetId ? pdfUrls.get(citation.assetId) : undefined),
       })),
     });
   } catch {
