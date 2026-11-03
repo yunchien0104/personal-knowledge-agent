@@ -3,6 +3,7 @@ import { PDF_BUCKET, pdfObjectPath } from "@/lib/pdf";
 import { instagramCitation } from "@/lib/instagram";
 import { instagramReelCitation } from "@/lib/instagram-reel";
 import {
+  deepResearchEnabled,
   getResearchRun,
   listResearchRuns,
   researchRequestSchema,
@@ -22,6 +23,9 @@ export async function POST(request: Request) {
   }
   const parsed = researchRequestSchema.safeParse(body);
   if (!parsed.success) return validationError(parsed.error);
+  if (parsed.data.mode === "deep" && !deepResearchEnabled()) {
+    return jsonError(409, "DEEP_RESEARCH_DISABLED", "Deep Research is not enabled.");
+  }
   try {
     return jsonSuccess(await startResearch(auth.supabase, parsed.data), 202);
   } catch {

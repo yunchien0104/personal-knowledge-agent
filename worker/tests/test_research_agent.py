@@ -22,10 +22,12 @@ QUESTION = "What does the evidence say about revenue growth?"
 EXCERPT = "Revenue increased by 20 percent in 2025, with seasonal uncertainty."
 
 
-def claimed_job(*, scope_asset_ids=None) -> ClaimedJob:
+def claimed_job(*, scope_asset_ids=None, research_mode=None) -> ClaimedJob:
     job_input = {"researchRunId": RUN_ID, "question": QUESTION}
     if scope_asset_ids is not None:
         job_input["scopeAssetIds"] = scope_asset_ids
+    if research_mode is not None:
+        job_input["researchMode"] = research_mode
     payload = JobPayloadV1.from_dict({
         "schemaVersion": 1,
         "jobId": JOB_ID,
@@ -189,6 +191,29 @@ class FakeGateway:
 
 
 class ResearchAgentWorkerTests(unittest.TestCase):
+    def test_deep_job_routes_before_legacy_plan_validation(self):
+        gateway = FakeGateway()
+        gateway.job = claimed_job(research_mode="deep")
+
+        class DeepProcessor:
+            def process_claimed(self, job, worker_id, lease_seconds):
+                self.call = (job, worker_id, lease_seconds)
+                return SimpleNamespace(status="deep_routed", job_id=job.id)
+
+        processor = DeepProcessor()
+        model = MockResearchModel(plan={"schemaVersion": "research-plan-v1"})
+        result = ResearchAgentWorker(
+            gateway,
+            model,
+            "worker-1",
+            deep_processor=processor,
+        ).process_one()
+
+        self.assertEqual(result.status, "deep_routed")
+        self.assertEqual(processor.call[0], gateway.job)
+        self.assertEqual(model.plan_calls, 0)
+        self.assertFalse(hasattr(gateway, "plan"))
+
     def test_claim_verifier_receives_cited_locator_provenance(self):
         class CapturingClient:
             def generate(self, **request):

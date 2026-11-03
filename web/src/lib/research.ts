@@ -5,11 +5,28 @@ import { z } from "zod";
 export const researchRequestSchema = z.object({
   question: z.string().trim().min(3).max(500),
   request_key: z.uuid(),
+  mode: z.enum(["legacy", "deep"]).default("legacy"),
   scope_asset_ids: z.array(z.uuid()).min(1).max(100).refine(
     (values) => new Set(values).size === values.length,
     "Asset scope must not contain duplicates.",
   ).optional(),
+  web_policy: z.enum(["disabled", "suggest", "auto"]).default("suggest"),
+  requested_limits: z.object({
+    maxRounds: z.number().int().min(1).max(10).optional(),
+    maxQueries: z.number().int().min(1).max(50).optional(),
+    maxCostUsd: z.number().min(0).max(0.5).optional(),
+    maxDurationSeconds: z.number().int().min(30).max(14_400).optional(),
+  }).strict().optional(),
+  analysis_spec: z.object({
+    schemaVersion: z.literal("analysis-spec-v1"),
+    framework: z.string().trim().min(1).max(100),
+    parameters: z.record(z.string(), z.unknown()).default({}),
+  }).strict().optional(),
 }).strict();
+
+export function deepResearchEnabled() {
+  return process.env.DEEP_RESEARCH_ENABLED?.trim().toLowerCase() === "true";
+}
 
 export function newResearchRequestKey() {
   if (typeof globalThis.crypto?.randomUUID === "function") {
@@ -56,11 +73,22 @@ export async function startResearch(
   supabase: SupabaseClient,
   input: z.infer<typeof researchRequestSchema>,
 ) {
-  const { data, error } = await supabase.rpc("start_research", {
-    p_question: input.question,
-    p_request_key: input.request_key,
-    p_scope_asset_ids: input.scope_asset_ids ?? null,
-  });
+  const deep = input.mode === "deep";
+  const { data, error } = await supabase.rpc(
+    deep ? "start_deep_research" : "start_research",
+    deep ? {
+      p_question: input.question,
+      p_request_key: input.request_key,
+      p_scope_asset_ids: input.scope_asset_ids ?? null,
+      p_web_policy: input.web_policy,
+      p_requested_limits: input.requested_limits ?? {},
+      p_analysis_spec: input.analysis_spec ?? null,
+    } : {
+      p_question: input.question,
+      p_request_key: input.request_key,
+      p_scope_asset_ids: input.scope_asset_ids ?? null,
+    },
+  );
   if (error || !data || typeof data !== "object") {
     throw new Error("Research could not be started.");
   }

@@ -52,6 +52,12 @@ class ResearchRetrieval(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+class DeepResearchProcessor(Protocol):
+    def process_claimed(
+        self, job: ClaimedJob, worker_id: str, lease_seconds: int
+    ) -> ProcessResult: ...
+
+
 class LocalExtractiveResearchModel:
     """Zero-cost fallback synthesis plus the production deterministic planner."""
 
@@ -366,6 +372,7 @@ class ResearchAgentWorker:
         worker_id: str | None = None,
         *,
         orchestrator: ResearchOrchestrator | None = None,
+        deep_processor: DeepResearchProcessor | None = None,
         lease_seconds: int = 120,
     ) -> None:
         self.gateway = gateway
@@ -379,6 +386,7 @@ class ResearchAgentWorker:
             self.retrieval = retrieval_or_worker_id
             self.worker_id = worker_id
         self.orchestrator = orchestrator
+        self.deep_processor = deep_processor
         self.lease_seconds = lease_seconds
 
 
@@ -408,6 +416,24 @@ class ResearchAgentWorker:
                     "invalid_research_context",
                     "Research question is unavailable",
                     retryable=False,
+                )
+
+            research_mode = job.payload.input.get("researchMode", "legacy")
+            if research_mode not in {"legacy", "deep"}:
+                raise GatewayError(
+                    "invalid_research_mode",
+                    "Research mode is invalid",
+                    retryable=False,
+                )
+            if research_mode == "deep":
+                if self.deep_processor is None:
+                    raise GatewayError(
+                        "deep_research_unavailable",
+                        "Deep Research is not configured on this Worker",
+                        retryable=False,
+                    )
+                return self.deep_processor.process_claimed(
+                    job, self.worker_id, self.lease_seconds
                 )
 
             # Heartbeat must remain active through R2 and publication.
