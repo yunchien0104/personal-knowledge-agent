@@ -41,12 +41,19 @@ Last updated: 2026-11-03
   - Added separately persisted gaps plus lease-fenced, idempotent assessment
     persistence with model/token/latency/cost telemetry.
 - [ ] Phase 4 — R2D controller, durability, budgets, resume
+  - Implemented pure deterministic action selection, internal-first ordering,
+    normalized query fingerprints, coverage-based information gain, hard limit,
+    quality, budget-reserve, authorization, and diminishing-return stops.
+  - Remaining: wire the Deep Coordinator into the Worker; add atomic checkpoint,
+    operation and budget-ledger migrations/RPCs; accumulate multi-round Evidence;
+    resume from committed checkpoints; prove stale-lease and concurrent-reservation
+    invariants; hand the stopped result to existing R2A/R2E/R2F.
 - [ ] Phase 5 — Web evidence and publication integration
 - [ ] Phase 6 — Full integration and rollout readiness
 
 ## Verified tests
 
-- Worker offline regression: 146 passed.
+- Worker offline regression: 149 passed.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -65,5 +72,6 @@ Last updated: 2026-11-03
 
 ## Next exact step
 
-Implement Phase 4 R2D Deep Coordinator, multi-round evidence accumulation,
-checkpoint/operation state, budget reservations, stop decisions, and resume.
+Continue Phase 4 with atomic checkpoint/operation/budget schema and RPCs, then
+wire `DeepResearchCoordinator` into the existing leased Research Worker and add
+crash/resume, multi-round accumulation, stale-lease, and concurrency tests.

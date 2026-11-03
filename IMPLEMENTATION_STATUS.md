@@ -9,9 +9,12 @@
 - Phase 3 R2C is complete locally: deterministic evidence pre-check, lineage and
   independence handling, full Requirement Coverage, conflicts/gaps, conservative
   fallback, telemetry, and fenced assessment/gap persistence.
+- Phase 4 is in progress: deterministic R2D action selection, internal-first
+  ordering, query deduplication, coverage-based information gain, and truthful
+  stop decisions are implemented; durable coordinator/budget/resume remain.
 - Added strict Deep Research contracts, separate Deep/Legacy routing, a
   disabled-by-default feature flag, and an additive Local-validated migration.
-- PASS: 146 offline Worker regressions, 4 Web Research tests, TypeScript,
+- PASS: 149 offline Worker regressions, 4 Web Research tests, TypeScript,
   ESLint, and transactional Local migration apply/rollback.
 - No Cloud, production, hosted database, Storage, Worker, deployment, or paid
   model operation was performed.
