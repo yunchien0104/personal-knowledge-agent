@@ -8,7 +8,7 @@ select exists (select 1 from pg_extension where extname = 'dblink');
 create extension if not exists dblink with schema extensions;
 set search_path = public, extensions;
 
-select plan(7);
+select plan(13);
 
 delete from auth.users where id = 'f4000000-0000-4000-8000-000000000001';
 insert into auth.users (
@@ -39,12 +39,13 @@ reset role;
 
 create temporary table deep_budget_sessions (worker_id text primary key, backend_pid integer);
 create temporary table deep_budget_results (worker_id text primary key, reservation_status text not null);
+create temporary table deep_budget_settlements (worker_id text primary key, idempotent boolean not null);
 
 do $$
 declare
   connection_string text := format(
-    'host=host.docker.internal port=54322 dbname=%L user=postgres password=postgres',
-    current_database()
+    'host=%s port=%s dbname=%L user=postgres password=postgres',
+    inet_server_addr(), inet_server_port(), current_database()
   );
 begin
   perform extensions.dblink_connect('deep_budget_one', connection_string);
@@ -143,13 +144,99 @@ select is((select count(*) from public.research_budget_ledger
     and event_type = 'reserved'), 1::bigint,
   'ledger contains exactly one reservation event');
 
+select ok(public.start_deep_research_operation(
+  (select job_id from public.research_runs
+   where user_id = 'f4000000-0000-4000-8000-000000000001'
+     and request_key = 'f4000000-0000-4000-8000-000000000002'),
+  'deep-budget-owner', 1, 'f4000000-0000-4000-8000-000000000003'
+), 'winning reservation crosses the execution boundary once');
+
+do $$
+begin
+  perform extensions.dblink_exec('deep_budget_one', 'begin');
+  perform extensions.dblink_exec('deep_budget_two', 'begin');
+  perform extensions.dblink_exec('deep_budget_one', 'set local role service_role');
+  perform extensions.dblink_exec('deep_budget_two', 'set local role service_role');
+  perform extensions.dblink_exec(
+    'deep_budget_two', 'set local statement_timeout = ''5s'''
+  );
+end;
+$$;
+
+insert into deep_budget_settlements
+select 'worker-one', idempotent
+from extensions.dblink(
+  'deep_budget_one',
+  $query$
+    select (public.settle_deep_research_operation(
+      (select job_id from public.research_runs
+       where user_id = 'f4000000-0000-4000-8000-000000000001'
+         and request_key = 'f4000000-0000-4000-8000-000000000002'),
+      'deep-budget-owner', 1, 'f4000000-0000-4000-8000-000000000003',
+      'completed', 0.2000, null, null
+    ) ->> 'idempotent')::boolean
+  $query$
+) as settlement(idempotent boolean);
+
+select extensions.dblink_send_query(
+  'deep_budget_two',
+  $query$
+    select (public.settle_deep_research_operation(
+      (select job_id from public.research_runs
+       where user_id = 'f4000000-0000-4000-8000-000000000001'
+         and request_key = 'f4000000-0000-4000-8000-000000000002'),
+      'deep-budget-owner', 1, 'f4000000-0000-4000-8000-000000000003',
+      'completed', 0.2000, null, null
+    ) ->> 'idempotent')::boolean
+  $query$
+);
+select is(extensions.dblink_is_busy('deep_budget_two'), 1,
+  'second settlement overlaps the uncommitted first settlement');
+select extensions.dblink_exec('deep_budget_one', 'commit');
+insert into deep_budget_settlements
+select 'worker-two', idempotent
+from extensions.dblink_get_result('deep_budget_two')
+  as settlement(idempotent boolean);
+do $$
+begin
+  perform * from extensions.dblink_get_result('deep_budget_two')
+    as drained(idempotent boolean);
+  perform extensions.dblink_exec('deep_budget_two', 'commit');
+end;
+$$;
+
+select is((select idempotent from deep_budget_settlements where worker_id = 'worker-one'),
+  false, 'first settlement performs the accounting mutation');
+select is((select idempotent from deep_budget_settlements where worker_id = 'worker-two'),
+  true, 'concurrent duplicate settlement is an idempotent replay');
+select results_eq(
+  $$select reserved_usd, actual_usd, uncertain_usd
+    from public.research_run_budgets
+    where user_id = 'f4000000-0000-4000-8000-000000000001'$$,
+  $$values (0.0000::numeric, 0.2000::numeric, 0.0000::numeric)$$,
+  'concurrent settlement leaves the exact final run balance'
+);
+select is((select count(*) from public.research_budget_ledger
+  where user_id = 'f4000000-0000-4000-8000-000000000001'), 3::bigint,
+  'duplicate settlement creates no additional ledger event');
+
 do $$
 begin
   perform extensions.dblink_disconnect('deep_budget_one');
   perform extensions.dblink_disconnect('deep_budget_two');
 end;
 $$;
+
+-- The ledger is deliberately append-only, including against cascading deletes.
+-- The database owner temporarily disables only that guard inside one transaction
+-- to remove this exact disposable fixture; rollback restores the trigger on error.
+begin;
+alter table public.research_budget_ledger
+  disable trigger research_budget_ledger_append_only;
 delete from auth.users where id = 'f4000000-0000-4000-8000-000000000001';
+alter table public.research_budget_ledger
+  enable trigger research_budget_ledger_append_only;
+commit;
 
 do $$
 begin

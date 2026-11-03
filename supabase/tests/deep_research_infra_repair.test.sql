@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(20);
+select plan(24);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -32,6 +32,14 @@ select isnt((select deadline_at from public.research_runs
   'Deep Research receives a durable deadline');
 select is((select status from public.claim_job('repair-worker-a', 'research', 120)),
   'running', 'first Worker acquires the repair fixture');
+select is(public.commit_deep_research_checkpoint(
+  (select job_id from repair_state), 'repair-worker-a', 1, 0,
+  jsonb_build_object(
+    'schemaVersion', 'research-iteration-state-v1',
+    'runId', (select run_id from repair_state),
+    'checkpointVersion', 1, 'executionPhase', 'planning', 'currentRound', 0
+  ), null, null
+) ->> 'checkpointVersion', '1', 'Worker A persists a durable checkpoint');
 select is(public.reserve_deep_research_operation(
   (select job_id from repair_state), 'repair-worker-a', 1,
   'f3000000-0000-4000-8000-000000000001', 'paid:reserved-before-start',
@@ -42,6 +50,23 @@ update public.jobs set lease_owner = 'repair-worker-b', lease_generation = 2,
   lease_expires_at = now() + interval '120 seconds'
 where id = (select job_id from repair_state);
 
+select is((public.load_deep_research_state(
+  (select job_id from repair_state), 'repair-worker-b', 2
+) #>> '{state,checkpointVersion}'), '1',
+  'Worker B resumes the checkpoint written by Worker A');
+select is((public.load_deep_research_state(
+  (select job_id from repair_state), 'repair-worker-b', 2
+) ->> 'deadlineAt')::timestamptz, (select deadline_at from public.research_runs
+  where id = (select run_id from repair_state)),
+  'durable deadline is unchanged across lease takeover');
+select is(public.commit_deep_research_checkpoint(
+  (select job_id from repair_state), 'repair-worker-a', 1, 1,
+  jsonb_build_object(
+    'schemaVersion', 'research-iteration-state-v1',
+    'runId', (select run_id from repair_state),
+    'checkpointVersion', 2, 'executionPhase', 'retrieving', 'currentRound', 1
+  ), null, null
+), null::jsonb, 'stale Worker A cannot commit a new checkpoint');
 select is(public.reserve_deep_research_operation(
   (select job_id from repair_state), 'repair-worker-b', 2,
   'f3000000-0000-4000-8000-000000000001', 'paid:reserved-before-start',
