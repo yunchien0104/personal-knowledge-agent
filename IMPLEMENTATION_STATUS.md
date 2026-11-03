@@ -885,3 +885,24 @@
 - The E2E also exposed and fixed a PDF cleanup clock-skew edge case between the
   host and local database. No Cloud migration, Production deploy, or paid
   external provider call was performed.
+
+### Deep Research R2B–R2F continuation (local implementation, 2026-11-04)
+
+- Completed durable R2D coordination on `feat/deep-research-r2b-r2d`: cumulative
+  multi-round Evidence, checkpoint CAS, operation idempotency, atomic account/run
+  budgets, append-only ledger, lease fencing, crash/resume, and conservative
+  uncertain paid-operation handling. Existing Legacy Research remains unchanged.
+- Added Web `disabled`/`suggest`/`auto` enforcement, run-scoped fetched Web
+  Evidence, source supersede/delete handling, verified partial results, and a
+  separate mixed internal/Web citation publication path behind the existing
+  all-claims-supported R2E/R2F gate.
+- PASS locally: Worker offline 161/161; Deep durability pgTAP 23/23; Web lifecycle/
+  publication pgTAP 27/27; Web offline 31/31; TypeScript, ESLint, Next production
+  build, migration transactional apply/rollback, Golden fixture/scorer wiring,
+  Python compilation, and `git diff --check`.
+- Local commits: `e93590a` (durable coordinator) and `1d1a015` (Web Evidence and
+  publication). No push, merge, deployment, hosted Supabase access, production
+  secret access, or paid provider call was performed.
+- Next action: isolated Staging/provider verification only—full historical pgTAP,
+  true multi-session budget contention, browser E2E, provider quality, redirect/
+  DNS enforcement, corpus/load latency, and capped real cost measurements.

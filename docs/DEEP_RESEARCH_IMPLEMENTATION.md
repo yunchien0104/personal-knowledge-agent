@@ -76,7 +76,18 @@ Last updated: 2026-11-04
     publication still requires the existing R2E/R2F all-claims-supported gate;
     mixed internal/Web citations use a separate Deep publication RPC and immutable
     Web provenance snapshots. Legacy publication remains unchanged.
-- [ ] Phase 6 — Full integration and rollout readiness
+- [x] Phase 6 — Full local verification (rollout/staging gates remain explicit)
+  - Worker offline regression, focused multi-round/crash-resume tests, Web unit
+    tests, Web TypeScript/ESLint/build, Deep migration execution, RLS/RPC pgTAP,
+    source lifecycle, positive/negative publication, and Golden Dataset fixture/
+    scorer checks pass locally.
+  - Local Deep tests use only deterministic fakes and zero-cost adapters. No paid
+    provider call, hosted database, Storage, Worker, deployment, or production
+    credential was used.
+  - Release readiness is intentionally not claimed: provider-backed quality,
+    multi-session contention, corpus-scale retrieval, browser-to-publication
+    Staging E2E, load, DNS/redirect enforcement, and real cost/latency remain the
+    staging verification list below.
 
 ## Verified tests
 
@@ -88,6 +99,17 @@ Last updated: 2026-11-04
 - Phase 5 Web policy/provenance unit tests: 8 passed.
 - Phase 5 Local PostgreSQL Web lifecycle/publication pgTAP: 27 passed; migrations
   and fixtures were executed in the same verified loopback rollback boundary.
+- Web local verification: TypeScript passed; ESLint passed; Next production build
+  passed; 31 offline Web tests passed across job payload, inbox, Source Notes,
+  Retrieval, Research, Threads, and Instagram/Reel paths.
+- Golden fixtures/scoring: 20-case claim-verification oracle scored 100% accuracy
+  and 0% false acceptance, validating dataset/scorer wiring only; the retrieval
+  Golden Dataset threshold/metric fixture test passed. These are not live model
+  quality claims.
+- Local timing baseline: full 161-test Worker suite completed in 4.92s; focused
+  Deep coordinator/Web suite completed in 0.16s wall time (12 tests); Next build
+  completed in 4.91s. Local mock/provider cost was exactly $0. These timings are
+  developer-machine regression timings, not production latency or capacity.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -96,8 +118,8 @@ Last updated: 2026-11-04
 
 ## Not run / blockers
 
-- Three existing provider-backed Research tests require real LLM environment
-  variables and were excluded; no credentials were loaded.
+- Four provider-backed/live Research test modules require real provider settings
+  or a live pipeline and were excluded; no provider credentials were loaded.
 - `supabase migration up --local` is blocked by two pre-existing Local migration
   history entries (`20261030090000`, `20261030090100`) whose files are absent from
   this feature worktree. No history repair or destructive reset was performed.
@@ -112,10 +134,21 @@ Last updated: 2026-11-04
   until an allowlisted provider and isolated test credentials are explicitly
   configured. DNS resolution and redirect enforcement belong in that adapter in
   addition to the coordinator's URL checks.
+- Full Supabase `test db`, all historical pgTAP protocols, and a true two-session
+  budget race were not run because the existing Local migration history references
+  two migration files absent from this feature worktree. Repair/reset would mutate
+  unrelated local state, so only the additive Deep migrations and 50 new pgTAP
+  assertions were run transactionally and rolled back.
+- Remaining Staging verification: apply migrations to an explicitly designated
+  isolated project; run all RLS/RPC/Storage protocols; test concurrent reservations
+  and stale Worker takeover across sessions; configure an allowlisted Web provider;
+  verify redirect/DNS/IP controls; run paid-provider quality on held-out data with
+  a hard spend cap; run browser-to-publication E2E; measure p50/p95/p99, ANN recall,
+  cost, and load at documented corpus/concurrency sizes.
 - Staging/production migration, E2E, deployment, and paid provider calls were not
   run and are not authorized by this task.
 
 ## Next exact step
 
-Continue Phase 6 with full local regression, TypeScript checks, all available SQL
-protocol suites, multi-round/crash-resume quality checks, and cost/latency reporting.
+Next action requires user-controlled Staging/provider authorization; do not deploy,
+push migrations, or make paid calls from this local implementation task.
