@@ -59,16 +59,35 @@ Last updated: 2026-11-04
     idempotent. Stale workers cannot reserve, checkpoint, append, settle, or finish.
   - Added multi-round accumulation, resume/no-reexecute, uncertain-outcome, and
     stale-worker unit coverage plus 23 pgTAP durability/RLS/budget/fencing checks.
-- [ ] Phase 5 — Web evidence and publication integration
+- [x] Phase 5 — Web evidence and publication integration
+  - Added explicit `disabled`, `suggest`, and `auto` execution semantics. Only
+    `auto` with both discovery and fetch permissions can call a Web provider;
+    `suggest` remains an authorization boundary and never executes automatically.
+  - Added credential-free HTTPS canonicalization, direct private/special IP and
+    localhost rejection, bounded discovery/fetch results, and a provider protocol
+    suitable for isolated mocks or an explicitly configured production adapter.
+  - Search snippets are recorded as non-citation-eligible inputs. Only fetched,
+    content-hashed, run-scoped Web Evidence with exact locators can support claims.
+  - Added forced-RLS Web source, Evidence, verified result, and citation snapshot
+    tables plus lease/operation-fenced capture and source-status RPCs.
+  - New content supersedes earlier versions. Deleted/unavailable sources invalidate
+    every captured version and are rechecked transactionally at publication.
+  - Added verified partial-result persistence without creating a Note. Complete
+    publication still requires the existing R2E/R2F all-claims-supported gate;
+    mixed internal/Web citations use a separate Deep publication RPC and immutable
+    Web provenance snapshots. Legacy publication remains unchanged.
 - [ ] Phase 6 — Full integration and rollout readiness
 
 ## Verified tests
 
-- Worker offline regression: 153 passed.
+- Worker offline regression: 161 passed.
 - Focused Deep Coordinator and R2B/R2C/R2D suite: 19 passed.
 - Phase 4 Local PostgreSQL migration apply plus pgTAP: 23 passed; all three Deep
   migrations and test fixtures were executed in one verified loopback transaction
   and rolled back.
+- Phase 5 Web policy/provenance unit tests: 8 passed.
+- Phase 5 Local PostgreSQL Web lifecycle/publication pgTAP: 27 passed; migrations
+  and fixtures were executed in the same verified loopback rollback boundary.
 - Focused Phase 1/Legacy regression: 24 passed.
 - Web Research contracts: 4 passed.
 - TypeScript typecheck and ESLint: passed.
@@ -88,11 +107,15 @@ Last updated: 2026-11-04
   Phase 4 database tests prove row-locked competing reservation limits,
   idempotency, accounting balance, stale-lease rejection, and takeover fencing;
   a parallel two-session run awaits an isolated resettable Local database.
+- No external Web provider adapter is enabled by default. Phase 5 uses a strict
+  injected provider interface and local mocks; live discovery/fetch remains blocked
+  until an allowlisted provider and isolated test credentials are explicitly
+  configured. DNS resolution and redirect enforcement belong in that adapter in
+  addition to the coordinator's URL checks.
 - Staging/production migration, E2E, deployment, and paid provider calls were not
   run and are not authorized by this task.
 
 ## Next exact step
 
-Continue Phase 5 with Web policy enforcement, run-scoped Web Evidence capture,
-source lifecycle handling, verified partial-result persistence, and Web citation
-publication without weakening the existing R2E/R2F gate.
+Continue Phase 6 with full local regression, TypeScript checks, all available SQL
+protocol suites, multi-round/crash-resume quality checks, and cost/latency reporting.

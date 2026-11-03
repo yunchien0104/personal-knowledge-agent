@@ -27,6 +27,7 @@ from personal_brain.research.deep_controller import (
     query_fingerprint,
 )
 from personal_brain.research.deep_evaluation import EvidenceEvaluator
+from personal_brain.research.deep_web import WebResearchProvider, discover_and_fetch
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
     build_planning_context_pack,
@@ -61,13 +62,19 @@ def _budget(raw: Any, limit: Decimal) -> ResearchBudgetStateV1:
     })
 
 
-def _internal_evidence(
+def _evidence_records(
     rows: list[Mapping[str, Any]], request: ResearchRequestV1
 ) -> list[EvidenceRecordV1]:
     records: list[EvidenceRecordV1] = []
     seen: set[UUID] = set()
     now = datetime.now(timezone.utc)
     for row in rows:
+        if row.get("origin") == "web":
+            try:
+                records.append(EvidenceRecordV1.model_validate(row))
+            except ValueError:
+                continue
+            continue
         try:
             evidence_id = UUID(str(row.get("evidenceId") or row.get("id")))
             asset_id = UUID(str(row.get("assetId")))
@@ -111,8 +118,9 @@ def _internal_evidence(
 def _publication_rows(records: list[EvidenceRecordV1]) -> list[dict[str, Any]]:
     return [{
         "id": str(item.evidenceId),
-        "assetId": str(item.provenance.assetId),
-        "revisionId": str(item.provenance.revisionId),
+        "origin": item.origin,
+        "assetId": str(item.provenance.assetId) if item.provenance.assetId else None,
+        "revisionId": str(item.provenance.revisionId) if item.provenance.revisionId else None,
         "excerpt": item.excerpt,
         "locator": item.citationLocator,
     } for item in records if item.citationEligible and item.validityStatus == "valid"]
@@ -130,6 +138,8 @@ class DeepResearchCoordinator:
         evaluator: EvidenceEvaluator | None = None,
         controller: ResearchIterationController | None = None,
         orchestrator: Any | None = None,
+        web_provider: WebResearchProvider | None = None,
+        web_operation_estimate_usd: Decimal = Decimal("0.0100"),
     ) -> None:
         self.gateway = gateway
         self.retrieval = retrieval
@@ -137,6 +147,8 @@ class DeepResearchCoordinator:
         self.evaluator = evaluator or EvidenceEvaluator()
         self.controller = controller or ResearchIterationController()
         self.orchestrator = orchestrator
+        self.web_provider = web_provider
+        self.web_operation_estimate_usd = web_operation_estimate_usd
 
     def _load(self, job: Any, worker_id: str) -> Mapping[str, Any]:
         value = self.gateway.load_deep_research_state(job, worker_id)
@@ -215,7 +227,7 @@ class DeepResearchCoordinator:
                 top_k=12, candidate_limit=40,
             )
             _, rows = _validate_retrieval_result(result)
-            records = _internal_evidence(list(rows), request)
+            records = _evidence_records(list(rows), request)
             if records:
                 payload = [{
                     "id": str(item.evidenceId),
@@ -239,6 +251,39 @@ class DeepResearchCoordinator:
             self._settle(job, worker_id, operation_id, status="failed", error_code="operation_failed")
             raise
 
+    def _web_retrieve(
+        self, job: Any, worker_id: str, request: ResearchRequestV1, query: str,
+        *, round_number: int,
+    ) -> tuple[list[EvidenceRecordV1], UUID, str]:
+        if self.web_provider is None:
+            return [], _operation_id(request.runId, f"round:{round_number}:web:unavailable"), "unavailable"
+        fingerprint = query_fingerprint(query)
+        key = f"round:{round_number}:web:{fingerprint}"
+        operation_id, status = self._reserve_start(
+            job, worker_id, request, key, "discover_web", "web",
+            {"query": query, "round": round_number}, self.web_operation_estimate_usd,
+        )
+        if status in {"completed", "outcome_unknown", "budget_exhausted"}:
+            return [], operation_id, status
+        try:
+            captures = discover_and_fetch(self.web_provider, request, query)
+            records = [item.record for item in captures]
+            if records and self.gateway.append_deep_web_evidence(
+                job, worker_id, operation_id=str(operation_id),
+                evidence=[item.model_dump(mode="json") for item in records],
+            ) is None:
+                raise LeaseLostError("Worker lease is no longer valid")
+            self._settle(job, worker_id, operation_id)
+            return records, operation_id, "completed"
+        except LeaseLostError:
+            raise
+        except Exception:
+            self._settle(
+                job, worker_id, operation_id, status="outcome_unknown",
+                error_code="web_outcome_unknown",
+            )
+            raise
+
     def process_claimed(self, job: Any, worker_id: str, lease_seconds: int) -> ProcessResult:
         try:
             with LeaseGuard(self.gateway, job, worker_id, lease_seconds) as lease:
@@ -247,7 +292,7 @@ class DeepResearchCoordinator:
                 if str(request.runId) != job.payload.input.get("researchRunId") or str(request.userId) != job.user_id:
                     raise GatewayError("invalid_deep_request", "Deep Research identity is invalid", retryable=False)
                 plan = ResearchPlanV1.model_validate(bundle["plan"]) if bundle.get("plan") else None
-                records = _internal_evidence(list(bundle.get("evidence") or []), request)
+                records = _evidence_records(list(bundle.get("evidence") or []), request)
                 state = ResearchIterationStateV1.model_validate(bundle["state"]) if bundle.get("state") else None
 
                 if plan is None:
@@ -340,7 +385,7 @@ class DeepResearchCoordinator:
                     before = dict(state.requirementProgress)
                     if state.executionPhase == "retrieving":
                         action = state.proposedActions[0]
-                        if action.actionType != "search_internal" or not action.query:
+                        if action.actionType not in {"search_internal", "discover_web"} or not action.query:
                             state = state.model_copy(update={
                                 "checkpointVersion": state.checkpointVersion + 1,
                                 "executionPhase": "terminal", "stopReason": "no_permitted_action",
@@ -348,9 +393,14 @@ class DeepResearchCoordinator:
                             })
                             self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                             break
-                        _, operation_id, op_status = self._retrieve(
-                            job, worker_id, request, action.query, round_number=state.currentRound
-                        )
+                        if action.actionType == "search_internal":
+                            _, operation_id, op_status = self._retrieve(
+                                job, worker_id, request, action.query, round_number=state.currentRound
+                            )
+                        else:
+                            _, operation_id, op_status = self._web_retrieve(
+                                job, worker_id, request, action.query, round_number=state.currentRound
+                            )
                         if op_status == "budget_exhausted":
                             state = state.model_copy(update={
                                 "checkpointVersion": state.checkpointVersion + 1,
@@ -360,7 +410,7 @@ class DeepResearchCoordinator:
                             self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                             break
                         refreshed = self._load(job, worker_id)
-                        records = _internal_evidence(list(refreshed.get("evidence") or []), request)
+                        records = _evidence_records(list(refreshed.get("evidence") or []), request)
                         state = state.model_copy(update={
                             "checkpointVersion": state.checkpointVersion + 1,
                             "executionPhase": "assessing",
@@ -424,24 +474,47 @@ class DeepResearchCoordinator:
                     self._checkpoint(job, worker_id, state, plan_id=plan.planId,
                                      assessment_id=assessment.assessmentId)
 
-                if state.outcome == "complete" and self.orchestrator is not None and records:
+                if state.outcome in {"complete", "qualified_partial"} and self.orchestrator is not None and records:
                     publication_rows = _publication_rows(records)
                     execution = self.orchestrator.run(
                         request.originalQuestion, plan.model_dump(mode="json"), publication_rows
                     )
                     if execution.gate.can_publish:
                         draft = adapt_r2_publication(execution, publication_rows)
-                        published = self.gateway.publish_research_draft(
-                            job, worker_id, model_provider=self.orchestrator.generator.provider,
-                            model_name=self.orchestrator.generator.model_name,
-                            prompt_version="deep-r2ef-v1", output_hash=draft.output_hash,
+                        if state.outcome == "complete":
+                            publish = (
+                                self.gateway.publish_deep_research_draft
+                                if any(item.origin == "web" for item in records)
+                                else self.gateway.publish_research_draft
+                            )
+                            published = publish(
+                                job, worker_id, model_provider=self.orchestrator.generator.provider,
+                                model_name=self.orchestrator.generator.model_name,
+                                prompt_version="deep-r2ef-v1", output_hash=draft.output_hash,
+                                title=draft.title, body=draft.body, findings=draft.findings,
+                            )
+                            if published is None:
+                                raise LeaseLostError("Worker lease expired before publication")
+                            return ProcessResult("completed", job.id, note_id=published.get("noteId"))
+                        recorded = self.gateway.record_deep_research_result(
+                            job, worker_id, result_status="verified_partial",
+                            stop_reason=state.stopReason or "max_rounds_reached",
                             title=draft.title, body=draft.body, findings=draft.findings,
+                            verification={"gate": "passed", "published": False},
+                            output_hash=draft.output_hash,
                         )
-                        if published is None:
-                            raise LeaseLostError("Worker lease expired before publication")
-                        return ProcessResult("completed", job.id, note_id=published.get("noteId"))
+                        if recorded is None:
+                            raise LeaseLostError("Worker lease expired before result persistence")
 
                 outcome = "qualified_partial" if state.outcome in {"complete", "qualified_partial"} else "insufficient"
+                if outcome == "insufficient" and self.gateway.record_deep_research_result(
+                    job, worker_id, result_status="insufficient",
+                    stop_reason=state.stopReason or "no_permitted_action",
+                    title=None, body=None, findings=[],
+                    verification={"gate": "not_passed", "published": False},
+                    output_hash=None,
+                ) is None:
+                    raise LeaseLostError("Worker lease expired before result persistence")
                 result = self.gateway.complete_deep_research_without_publication(
                     job, worker_id, outcome=outcome,
                     stop_reason=state.stopReason or "no_permitted_action",

@@ -378,3 +378,97 @@ class RetrievalSupabaseGateway(SupabaseGateway):
             },
         )
         return result if isinstance(result, dict) else None
+
+    def append_deep_web_evidence(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        operation_id: str,
+        evidence: list[Mapping[str, Any]],
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "append_deep_web_evidence",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+                "p_evidence": evidence,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def mark_deep_web_source_status(
+        self, job: Any, worker_id: str, *, canonical_url: str, status: str
+    ) -> bool:
+        return self._rpc(
+            "mark_deep_web_source_status",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_canonical_url": canonical_url,
+                "p_status": status,
+            },
+        ) is True
+
+    def record_deep_research_result(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        result_status: str,
+        stop_reason: str,
+        title: str | None,
+        body: str | None,
+        findings: list[Mapping[str, Any]],
+        verification: Mapping[str, Any],
+        output_hash: str | None,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "record_deep_research_result",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_result_status": result_status,
+                "p_stop_reason": stop_reason,
+                "p_title": title,
+                "p_body": body,
+                "p_findings": findings,
+                "p_verification": verification,
+                "p_output_hash": output_hash,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def publish_deep_research_draft(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        model_provider: str,
+        model_name: str,
+        prompt_version: str,
+        output_hash: str,
+        title: str,
+        body: str,
+        findings: list[dict[str, Any]],
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "publish_deep_research_draft",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_model_provider": model_provider,
+                "p_model_name": model_name,
+                "p_prompt_version": prompt_version,
+                "p_output_hash": output_hash,
+                "p_title": title,
+                "p_body": body,
+                "p_findings": findings,
+            },
+        )
+        return result if isinstance(result, dict) else None

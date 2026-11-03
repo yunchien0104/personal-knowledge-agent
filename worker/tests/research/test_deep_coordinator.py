@@ -101,6 +101,11 @@ class FakeGateway:
                 self.bundle["evidence"].append(deepcopy(self.catalog[row["id"]]))
         return {"processedEvidence": len(kwargs["evidence"])}
 
+    def append_deep_web_evidence(self, _job, _worker, **kwargs):
+        for row in kwargs["evidence"]:
+            self.bundle["evidence"].append(deepcopy(row))
+        return {"processedEvidence": len(kwargs["evidence"])}
+
     def commit_deep_research_checkpoint(self, _job, _worker, **kwargs):
         assert kwargs["expected_checkpoint_version"] == len(self.checkpoints)
         self.checkpoints.append(deepcopy(kwargs["state"]))
