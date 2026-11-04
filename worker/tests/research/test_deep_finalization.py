@@ -1,0 +1,689 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import replace
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+
+from personal_brain.llm_client import (
+    LLMUsage,
+    StructuredLLMError,
+    StructuredLLMResult,
+)
+from personal_brain.research.deep_coordinator import DeepResearchCoordinator
+from personal_brain.research.deep_finalization import (
+    DeepFinalizationEngine,
+    FinalizationLimits,
+)
+from personal_brain.research.deep_llm import VerifiedPricing
+from personal_brain.research.llm import OpenAICompatibleResearchModel
+from personal_brain.research.orchestrator import ResearchOrchestrator
+from personal_brain.research.verifier import LLMClaimJudge
+from personal_brain.queue_runtime import LeaseLostError
+from personal_brain.supabase_gateway import GatewayError
+from worker.tests.research.test_deep_coordinator import (
+    FakeGateway,
+    FakeRetrieval,
+    ProgressiveEvaluator,
+    evidence_row,
+    job,
+    plan_json,
+    request_json,
+)
+
+
+class QueueClient:
+    provider = "fixture-provider"
+    model = "fixture-model"
+    base_url = "https://example.test/v1"
+    api_key = "test-only"
+    max_output_tokens = 512
+    timeout_seconds = 30
+
+    def __init__(self, outputs: list[dict]) -> None:
+        self.outputs = [deepcopy(value) for value in outputs]
+        self.calls = 0
+
+    def generate_with_metadata(self, **_kwargs) -> StructuredLLMResult:
+        self.calls += 1
+        return StructuredLLMResult(
+            output=self.outputs.pop(0),
+            provider=self.provider,
+            model=self.model,
+            usage=LLMUsage(100, 50, 150),
+            latency_ms=12,
+            request_id=f"request-{self.calls}",
+            service_tier="default",
+            finish_reason="stop",
+        )
+
+
+class FinalizationGateway(FakeGateway):
+    def __init__(self, request, plan, catalog) -> None:
+        super().__init__(request, plan, catalog)
+        self.final_artifacts: dict[str, dict] = {}
+        self.publications: dict[str, dict] = {}
+        self.results: list[dict] = []
+        self.crash_before_commit_once = False
+        self.crash_after_commit_once = False
+        self.crash_after_artifact_type_once: str | None = None
+        self.final_generations: dict[str, int] = {}
+        self.crash_after_publication_once = False
+        self.crash_before_publishing_checkpoint_once = False
+        self.publication_calls = 0
+
+    def reserve_deep_research_finalization(self, claimed, worker, *, slots):
+        operations = []
+        for slot in slots:
+            operation_id = slot["operationId"]
+            if (
+                self.operations.get(operation_id) == "running"
+                and self.final_generations.get(operation_id) != claimed.lease_generation
+            ):
+                self.operations[operation_id] = "outcome_unknown"
+            result = self.reserve_deep_research_operation(
+                claimed,
+                worker,
+                operation_id=slot["operationId"],
+                idempotency_key=slot["idempotencyKey"],
+                action_type=slot["actionType"],
+                cost_category=slot["costCategory"],
+                parameters_hash=slot["parametersHash"],
+                estimated_cost_usd=slot["estimatedCostUsd"],
+            )
+            self.final_generations.setdefault(operation_id, claimed.lease_generation)
+            operations.append(result | {"idempotencyKey": slot["idempotencyKey"]})
+        return {"operations": operations}
+
+    def load_deep_research_finalization(self, *_args):
+        return {
+            "artifacts": [deepcopy(value) for value in self.final_artifacts.values()],
+            "operations": [],
+        }
+
+    def complete_deep_research_final_operation(
+        self, claimed, worker, **payload
+    ):
+        operation_id = payload["p_operation_id"]
+        if self.crash_before_commit_once:
+            self.crash_before_commit_once = False
+            raise LeaseLostError("simulated crash before atomic artifact settlement")
+        artifact = {
+            "artifactId": str(uuid4()),
+            "operationId": operation_id,
+            "artifactType": payload["p_artifact_type"],
+            "artifactKey": payload["p_artifact_key"],
+            "artifact": deepcopy(payload["p_artifact"]),
+            "outputHash": payload["p_output_hash"],
+            "provider": payload["p_provider"],
+            "modelName": payload["p_model_name"],
+            "requestId": payload["p_request_id"],
+            "finishReason": payload["p_finish_reason"],
+            "inputTokens": payload["p_input_tokens"],
+            "outputTokens": payload["p_output_tokens"],
+            "reasoningTokens": payload["p_reasoning_tokens"],
+            "actualCostUsd": payload["p_actual_cost_usd"],
+            "latencyMs": payload["p_latency_ms"],
+        }
+        self.final_artifacts[operation_id] = artifact
+        self.settle_deep_research_operation(
+            claimed,
+            worker,
+            operation_id=operation_id,
+            status="completed",
+            actual_cost_usd=payload["p_actual_cost_usd"],
+            result_ref=payload["p_result_ref"],
+            error_code=None,
+        )
+        if self.crash_after_commit_once or (
+            self.crash_after_artifact_type_once == payload["p_artifact_type"]
+        ):
+            self.crash_after_commit_once = False
+            self.crash_after_artifact_type_once = None
+            raise LeaseLostError("simulated lost response after atomic artifact settlement")
+        return {"operationId": operation_id, "status": "completed"}
+
+    def publish_research_draft(self, _job, _worker, **payload):
+        self.publication_calls += 1
+        publication = self.publications.setdefault(
+            payload["output_hash"], {"noteId": str(uuid4()), **deepcopy(payload)}
+        )
+        if self.crash_after_publication_once:
+            self.crash_after_publication_once = False
+            raise LeaseLostError("simulated lost publication response")
+        return {"noteId": publication["noteId"]}
+
+    publish_deep_research_draft = publish_research_draft
+
+    def commit_deep_research_checkpoint(self, claimed, worker, **kwargs):
+        if (
+            self.crash_before_publishing_checkpoint_once
+            and kwargs["state"]["executionPhase"] == "publishing"
+        ):
+            self.crash_before_publishing_checkpoint_once = False
+            raise LeaseLostError("simulated lost publishing checkpoint response")
+        return super().commit_deep_research_checkpoint(claimed, worker, **kwargs)
+
+    def record_deep_research_result(self, _job, _worker, **payload):
+        self.results.append(deepcopy(payload))
+        return {"resultStatus": payload["result_status"]}
+
+
+def draft(evidence_id: str, quote: str) -> dict:
+    return {
+        "schemaVersion": "atomic-research-v1",
+        "title": "Verified comparison",
+        "summary": "A source-grounded comparison.",
+        "findings": [{
+            "findingId": "finding-1",
+            "topic": "Comparison",
+            "claims": [{
+                "claimId": "claim-1",
+                "statement": quote,
+                "claimType": "fact",
+                "citations": [{
+                    "evidenceId": evidence_id,
+                    "quote": quote,
+                    "relationType": "supports",
+                }],
+            }],
+        }],
+    }
+
+
+def two_claim_draft(first_id: str, first_quote: str, second_id: str, second_quote: str) -> dict:
+    value = draft(first_id, first_quote)
+    value["findings"][0]["claims"].append({
+        "claimId": "claim-2",
+        "statement": second_quote,
+        "claimType": "fact",
+        "citations": [{
+            "evidenceId": second_id,
+            "quote": second_quote,
+            "relationType": "supports",
+        }],
+    })
+    return value
+
+
+def finalizer(draft_output: dict) -> tuple[DeepFinalizationEngine, QueueClient, QueueClient]:
+    generator_client = QueueClient([draft_output])
+    verifier_client = QueueClient([{
+        "claimId": "claim-1",
+        "verdict": "supported",
+        "explanation": "The cited source directly supports the claim.",
+    }])
+    generator = OpenAICompatibleResearchModel(generator_client)
+    engine = DeepFinalizationEngine(
+        ResearchOrchestrator(generator, LLMClaimJudge(verifier_client)),
+        VerifiedPricing(Decimal("2"), Decimal("10")),
+        FinalizationLimits(
+            max_claims=2,
+            synthesis_input_tokens=10000,
+            synthesis_output_tokens=512,
+            verification_input_tokens=4000,
+            verification_output_tokens=256,
+            repair_input_tokens=12000,
+            repair_output_tokens=512,
+            reverification_input_tokens=4000,
+            reverification_output_tokens=256,
+        ),
+    )
+    return engine, generator_client, verifier_client
+
+
+def test_preflight_reserves_worst_case_initial_repair_and_reverification() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    engine, _, _ = finalizer(draft(str(uuid4()), "source statement"))
+
+    preflight = engine.preflight(
+        run_id, request["originalQuestion"], plan_json(request), []
+    )
+
+    assert [slot.cost_category for slot in preflight.slots] == [
+        "r2a", "r2e", "r2e", "r2f", "r2f", "r2f",
+    ]
+    assert preflight.maximum_cost_usd == sum(
+        (slot.estimated_cost_usd for slot in preflight.slots), Decimal("0")
+    )
+    assert preflight.maximum_cost_usd > Decimal("0")
+
+
+def test_deep_finalization_reserves_every_paid_boundary_and_publishes_once() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request,
+        plan_json(request),
+        {first["id"]: first, second["id"]: second},
+    )
+    retrieval = FakeRetrieval({"first record": [first], "second record": [second]})
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+
+    result = DeepResearchCoordinator(
+        gateway,
+        retrieval,
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert len(gateway.publications) == 1
+    final_categories = [
+        item["cost_category"] for item in gateway.reservations
+        if item["cost_category"] in {"r2a", "r2e", "r2f"}
+    ]
+    assert final_categories == ["r2a", "r2e", "r2e", "r2f", "r2f", "r2f"]
+    assert [row["executionPhase"] for row in gateway.checkpoints[-3:]] == [
+        "synthesizing", "verifying", "publishing",
+    ]
+    completed = [
+        row for row in gateway.settlements
+        if row["status"] == "completed"
+        and row["operation_id"] in gateway.final_artifacts
+    ]
+    cancelled = [
+        row for row in gateway.settlements if row["status"] == "cancelled"
+    ]
+    assert len(completed) == 2
+    assert len(cancelled) == 4
+    assert {item["artifactType"] for item in gateway.final_artifacts.values()} == {
+        "draft", "verification",
+    }
+
+
+def test_crash_after_atomic_settlement_reuses_draft_without_second_paid_call() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_after_commit_once = True
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-1", 120)
+    second_result = coordinator.process_claimed(
+        replace(claimed, lease_generation=8), "worker-2", 120
+    )
+
+    assert first_result.status == "lease_lost"
+    assert second_result.status == "completed"
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert len(gateway.publications) == 1
+
+
+def test_lease_takeover_marks_inflight_call_unknown_and_never_replays_provider() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_before_commit_once = True
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-1", 120)
+    with pytest.raises(GatewayError) as caught:
+        coordinator.process_claimed(
+            replace(claimed, lease_generation=8), "worker-2", 120
+        )
+
+    assert first_result.status == "lease_lost"
+    assert caught.value.code == "deep_finalization_reconciliation_required"
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 0
+    assert "outcome_unknown" in gateway.operations.values()
+
+
+def test_repair_and_reverification_use_separately_reserved_r2f_operations() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    initial = two_claim_draft(
+        first["id"], first["excerpt"], second["id"], second["excerpt"]
+    )
+    repaired = draft(first["id"], first["excerpt"])
+    generator_client = QueueClient([initial, repaired])
+    verifier_client = QueueClient([
+        {"claimId": "claim-1", "verdict": "supported", "explanation": "supported"},
+        {"claimId": "claim-2", "verdict": "insufficient_evidence", "explanation": "insufficient"},
+        {"claimId": "claim-1", "verdict": "supported", "explanation": "supported again"},
+    ])
+    engine = DeepFinalizationEngine(
+        ResearchOrchestrator(
+            OpenAICompatibleResearchModel(generator_client),
+            LLMClaimJudge(verifier_client),
+        ),
+        VerifiedPricing(Decimal("2"), Decimal("10")),
+        FinalizationLimits(2, 10000, 512, 4000, 256, 12000, 512, 4000, 256),
+    )
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+
+    result = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert generator_client.calls == 2
+    assert verifier_client.calls == 3
+    phases = [row["executionPhase"] for row in gateway.checkpoints]
+    assert "repairing" in phases
+    assert phases[-2:] == ["verifying", "publishing"]
+    assert {item["artifactType"] for item in gateway.final_artifacts.values()} == {
+        "draft", "verification", "repaired_draft", "reverification",
+    }
+
+
+def test_finalization_budget_exhaustion_blocks_before_every_provider_call() -> None:
+    class ExhaustedGateway(FinalizationGateway):
+        def reserve_deep_research_finalization(self, *_args, **_kwargs):
+            raise GatewayError(
+                "deep_finalization_budget_exhausted",
+                "final reserve cannot cover worst-case execution",
+                retryable=False,
+            )
+
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = ExhaustedGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway,
+            FakeRetrieval({"first record": [first], "second record": [second]}),
+            evaluator=ProgressiveEvaluator(),
+            finalizer=engine,
+        ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert caught.value.code == "deep_finalization_budget_exhausted"
+    assert generator_client.calls == 0
+    assert verifier_client.calls == 0
+    assert not gateway.final_artifacts
+
+
+def test_post_provider_contract_rejection_preserves_usage_and_does_not_persist_artifact() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    invalid = draft(first["id"], first["excerpt"])
+    for index in (2, 3):
+        invalid["findings"][0]["claims"].append({
+            "claimId": f"claim-{index}",
+            "statement": first["excerpt"],
+            "claimType": "fact",
+            "citations": [{
+                "evidenceId": first["id"],
+                "quote": first["excerpt"],
+                "relationType": "supports",
+            }],
+        })
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    engine, generator_client, verifier_client = finalizer(invalid)
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway,
+            FakeRetrieval({"first record": [first], "second record": [second]}),
+            evaluator=ProgressiveEvaluator(),
+            finalizer=engine,
+        ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert caught.value.code == "deep_finalization_contract_invalid"
+    failed = [row for row in gateway.settlements if row["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_code"] == "final_contract_invalid"
+    assert failed[0]["actual_cost_usd"] == "0.0007"
+    assert failed[0]["result_ref"] is not None
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 0
+    assert not gateway.final_artifacts
+
+
+def test_unknown_provider_outcome_keeps_accounting_metadata_and_is_never_retried() -> None:
+    class UnknownOutcomeClient(QueueClient):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        def generate_with_metadata(self, **_kwargs) -> StructuredLLMResult:
+            self.calls += 1
+            raise StructuredLLMError(
+                "simulated timeout after provider acceptance",
+                error_kind="timeout",
+                outcome_unknown=True,
+                usage=LLMUsage(100, 50, 150),
+                latency_ms=30_000,
+                request_id="request-unknown",
+            )
+
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    generator_client = UnknownOutcomeClient()
+    verifier_client = QueueClient([])
+    engine = DeepFinalizationEngine(
+        ResearchOrchestrator(
+            OpenAICompatibleResearchModel(generator_client),
+            LLMClaimJudge(verifier_client),
+        ),
+        VerifiedPricing(Decimal("2"), Decimal("10")),
+        FinalizationLimits(2, 10000, 512, 4000, 256, 12000, 512, 4000, 256),
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    with pytest.raises(GatewayError) as first_error:
+        coordinator.process_claimed(claimed, "worker-1", 120)
+    with pytest.raises(GatewayError) as replay_error:
+        coordinator.process_claimed(
+            replace(claimed, lease_generation=8), "worker-2", 120
+        )
+
+    assert first_error.value.code == "deep_finalization_provider_outcome_unknown"
+    assert replay_error.value.code == "deep_finalization_reconciliation_required"
+    unknown = [
+        row for row in gateway.settlements if row["status"] == "outcome_unknown"
+    ]
+    assert len(unknown) == 1
+    assert unknown[0]["actual_cost_usd"] == "0.0007"
+    assert "request-unknown" in unknown[0]["result_ref"]
+    assert generator_client.calls == 1
+    assert not gateway.final_artifacts
+
+
+def test_lost_publication_response_replays_idempotently_without_paid_calls() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_after_publication_once = True
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-1", 120)
+    second_result = coordinator.process_claimed(
+        replace(claimed, lease_generation=8), "worker-2", 120
+    )
+
+    assert first_result.status == "lease_lost"
+    assert second_result.status == "completed"
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert gateway.publication_calls == 2
+    assert len(gateway.publications) == 1
+
+
+def test_crash_after_unused_slot_release_before_checkpoint_resumes_safely() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_before_publishing_checkpoint_once = True
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-1", 120)
+    second_result = coordinator.process_claimed(
+        replace(claimed, lease_generation=8), "worker-2", 120
+    )
+
+    assert first_result.status == "lease_lost"
+    assert second_result.status == "completed"
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert len(gateway.publications) == 1
+
+
+@pytest.mark.parametrize(
+    ("artifact_type", "repair_path", "expected_generator_calls", "expected_verifier_calls"),
+    [
+        ("draft", False, 1, 1),
+        ("verification", False, 1, 1),
+        ("repaired_draft", True, 2, 3),
+        ("reverification", True, 2, 3),
+    ],
+)
+def test_each_paid_boundary_reuses_atomic_result_after_lost_response(
+    artifact_type: str,
+    repair_path: bool,
+    expected_generator_calls: int,
+    expected_verifier_calls: int,
+) -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, plan_json(request), {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_after_artifact_type_once = artifact_type
+
+    if repair_path:
+        initial = two_claim_draft(
+            first["id"], first["excerpt"], second["id"], second["excerpt"]
+        )
+        generator_client = QueueClient([
+            initial,
+            draft(first["id"], first["excerpt"]),
+        ])
+        verifier_client = QueueClient([
+            {"claimId": "claim-1", "verdict": "supported", "explanation": "supported"},
+            {
+                "claimId": "claim-2",
+                "verdict": "insufficient_evidence",
+                "explanation": "insufficient",
+            },
+            {
+                "claimId": "claim-1",
+                "verdict": "supported",
+                "explanation": "supported after repair",
+            },
+        ])
+        engine = DeepFinalizationEngine(
+            ResearchOrchestrator(
+                OpenAICompatibleResearchModel(generator_client),
+                LLMClaimJudge(verifier_client),
+            ),
+            VerifiedPricing(Decimal("2"), Decimal("10")),
+            FinalizationLimits(2, 10000, 512, 4000, 256, 12000, 512, 4000, 256),
+        )
+    else:
+        engine, generator_client, verifier_client = finalizer(
+            draft(first["id"], first["excerpt"])
+        )
+
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-1", 120)
+    second_result = coordinator.process_claimed(
+        replace(claimed, lease_generation=8), "worker-2", 120
+    )
+
+    assert first_result.status == "lease_lost"
+    assert second_result.status == "completed"
+    assert generator_client.calls == expected_generator_calls
+    assert verifier_client.calls == expected_verifier_calls
+    assert len(gateway.publications) == 1

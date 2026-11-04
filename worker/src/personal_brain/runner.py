@@ -138,6 +138,7 @@ def build_research_worker():
         OpenAICompatibleEvidenceEvaluationModel,
     )
     from personal_brain.research.deep_planning import DeepResearchPlanner
+    from personal_brain.research.deep_finalization import DeepFinalizationEngine
 
     worker_id = os.environ.get("WORKER_ID", "").strip()
     if not worker_id:
@@ -172,7 +173,7 @@ def build_research_worker():
             evaluator=EvidenceEvaluator(
                 OpenAICompatibleEvidenceEvaluationModel.from_environment()
             ),
-            orchestrator=orchestrator,
+            finalizer=DeepFinalizationEngine.from_legacy_orchestrator(orchestrator),
         )
 
     return ResearchAgentWorker(

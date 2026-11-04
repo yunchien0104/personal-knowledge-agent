@@ -144,7 +144,9 @@ The disposable stack was stopped with `--no-backup`; its container and volume we
 ## Remaining blockers
 
 1. R2B/R2C execution-layer safety is prepared for another separately authorized real-provider verification, but this repair intentionally made no paid call. Candidate ceilings are not yet proven sufficient by a real response.
-2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
+2. R2A/R2E/R2F paid-call Ledger/checkpoint integration is now implemented and
+   Local-DB verified as documented below. Its Real Provider path remains unverified,
+   so a complete paid Deep workflow still requires separate controlled authorization.
 3. R2C remains real-provider unverified. Web provider and frontend work were intentionally out of scope.
 4. A durable reconciliation procedure is still required for a crash after a provider response but before its output/cost metadata becomes durable; the coordinator now blocks the ambiguous `running` operation instead of replaying it.
 
@@ -208,4 +210,31 @@ Offline quality fixtures cover: sufficient supporting evidence, sufficient refut
 
 Verification used a newly created disposable Local Supabase/PostgreSQL stack on database port 65422. It replayed **35/35 migrations**, then ran six focused pgTAP files with **138/138 assertions PASS**, including the new R2C diagnostics protocol **28/28**, existing R2B compatibility, owner/cross-user RLS, stale-lease rejection, append-only enforcement, durability, infrastructure repair, Ledger accounting, and two-session concurrency. The stack was stopped after verification. Worker results: focused R2B/R2C/R2D **75/75 PASS**, complete Research offline **100/100 PASS**, and complete non-provider Worker regression **232 passed plus 9 subtests**. The three explicitly live-provider test modules were not executed because this task prohibited paid calls.
 
-No paid Provider call, hosted Supabase access, Legacy/R1/R2A/R2E/R2F change, push, merge, or deployment occurred. Remaining full-Deep blocker: paid R2A/R2E/R2F Ledger/checkpoint integration is still outside this change; real-provider R2C diagnostics have not been re-exercised after this additive persistence change.
+No paid Provider call, hosted Supabase access, Legacy/R1/R2A/R2E/R2F change, push,
+merge, or deployment occurred during that diagnostics change. The subsequent
+finalization section supersedes its then-current R2A/E/F implementation blocker;
+real-provider R2C diagnostics have not been re-exercised after the additive
+persistence change.
+
+## Deep R2A/E/F paid finalization integration (2026-11-04)
+
+The former R2A/E/F Ledger blocker is now **resolved for offline and Local DB
+execution**. The Deep coordinator reuses the existing Legacy synthesis, claim
+verification, repair, gate, report, and publication code through a Deep-only
+wrapper. It reserves every possible R2A, per-claim R2E, R2F repair, and per-claim
+reverification call before the first final-stage Provider boundary, then commits
+each accepted artifact and its settlement atomically. Durable finalization phases,
+lease fencing, uncertain outcomes, unused-slot release, restart reuse, and
+idempotent publication are covered by Worker and real PostgreSQL regressions.
+
+At the documented $2/M input and $10/M output prices, six-claim defaults reserve a
+maximum **$0.3036** for finalization. Missing verified pricing, insufficient run /
+daily / monthly capacity, oversized input, terminal replay, or ambiguous Provider
+outcome fails closed. No paid final-stage call was made, so a controlled Full Deep
+Real Provider E2E still requires separate authorization and remains **BLOCKED**.
+Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.
+
+Final free verification: focused finalization **14/14 PASS**; complete non-paid
+Worker regression **250 passed plus 9 subtests**; clean isolated migration replay
+**36/36**; complete database suite **22 files / 608 assertions PASS**; dedicated
+finalization protocol **40/40 PASS**; public-schema lint **0 errors**.

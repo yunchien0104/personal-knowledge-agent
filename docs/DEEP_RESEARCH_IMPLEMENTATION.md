@@ -71,5 +71,7 @@ R2B/R2C production adapters, Worker injection, strict schemas, and atomic
 provider-cost accounting are now implemented and verified offline and against an
 isolated Local PostgreSQL stack. Real-provider verification remains blocked until
 explicit B/C model identifiers and independently verified pricing are configured;
-see `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`. R2A/R2E/R2F paid-call ledger
-integration remains required before unrestricted full paid Deep E2E.
+see `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`. R2A/R2E/R2F paid-call Ledger and
+checkpoint integration is now implemented and Local-DB verified; see
+`docs/DEEP_RESEARCH_FINALIZATION.md`. A controlled Real Provider finalization run
+still requires explicit paid authorization and remains unverified.

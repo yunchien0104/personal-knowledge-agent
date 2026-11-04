@@ -351,6 +351,54 @@ class RetrievalSupabaseGateway(SupabaseGateway):
         )
         return result if isinstance(result, dict) else None
 
+    def reserve_deep_research_finalization(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        slots: list[Mapping[str, Any]],
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "reserve_deep_research_finalization",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_slots": slots,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def complete_deep_research_final_operation(
+        self,
+        job: Any,
+        worker_id: str,
+        **payload: Any,
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "complete_deep_research_final_operation",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                **payload,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
+    def load_deep_research_finalization(
+        self, job: Any, worker_id: str
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "load_deep_research_finalization",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
     def append_deep_research_evidence(
         self,
         job: Any,

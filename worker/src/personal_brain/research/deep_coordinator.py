@@ -10,6 +10,7 @@ import re
 from typing import Any, Callable, Mapping
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from personal_brain.llm_client import LLMUsage
 from personal_brain.queue_runtime import LeaseGuard, LeaseLostError, ProcessResult
 from personal_brain.research.deep_contracts import (
     EvidenceAssessmentV1,
@@ -27,6 +28,13 @@ from personal_brain.research.deep_controller import (
     query_fingerprint,
 )
 from personal_brain.research.deep_evaluation import EvidenceEvaluator
+from personal_brain.research.deep_finalization import (
+    FinalizationContractValidationError,
+    DeepFinalizationEngine,
+    FinalizationPayloadLimitError,
+    FinalizationProviderMetadataError,
+    FinalizationSlot,
+)
 from personal_brain.research.deep_web import WebResearchProvider, discover_and_fetch
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
@@ -166,6 +174,7 @@ class DeepResearchCoordinator:
         evaluator: EvidenceEvaluator | None = None,
         controller: ResearchIterationController | None = None,
         orchestrator: Any | None = None,
+        finalizer: DeepFinalizationEngine | None = None,
         web_provider: WebResearchProvider | None = None,
         web_operation_estimate_usd: Decimal = Decimal("0.0100"),
         clock: Callable[[], datetime] | None = None,
@@ -176,6 +185,7 @@ class DeepResearchCoordinator:
         self.evaluator = evaluator or EvidenceEvaluator()
         self.controller = controller or ResearchIterationController()
         self.orchestrator = orchestrator
+        self.finalizer = finalizer
         self.web_provider = web_provider
         self.web_operation_estimate_usd = web_operation_estimate_usd
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -273,6 +283,569 @@ class DeepResearchCoordinator:
         )
         if result is None:
             raise LeaseLostError("Worker lease is no longer valid")
+
+    def _begin_finalization(
+        self,
+        state: ResearchIterationStateV1,
+        *,
+        reason: str,
+        outcome: str,
+    ) -> ResearchIterationStateV1:
+        return state.model_copy(update={
+            "checkpointVersion": state.checkpointVersion + 1,
+            "executionPhase": "synthesizing",
+            "retrievalStopReason": reason,
+            "targetOutcome": outcome,
+            "stopReason": None,
+            "outcome": None,
+            "proposedActions": [],
+            "approvedActionIds": [],
+        })
+
+    def _final_slot_payload(
+        self,
+        request: ResearchRequestV1,
+        slot: FinalizationSlot,
+    ) -> dict[str, Any]:
+        return {
+            "operationId": str(_operation_id(request.runId, slot.key)),
+            "idempotencyKey": slot.key,
+            "actionType": slot.action_type,
+            "costCategory": slot.cost_category,
+            "parametersHash": _canonical_hash(slot.parameters),
+            "estimatedCostUsd": format(slot.estimated_cost_usd, "f"),
+        }
+
+    def _reserve_finalization(
+        self,
+        job: Any,
+        worker_id: str,
+        request: ResearchRequestV1,
+        slots: tuple[FinalizationSlot, ...],
+    ) -> dict[str, str]:
+        result = self.gateway.reserve_deep_research_finalization(
+            job,
+            worker_id,
+            slots=[self._final_slot_payload(request, slot) for slot in slots],
+        )
+        if result is None:
+            raise LeaseLostError("Worker lease expired before finalization reservation")
+        operations = result.get("operations")
+        if not isinstance(operations, list):
+            raise GatewayError(
+                "invalid_finalization_reservation",
+                "Deep finalization reservation response is invalid",
+                retryable=False,
+            )
+        statuses = {
+            str(item.get("idempotencyKey")): str(item.get("status"))
+            for item in operations if isinstance(item, Mapping)
+        }
+        if set(statuses) != {slot.key for slot in slots}:
+            raise GatewayError(
+                "invalid_finalization_reservation",
+                "Deep finalization reservations are incomplete",
+                retryable=False,
+            )
+        return statuses
+
+    def _load_finalization_artifacts(
+        self, job: Any, worker_id: str
+    ) -> dict[str, Mapping[str, Any]]:
+        result = self.gateway.load_deep_research_finalization(job, worker_id)
+        if result is None:
+            raise LeaseLostError("Worker lease expired while loading finalization")
+        artifacts = result.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise GatewayError(
+                "invalid_finalization_state",
+                "Deep finalization artifacts are invalid",
+                retryable=False,
+            )
+        return {
+            str(item.get("operationId")): item
+            for item in artifacts if isinstance(item, Mapping)
+        }
+
+    def _cancel_final_slots(
+        self,
+        job: Any,
+        worker_id: str,
+        request: ResearchRequestV1,
+        slots: tuple[FinalizationSlot, ...],
+        statuses: dict[str, str],
+    ) -> None:
+        for slot in slots:
+            if statuses.get(slot.key) != "reserved":
+                continue
+            self._settle(
+                job,
+                worker_id,
+                _operation_id(request.runId, slot.key),
+                status="cancelled",
+                error_code="finalization_slot_unused",
+            )
+            statuses[slot.key] = "cancelled"
+
+    def _settle_final_call_error(
+        self,
+        job: Any,
+        worker_id: str,
+        operation_id: UUID,
+        error: Exception,
+    ) -> None:
+        from personal_brain.llm_client import StructuredLLMError
+        from personal_brain.research.llm import ResearchModelValidationError
+        from personal_brain.research.verifier import ClaimVerificationValidationError
+
+        call = getattr(error, "call", None)
+        if isinstance(error, StructuredLLMError):
+            usage = error.usage
+            cost = self.finalizer.pricing.cost(usage) if (
+                self.finalizer is not None
+                and usage.input_tokens > 0 and usage.output_tokens > 0
+                and usage.cached_input_tokens == 0
+                and usage.cache_write_input_tokens == 0
+            ) else ZERO
+            self._settle(
+                job,
+                worker_id,
+                operation_id,
+                status="outcome_unknown" if error.outcome_unknown else "failed",
+                actual_cost_usd=cost,
+                error_code=f"final_{error.error_kind}"[:128],
+                result_ref=_provider_result_ref(
+                    (error.request_id,) if error.request_id else (),
+                    usage,
+                    (error.finish_reason,) if error.finish_reason else (),
+                ),
+            )
+            return
+        if isinstance(error, FinalizationProviderMetadataError):
+            self._settle(
+                job,
+                worker_id,
+                operation_id,
+                status="outcome_unknown",
+                error_code=f"final_{error.error_kind}"[:128],
+                result_ref=_provider_result_ref(
+                    (error.call.request_id,) if error.call.request_id else (),
+                    error.call.usage,
+                    (error.call.finish_reason,) if error.call.finish_reason else (),
+                ),
+            )
+            return
+        if isinstance(error, (
+            ResearchModelValidationError,
+            ClaimVerificationValidationError,
+            FinalizationContractValidationError,
+        )):
+            assert self.finalizer is not None and call is not None
+            try:
+                cost = self.finalizer.validate_transport(call)
+            except FinalizationProviderMetadataError as metadata_error:
+                self._settle_final_call_error(
+                    job, worker_id, operation_id, metadata_error
+                )
+                return
+            self._settle(
+                job,
+                worker_id,
+                operation_id,
+                status="failed",
+                actual_cost_usd=cost,
+                error_code="final_contract_invalid",
+                result_ref=_provider_result_ref(
+                    (call.request_id,) if call.request_id else (),
+                    call.usage,
+                    (call.finish_reason,) if call.finish_reason else (),
+                ),
+            )
+            return
+        self._settle(
+            job,
+            worker_id,
+            operation_id,
+            status="failed",
+            error_code="finalization_failed_before_provider",
+        )
+
+    def _execute_final_slot(
+        self,
+        job: Any,
+        worker_id: str,
+        request: ResearchRequestV1,
+        slot: FinalizationSlot,
+        status: str,
+        artifacts: dict[str, Mapping[str, Any]],
+        artifact_key: str,
+        invoke: Callable[[], tuple[Mapping[str, Any], Any | None]],
+    ) -> Mapping[str, Any]:
+        operation_id = _operation_id(request.runId, slot.key)
+        operation_key = str(operation_id)
+        if status == "completed":
+            durable = artifacts.get(operation_key)
+            if durable is None or durable.get("artifactType") != slot.artifact_type:
+                raise GatewayError(
+                    "missing_finalization_artifact",
+                    "Completed finalization operation has no durable artifact",
+                    retryable=False,
+                )
+            artifact = durable.get("artifact")
+            if not isinstance(artifact, Mapping):
+                raise GatewayError(
+                    "invalid_finalization_artifact",
+                    "Durable finalization artifact is invalid",
+                    retryable=False,
+                )
+            return artifact
+        if status != "reserved":
+            raise GatewayError(
+                "deep_finalization_reconciliation_required",
+                "A finalization operation requires reconciliation or new authorization",
+                retryable=False,
+            )
+        if not self.gateway.start_deep_research_operation(
+            job, worker_id, operation_key
+        ):
+            raise LeaseLostError("Worker lease expired before finalization call")
+        try:
+            artifact, call = invoke()
+            if self.finalizer is None:
+                raise ValueError("Deep finalization is unavailable")
+            if call is None:
+                actual_cost = ZERO
+                provider = "deterministic"
+                model_name = "none"
+                request_id = None
+                finish_reason = "deterministic"
+                usage = LLMUsage()
+                latency_ms = 0
+            else:
+                actual_cost = self.finalizer.validate_transport(call)
+                provider = call.provider
+                model_name = call.model
+                request_id = call.request_id
+                finish_reason = call.finish_reason
+                usage = call.usage
+                latency_ms = call.latency_ms
+            artifact_dict = dict(artifact)
+            output_hash = _canonical_hash(artifact_dict)
+            completed = self.gateway.complete_deep_research_final_operation(
+                job,
+                worker_id,
+                p_operation_id=operation_key,
+                p_artifact_type=slot.artifact_type,
+                p_artifact_key=artifact_key,
+                p_artifact=artifact_dict,
+                p_output_hash=output_hash,
+                p_provider=provider,
+                p_model_name=model_name,
+                p_request_id=request_id,
+                p_finish_reason=finish_reason,
+                p_input_tokens=usage.input_tokens,
+                p_output_tokens=usage.output_tokens,
+                p_reasoning_tokens=usage.reasoning_tokens,
+                p_actual_cost_usd=format(actual_cost, "f"),
+                p_latency_ms=latency_ms,
+                p_result_ref=_provider_result_ref(
+                    (request_id,) if request_id else (),
+                    usage,
+                    (finish_reason,) if finish_reason else (),
+                ),
+            )
+            if completed is None:
+                raise LeaseLostError(
+                    "Worker lease expired before finalization artifact commit"
+                )
+            return artifact_dict
+        except LeaseLostError:
+            raise
+        except Exception as error:
+            self._settle_final_call_error(job, worker_id, operation_id, error)
+            from personal_brain.llm_client import StructuredLLMError
+            from personal_brain.research.llm import ResearchModelValidationError
+            from personal_brain.research.verifier import (
+                ClaimVerificationValidationError,
+            )
+
+            if isinstance(error, (
+                ResearchModelValidationError,
+                ClaimVerificationValidationError,
+                FinalizationContractValidationError,
+            )):
+                raise GatewayError(
+                    "deep_finalization_contract_invalid",
+                    "A final-stage provider result failed its Backend contract",
+                    retryable=False,
+                ) from error
+            if isinstance(error, FinalizationProviderMetadataError):
+                raise GatewayError(
+                    "deep_finalization_reconciliation_required",
+                    "Final-stage provider metadata is insufficient for safe accounting",
+                    retryable=False,
+                ) from error
+            if isinstance(error, StructuredLLMError):
+                raise GatewayError(
+                    (
+                        "deep_finalization_provider_outcome_unknown"
+                        if error.outcome_unknown
+                        else "deep_finalization_provider_error"
+                    ),
+                    "A final-stage provider call did not produce an accepted result",
+                    retryable=False,
+                ) from error
+            if isinstance(error, FinalizationPayloadLimitError):
+                raise GatewayError(
+                    "deep_finalization_payload_limit",
+                    "A final-stage payload exceeds its configured safe limit",
+                    retryable=False,
+                ) from error
+            raise
+
+    def _run_finalization(
+        self,
+        job: Any,
+        worker_id: str,
+        request: ResearchRequestV1,
+        plan: ResearchPlanV1,
+        records: list[EvidenceRecordV1],
+        state: ResearchIterationStateV1,
+    ) -> tuple[Any, ResearchIterationStateV1]:
+        from personal_brain.research.contracts import VerificationResult
+
+        if self.finalizer is None:
+            raise GatewayError(
+                "deep_finalization_unavailable",
+                "Deep finalization is not configured",
+                retryable=False,
+            )
+        if state.executionPhase not in {
+            "synthesizing", "verifying", "repairing", "publishing"
+        }:
+            raise GatewayError(
+                "invalid_finalization_state",
+                "Deep finalization checkpoint is invalid",
+                retryable=False,
+            )
+        publication_rows = _publication_rows(records)
+        preflight = self.finalizer.preflight(
+            request.runId,
+            request.originalQuestion,
+            plan.model_dump(mode="json"),
+            publication_rows,
+        )
+        statuses = self._reserve_finalization(
+            job, worker_id, request, preflight.slots
+        )
+        # Unused worst-case slots may have been released immediately before a
+        # checkpoint response was lost. They are safe to load on resume. If a
+        # cancelled slot is actually required below, _execute_final_slot still
+        # blocks it from crossing the provider boundary.
+        allowed_statuses = {"reserved", "completed", "cancelled"}
+        blocked = {
+            key: status for key, status in statuses.items()
+            if status not in allowed_statuses
+        }
+        if blocked:
+            self._cancel_final_slots(
+                job, worker_id, request, preflight.slots, statuses
+            )
+            raise GatewayError(
+                "deep_finalization_reconciliation_required",
+                "A prior finalization operation requires reconciliation or new authorization",
+                retryable=False,
+            )
+        artifacts = self._load_finalization_artifacts(job, worker_id)
+        slots = {slot.key: slot for slot in preflight.slots}
+        used_operation_ids: list[UUID] = []
+
+        def execute(
+            key: str,
+            artifact_key: str,
+            invoke: Callable[[], tuple[Mapping[str, Any], Any | None]],
+        ) -> Mapping[str, Any]:
+            value = self._execute_final_slot(
+                job,
+                worker_id,
+                request,
+                slots[key],
+                statuses[key],
+                artifacts,
+                artifact_key,
+                invoke,
+            )
+            statuses[key] = "completed"
+            used_operation_ids.append(_operation_id(request.runId, key))
+            return value
+
+        try:
+            def synthesize_current() -> tuple[Mapping[str, Any], Any | None]:
+                call = self.finalizer.synthesis_call(
+                    request.originalQuestion,
+                    plan.model_dump(mode="json"),
+                    publication_rows,
+                )
+                accepted = self.finalizer.accept_synthesis_call(
+                    call, publication_rows
+                )
+                return accepted.model_dump(), call
+
+            draft_json = execute(
+                "final:synthesize:v1",
+                "initial",
+                synthesize_current,
+            )
+            draft = self.finalizer.validate_draft(draft_json)
+            if state.executionPhase == "synthesizing":
+                refreshed = self._load(job, worker_id)
+                state = state.model_copy(update={
+                    "checkpointVersion": state.checkpointVersion + 1,
+                    "executionPhase": "verifying",
+                    "operationIds": list(dict.fromkeys([
+                        *state.operationIds, *used_operation_ids,
+                    ])),
+                    "budget": _budget(
+                        refreshed.get("budget"), request.effectiveLimits.maxCostUsd
+                    ),
+                })
+                self._checkpoint(
+                    job, worker_id, state, plan_id=plan.planId,
+                )
+
+            results: list[VerificationResult] = []
+            for index, claim in enumerate(self.finalizer.claims(draft)):
+                key = f"final:verify:{index}"
+
+                def verify_current(
+                    claim: Any = claim,
+                ) -> tuple[Mapping[str, Any], Any | None]:
+                    result, call = self.finalizer.verification_call(
+                        claim, publication_rows, reverify=False
+                    )
+                    return result.model_dump(), call
+
+                result_json = execute(key, claim.claimId, verify_current)
+                results.append(VerificationResult.model_validate(result_json))
+            gate = self.finalizer.gate(draft, results)
+            repaired = False
+
+            if not gate.can_publish and self.finalizer.should_repair(results):
+                if state.executionPhase == "verifying":
+                    refreshed = self._load(job, worker_id)
+                    state = state.model_copy(update={
+                        "checkpointVersion": state.checkpointVersion + 1,
+                        "executionPhase": "repairing",
+                        "operationIds": list(dict.fromkeys([
+                            *state.operationIds, *used_operation_ids,
+                        ])),
+                        "budget": _budget(
+                            refreshed.get("budget"), request.effectiveLimits.maxCostUsd
+                        ),
+                    })
+                    self._checkpoint(job, worker_id, state, plan_id=plan.planId)
+
+                def repair_current() -> tuple[Mapping[str, Any], Any | None]:
+                    call = self.finalizer.repair_call(
+                        request.originalQuestion,
+                        plan.model_dump(mode="json"),
+                        publication_rows,
+                        draft,
+                        results,
+                    )
+                    accepted = self.finalizer.accept_repair_call(
+                        call, draft, results, publication_rows
+                    )
+                    return accepted.model_dump(), call
+
+                repair_json = execute(
+                    "final:repair:v1",
+                    "bounded-repair",
+                    repair_current,
+                )
+                repaired_draft = self.finalizer.validate_draft(repair_json)
+                draft = repaired_draft
+                repaired = True
+                refreshed = self._load(job, worker_id)
+                state = state.model_copy(update={
+                    "checkpointVersion": state.checkpointVersion + 1,
+                    "executionPhase": "verifying",
+                    "operationIds": list(dict.fromkeys([
+                        *state.operationIds, *used_operation_ids,
+                    ])),
+                    "budget": _budget(
+                        refreshed.get("budget"), request.effectiveLimits.maxCostUsd
+                    ),
+                })
+                self._checkpoint(job, worker_id, state, plan_id=plan.planId)
+
+                results = []
+                for index, claim in enumerate(self.finalizer.claims(draft)):
+                    key = f"final:reverify:{index}"
+
+                    def reverify_current(
+                        claim: Any = claim,
+                    ) -> tuple[Mapping[str, Any], Any | None]:
+                        result, call = self.finalizer.verification_call(
+                            claim, publication_rows, reverify=True
+                        )
+                        return result.model_dump(), call
+
+                    result_json = execute(key, claim.claimId, reverify_current)
+                    results.append(VerificationResult.model_validate(result_json))
+                gate = self.finalizer.gate(draft, results)
+
+            execution = self.finalizer.execution(
+                draft, results, gate, repaired=repaired
+            )
+            self._cancel_final_slots(
+                job, worker_id, request, preflight.slots, statuses
+            )
+            refreshed = self._load(job, worker_id)
+            if gate.can_publish:
+                if state.executionPhase != "publishing":
+                    state = state.model_copy(update={
+                        "checkpointVersion": state.checkpointVersion + 1,
+                        "executionPhase": "publishing",
+                        "operationIds": list(dict.fromkeys([
+                            *state.operationIds, *used_operation_ids,
+                        ])),
+                        "budget": _budget(
+                            refreshed.get("budget"), request.effectiveLimits.maxCostUsd
+                        ),
+                    })
+                    self._checkpoint(job, worker_id, state, plan_id=plan.planId)
+            else:
+                if state.executionPhase == "publishing":
+                    raise GatewayError(
+                        "finalization_replay_conflict",
+                        "Publishing checkpoint no longer passes its durable gate",
+                        retryable=False,
+                    )
+                state = state.model_copy(update={
+                    "checkpointVersion": state.checkpointVersion + 1,
+                    "executionPhase": "terminal",
+                    "operationIds": list(dict.fromkeys([
+                        *state.operationIds, *used_operation_ids,
+                    ])),
+                    "budget": _budget(
+                        refreshed.get("budget"), request.effectiveLimits.maxCostUsd
+                    ),
+                    "stopReason": state.retrievalStopReason,
+                    "outcome": "insufficient",
+                })
+                self._checkpoint(job, worker_id, state, plan_id=plan.planId)
+            return execution, state
+        except LeaseLostError:
+            raise
+        except Exception:
+            try:
+                self._cancel_final_slots(
+                    job, worker_id, request, preflight.slots, statuses
+                )
+            except LeaseLostError:
+                pass
+            raise
 
     def _retrieve(
         self, job: Any, worker_id: str, request: ResearchRequestV1, query: str,
@@ -510,7 +1083,9 @@ class DeepResearchCoordinator:
                 assert plan is not None and state is not None
 
                 assessment = EvidenceAssessmentV1.model_validate(bundle["assessment"]) if bundle.get("assessment") else None
-                while state.executionPhase != "terminal":
+                while state.executionPhase in {
+                    "planning", "retrieving", "assessing", "deciding"
+                }:
                     lease.pulse()
                     current = self._load(job, worker_id)
                     if self._deadline_exhausted(current):
@@ -522,8 +1097,16 @@ class DeepResearchCoordinator:
                         break
                     if state.executionPhase in {"planning", "deciding"}:
                         if state.currentRound >= request.effectiveLimits.maxQueries:
-                            state = self._terminal_state(
-                                state, reason="max_queries_exhausted"
+                            state = (
+                                self._begin_finalization(
+                                    state,
+                                    reason="max_queries_exhausted",
+                                    outcome="qualified_partial",
+                                )
+                                if self.finalizer is not None and records
+                                else self._terminal_state(
+                                    state, reason="max_queries_exhausted"
+                                )
                             )
                             self._checkpoint(
                                 job, worker_id, state, plan_id=plan.planId,
@@ -542,12 +1125,22 @@ class DeepResearchCoordinator:
                             decision = self.controller.decide(request, plan, assessment, state)
                             action = decision.action
                             if action.actionType == "stop_retrieval":
-                                state = state.model_copy(update={
-                                    "checkpointVersion": state.checkpointVersion + 1,
-                                    "executionPhase": "terminal", "stopReason": decision.stop_reason,
-                                    "outcome": decision.outcome,
-                                    "proposedActions": [action], "approvedActionIds": [],
-                                })
+                                state = (
+                                    self._begin_finalization(
+                                        state,
+                                        reason=decision.stop_reason,
+                                        outcome=decision.outcome,
+                                    )
+                                    if self.finalizer is not None and records
+                                    else state.model_copy(update={
+                                        "checkpointVersion": state.checkpointVersion + 1,
+                                        "executionPhase": "terminal",
+                                        "stopReason": decision.stop_reason,
+                                        "outcome": decision.outcome,
+                                        "proposedActions": [action],
+                                        "approvedActionIds": [],
+                                    })
+                                )
                                 self._checkpoint(job, worker_id, state, plan_id=plan.planId,
                                                  assessment_id=assessment.assessmentId)
                                 break
@@ -564,11 +1157,20 @@ class DeepResearchCoordinator:
                     if state.executionPhase == "retrieving":
                         action = state.proposedActions[0]
                         if action.actionType not in {"search_internal", "discover_web"} or not action.query:
-                            state = state.model_copy(update={
-                                "checkpointVersion": state.checkpointVersion + 1,
-                                "executionPhase": "terminal", "stopReason": "no_permitted_action",
-                                "outcome": "qualified_partial",
-                            })
+                            state = (
+                                self._begin_finalization(
+                                    state,
+                                    reason="no_permitted_action",
+                                    outcome="qualified_partial",
+                                )
+                                if self.finalizer is not None and records
+                                else state.model_copy(update={
+                                    "checkpointVersion": state.checkpointVersion + 1,
+                                    "executionPhase": "terminal",
+                                    "stopReason": "no_permitted_action",
+                                    "outcome": "qualified_partial",
+                                })
+                            )
                             self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                             break
                         if action.actionType == "search_internal":
@@ -580,11 +1182,20 @@ class DeepResearchCoordinator:
                                 job, worker_id, request, action.query, round_number=state.currentRound
                             )
                         if op_status == "budget_exhausted":
-                            state = state.model_copy(update={
-                                "checkpointVersion": state.checkpointVersion + 1,
-                                "executionPhase": "terminal", "stopReason": "budget_exhausted",
-                                "outcome": "qualified_partial",
-                            })
+                            state = (
+                                self._begin_finalization(
+                                    state,
+                                    reason="budget_exhausted",
+                                    outcome="qualified_partial",
+                                )
+                                if self.finalizer is not None and records
+                                else state.model_copy(update={
+                                    "checkpointVersion": state.checkpointVersion + 1,
+                                    "executionPhase": "terminal",
+                                    "stopReason": "budget_exhausted",
+                                    "outcome": "qualified_partial",
+                                })
+                            )
                             self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                             break
                         if op_status in {
@@ -645,11 +1256,20 @@ class DeepResearchCoordinator:
                         evaluation_estimate,
                     )
                     if evaluation_status == "budget_exhausted":
-                        state = state.model_copy(update={
-                            "checkpointVersion": state.checkpointVersion + 1,
-                            "executionPhase": "terminal", "stopReason": "budget_exhausted",
-                            "outcome": "qualified_partial",
-                        })
+                        state = (
+                            self._begin_finalization(
+                                state,
+                                reason="budget_exhausted",
+                                outcome="qualified_partial",
+                            )
+                            if self.finalizer is not None and records
+                            else state.model_copy(update={
+                                "checkpointVersion": state.checkpointVersion + 1,
+                                "executionPhase": "terminal",
+                                "stopReason": "budget_exhausted",
+                                "outcome": "qualified_partial",
+                            })
+                        )
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                         break
                     if evaluation_status in {
@@ -766,27 +1386,24 @@ class DeepResearchCoordinator:
                     self._checkpoint(job, worker_id, state, plan_id=plan.planId,
                                      assessment_id=assessment.assessmentId)
 
-                if (
-                    state.outcome in {"complete", "qualified_partial"}
-                    and state.stopReason != "duration_exhausted"
-                    and self.orchestrator is not None
-                    and records
-                ):
+                if state.executionPhase in {
+                    "synthesizing", "verifying", "repairing", "publishing"
+                } and records:
                     publication_rows = _publication_rows(records)
-                    execution = self.orchestrator.run(
-                        request.originalQuestion, plan.model_dump(mode="json"), publication_rows
+                    execution, state = self._run_finalization(
+                        job, worker_id, request, plan, records, state
                     )
                     if execution.gate.can_publish:
                         draft = adapt_r2_publication(execution, publication_rows)
-                        if state.outcome == "complete":
+                        if state.targetOutcome == "complete":
                             publish = (
                                 self.gateway.publish_deep_research_draft
                                 if any(item.origin == "web" for item in records)
                                 else self.gateway.publish_research_draft
                             )
                             published = publish(
-                                job, worker_id, model_provider=self.orchestrator.generator.provider,
-                                model_name=self.orchestrator.generator.model_name,
+                                job, worker_id, model_provider=self.finalizer.provider,
+                                model_name=self.finalizer.model_name,
                                 prompt_version="deep-r2ef-v1", output_hash=draft.output_hash,
                                 title=draft.title, body=draft.body, findings=draft.findings,
                             )
@@ -795,7 +1412,7 @@ class DeepResearchCoordinator:
                             return ProcessResult("completed", job.id, note_id=published.get("noteId"))
                         recorded = self.gateway.record_deep_research_result(
                             job, worker_id, result_status="verified_partial",
-                            stop_reason=state.stopReason or "max_rounds_reached",
+                            stop_reason=state.retrievalStopReason or "max_rounds_reached",
                             title=draft.title, body=draft.body, findings=draft.findings,
                             verification={"gate": "passed", "published": False},
                             output_hash=draft.output_hash,
@@ -803,10 +1420,23 @@ class DeepResearchCoordinator:
                         if recorded is None:
                             raise LeaseLostError("Worker lease expired before result persistence")
 
-                outcome = "qualified_partial" if state.outcome in {"complete", "qualified_partial"} else "insufficient"
+                outcome = (
+                    "qualified_partial"
+                    if (
+                        state.executionPhase == "publishing"
+                        and state.targetOutcome == "qualified_partial"
+                    ) or (
+                        self.finalizer is None
+                        and state.outcome in {"complete", "qualified_partial"}
+                    )
+                    else "insufficient"
+                )
                 if outcome == "insufficient" and self.gateway.record_deep_research_result(
                     job, worker_id, result_status="insufficient",
-                    stop_reason=state.stopReason or "no_permitted_action",
+                    stop_reason=(
+                        state.stopReason or state.retrievalStopReason
+                        or "no_permitted_action"
+                    ),
                     title=None, body=None, findings=[],
                     verification={"gate": "not_passed", "published": False},
                     output_hash=None,
@@ -814,7 +1444,10 @@ class DeepResearchCoordinator:
                     raise LeaseLostError("Worker lease expired before result persistence")
                 result = self.gateway.complete_deep_research_without_publication(
                     job, worker_id, outcome=outcome,
-                    stop_reason=state.stopReason or "no_permitted_action",
+                    stop_reason=(
+                        state.stopReason or state.retrievalStopReason
+                        or "no_permitted_action"
+                    ),
                 )
                 if result is None:
                     raise LeaseLostError("Worker lease is no longer valid")

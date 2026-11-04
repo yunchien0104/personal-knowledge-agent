@@ -1,14 +1,20 @@
-
 from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import json
 from typing import Any, Mapping, Protocol
+
+from pydantic import ValidationError
+
+from personal_brain.llm_client import StructuredLLMClient, StructuredLLMResult
 from personal_brain.research.contracts import (
+    AtomicResearchDraft,
     ResearchClaim,
     VerificationResult,
 )
-
-from personal_brain.research.schema_utils import to_openai_schema
-from personal_brain.research.contracts import AtomicResearchDraft
 from personal_brain.research.evidence import validate_atomic_citations
+from personal_brain.research.schema_utils import to_openai_schema
+
 
 class ClaimJudge(Protocol):
     """Interface for evaluating whether evidence supports a claim."""
@@ -21,8 +27,16 @@ class ClaimJudge(Protocol):
         ...
 
 
-from personal_brain.llm_client import StructuredLLMClient
-from personal_brain.research.contracts import EvidenceCitation
+@dataclass(frozen=True, slots=True)
+class ClaimVerificationCall:
+    result: VerificationResult
+    transport: StructuredLLMResult | None
+
+
+class ClaimVerificationValidationError(ValueError):
+    def __init__(self, message: str, call: StructuredLLMResult) -> None:
+        super().__init__(message)
+        self.call = call
 
 
 class LLMClaimJudge:
@@ -34,8 +48,82 @@ class LLMClaimJudge:
         claim: ResearchClaim,
         evidence: list[Mapping[str, Any]],
     ) -> VerificationResult:
+        # Legacy tests and adapters may implement only generate(). Keep that
+        # interface working; Deep finalization always uses the metadata path.
+        if not hasattr(self.client, "generate_with_metadata"):
+            cited_evidence = self.cited_evidence(claim, evidence)
+            if not cited_evidence:
+                return VerificationResult(
+                    claimId=claim.claimId,
+                    verdict="insufficient_evidence",
+                    explanation="No cited evidence was provided.",
+                )
+            output = self.client.generate(
+                system_prompt=self.system_prompt(),
+                user_input={
+                    "claim": claim.model_dump(),
+                    "evidence": cited_evidence,
+                },
+                output_schema=to_openai_schema(VerificationResult),
+            )
+            verified = VerificationResult.model_validate(output)
+            if verified.claimId != claim.claimId:
+                raise ValueError("Verifier returned a mismatched claimId")
+            return verified
 
-        system_prompt = """
+        return self.verify_with_metadata(claim, evidence).result
+
+    def verify_with_metadata(
+        self,
+        claim: ResearchClaim,
+        evidence: list[Mapping[str, Any]],
+    ) -> ClaimVerificationCall:
+
+        system_prompt = self.system_prompt()
+
+        cited_evidence = self.cited_evidence(claim, evidence)
+
+        if not cited_evidence:
+            return ClaimVerificationCall(
+                VerificationResult(
+                    claimId=claim.claimId,
+                    verdict="insufficient_evidence",
+                    explanation="No cited evidence was provided.",
+                ),
+                None,
+            )
+
+        result = self.client.generate_with_metadata(
+            system_prompt=system_prompt,
+            user_input={
+                "claim": claim.model_dump(),
+                "evidence": cited_evidence,
+            },
+            output_schema=to_openai_schema(VerificationResult),
+        )
+
+        try:
+            verified = VerificationResult.model_validate(result.output)
+        except ValidationError as error:
+            raise ClaimVerificationValidationError(
+                "Verifier output failed VerificationResult validation",
+                result,
+            ) from error
+
+        if verified.claimId != claim.claimId:
+            raise ClaimVerificationValidationError(
+                "Verifier returned a mismatched claimId",
+                result,
+            )
+
+        return ClaimVerificationCall(
+            verified,
+            replace(result, output=verified.model_dump()),
+        )
+
+    @staticmethod
+    def system_prompt() -> str:
+        return """
 You are a strict, evidence-grounded research claim verifier.
 
 Your task is to determine whether the supplied evidence
@@ -95,12 +183,14 @@ Do not treat plausibility as sufficient evidence.
 Return the required structured verification result.
 """
 
-
+    @staticmethod
+    def cited_evidence(
+        claim: ResearchClaim,
+        evidence: list[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
         # Only pass evidence that the claim actually cites.
-        cited_ids = {
-            citation.evidenceId for citation in claim.citations
-        }
-        cited_evidence = []
+        cited_ids = {citation.evidenceId for citation in claim.citations}
+        cited_evidence: list[dict[str, Any]] = []
         for row in evidence:
             if row["id"] not in cited_ids:
                 continue
@@ -112,29 +202,25 @@ Return the required structured verification result.
             if isinstance(locator, Mapping):
                 item["locator"] = dict(locator)
             cited_evidence.append(item)
+        return cited_evidence
 
-        if not cited_evidence:
-            return VerificationResult(
-                claimId=claim.claimId,
-                verdict="insufficient_evidence",
-                explanation="No cited evidence was provided.",
-            )
-
-        result = self.client.generate(
-            system_prompt=system_prompt,
-            user_input={
-                "claim": claim.model_dump(),
-                "evidence": cited_evidence,
+    def input_token_upper_bound(
+        self,
+        claim: ResearchClaim,
+        evidence: list[Mapping[str, Any]],
+    ) -> int:
+        return len(json.dumps(
+            {
+                "system": self.system_prompt(),
+                "input": {
+                    "claim": claim.model_dump(),
+                    "evidence": self.cited_evidence(claim, evidence),
+                },
             },
-            output_schema=to_openai_schema(VerificationResult),
-        )
-
-        verified = VerificationResult.model_validate(result)
-
-        if verified.claimId != claim.claimId:
-            raise ValueError("Verifier returned a mismatched claimId")
-
-        return verified
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ).encode("utf-8"))
 
 
 def verify_research_draft(

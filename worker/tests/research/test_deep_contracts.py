@@ -314,6 +314,23 @@ def test_iteration_transition_is_explicit_and_version_fenced():
         validate_iteration_transition(previous, next_state.model_copy(update={"checkpointVersion": 3}))
 
 
+@pytest.mark.parametrize("phase", ["planning", "retrieving", "assessing", "deciding"])
+def test_retrieval_can_stop_before_synthesis_from_each_runtime_phase(
+    phase: str,
+) -> None:
+    previous = ResearchIterationStateV1.model_validate(
+        iteration_data(executionPhase=phase)
+    )
+    next_state = ResearchIterationStateV1.model_validate(iteration_data(
+        checkpointVersion=2,
+        executionPhase="synthesizing",
+        retrievalStopReason="budget_exhausted",
+        targetOutcome="qualified_partial",
+    ))
+
+    assert validate_iteration_transition(previous, next_state) == next_state
+
+
 def test_deep_plan_cannot_enter_legacy_validator():
     with pytest.raises(ModelError):
         validate_legacy_plan(plan_data(), "Compare the evidence and identify unresolved conflicts")

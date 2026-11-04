@@ -31,7 +31,8 @@
   schema rejection and an R2C numeric-bound validation failure. Both schemas were
   repaired offline, but the full $0.0993 test cap remains conservatively uncertain,
   so neither request was retried and authoritative usage/cost is unavailable.
-- Remaining full paid Deep E2E blocker: R2A/R2E/R2F ledger integration.
+- R2A/R2E/R2F Ledger/checkpoint integration is now implemented and Local-DB
+  verified; controlled Real Provider finalization remains unverified.
 - Remaining crash-recovery blocker: reconcile the ambiguous interval after a
   provider response but before output/cost metadata becomes durable. It is now
   fail-closed and cannot produce a duplicate call.
@@ -1014,3 +1015,21 @@
   migration Local replay; focused pgTAP 138/138, including R2C diagnostics 28/28.
 - No paid call or hosted/production access occurred. Paid R2A/R2E/R2F Ledger and
   checkpoint integration remains a blocker for unrestricted full Deep E2E.
+
+### Deep paid finalization integration (local, 2026-11-04)
+
+- R2A synthesis, per-claim R2E, one R2F repair, and per-claim reverification now
+  use immutable Deep operation identities, atomic reserve-before-call, exact
+  settlement/release/uncertain accounting, and lease-generation fencing.
+- Accepted structured outputs and usage are append-only durable artifacts under
+  forced Owner RLS. Crash/restart reuses only completed artifacts; ambiguous
+  running operations require reconciliation and are never automatically replayed.
+- Durable checkpoints cover synthesizing, verifying, repairing, and publishing;
+  the strict citation/verification gate and idempotent publication path remain
+  unchanged. Legacy Research keeps its prior execution path.
+- PASS (LOCAL_DB): 36 migrations and all 22 pgTAP files / 608 assertions on a new
+  disposable stack, including 40 dedicated finalization assertions.
+- BLOCKED (REAL_PROVIDER): no paid R2A/E/F call was authorized or run. A controlled
+  Full Deep E2E requires fresh authorization and sufficient capacity for the
+  $0.3036 default worst-case final envelope within the unchanged $0.50 run cap.
+- Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.

@@ -294,6 +294,10 @@ class ResearchAgentWorkerTests(unittest.TestCase):
             "R2B_OUTPUT_COST_PER_MILLION_USD": "2",
             "R2C_INPUT_COST_PER_MILLION_USD": "1",
             "R2C_OUTPUT_COST_PER_MILLION_USD": "2",
+            "DEEP_FINAL_PRICING_MODEL": "legacy-research-model",
+            "DEEP_FINAL_PRICING_VERIFIED": "true",
+            "DEEP_FINAL_INPUT_COST_PER_MILLION_USD": "1",
+            "DEEP_FINAL_OUTPUT_COST_PER_MILLION_USD": "2",
         }, clear=True):
             worker = build_research_worker()
 

@@ -407,7 +407,8 @@ class ResearchIterationStateV1(DeepStrictModel):
     currentRound: int = Field(ge=0)
     completedRounds: list[int] = Field(default_factory=list, max_length=10)
     executionPhase: Literal[
-        "planning", "retrieving", "assessing", "deciding", "synthesizing", "verifying", "publishing", "terminal"
+        "planning", "retrieving", "assessing", "deciding", "synthesizing", "verifying",
+        "repairing", "publishing", "terminal"
     ]
     queryFingerprints: list[str] = Field(default_factory=list, max_length=100)
     operationIds: list[UUID] = Field(default_factory=list, max_length=200)
@@ -418,6 +419,12 @@ class ResearchIterationStateV1(DeepStrictModel):
     approvedActionIds: list[UUID] = Field(default_factory=list, max_length=20)
     budget: ResearchBudgetStateV1
     consecutiveNoInformationGainRounds: int = Field(ge=0, le=10)
+    retrievalStopReason: Literal[
+        "quality_reached", "diminishing_returns", "budget_exhausted", "max_rounds_reached",
+        "max_queries_exhausted", "duration_exhausted", "cancelled",
+        "authorization_blocked", "lease_lost", "no_permitted_action"
+    ] | None = None
+    targetOutcome: Literal["complete", "qualified_partial"] | None = None
     stopReason: Literal[
         "quality_reached", "diminishing_returns", "budget_exhausted", "max_rounds_reached",
         "max_queries_exhausted", "duration_exhausted", "cancelled",
@@ -431,6 +438,15 @@ class ResearchIterationStateV1(DeepStrictModel):
             raise ValueError("terminal state requires stopReason and outcome")
         if self.executionPhase != "terminal" and (self.stopReason is not None or self.outcome is not None):
             raise ValueError("non-terminal state cannot have stopReason or outcome")
+        finalization_phases = {"synthesizing", "verifying", "repairing", "publishing"}
+        if self.executionPhase in finalization_phases and (
+            self.retrievalStopReason is None or self.targetOutcome is None
+        ):
+            raise ValueError("finalization state requires its retrieval outcome")
+        if self.executionPhase not in {*finalization_phases, "terminal"} and (
+            self.retrievalStopReason is not None or self.targetOutcome is not None
+        ):
+            raise ValueError("retrieval outcome is only valid during finalization")
         if len(self.queryFingerprints) != len(set(self.queryFingerprints)):
             raise ValueError("query history must not contain duplicate fingerprints")
         if not set(self.approvedActionIds).issubset({item.actionId for item in self.proposedActions}):
@@ -439,12 +455,13 @@ class ResearchIterationStateV1(DeepStrictModel):
 
 
 VALID_PHASE_TRANSITIONS: dict[str, frozenset[str]] = {
-    "planning": frozenset({"retrieving", "terminal"}),
-    "retrieving": frozenset({"assessing", "terminal"}),
-    "assessing": frozenset({"deciding", "terminal"}),
+    "planning": frozenset({"retrieving", "synthesizing", "terminal"}),
+    "retrieving": frozenset({"assessing", "synthesizing", "terminal"}),
+    "assessing": frozenset({"deciding", "synthesizing", "terminal"}),
     "deciding": frozenset({"planning", "retrieving", "synthesizing", "terminal"}),
     "synthesizing": frozenset({"verifying", "terminal"}),
-    "verifying": frozenset({"publishing", "terminal"}),
+    "verifying": frozenset({"repairing", "publishing", "terminal"}),
+    "repairing": frozenset({"verifying", "terminal"}),
     "publishing": frozenset({"terminal"}),
     "terminal": frozenset(),
 }
