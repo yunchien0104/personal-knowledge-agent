@@ -139,6 +139,7 @@ The disposable stack was stopped with `--no-backup`; its container and volume we
 
 - `e606109` — `fix(research): harden real provider verification`
 - `ed2a48e` — `fix(research): align deep provider schemas`
+- `87d14a3` — `fix(research): harden deep execution boundaries`
 
 ## Remaining blockers
 
