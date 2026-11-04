@@ -105,9 +105,11 @@ class FakeClient:
     def __init__(self, outputs):
         self.outputs = list(outputs)
         self.schemas = []
+        self.inputs = []
 
-    def generate_with_metadata(self, *, output_schema, **_kwargs):
+    def generate_with_metadata(self, *, output_schema, **kwargs):
         self.schemas.append(output_schema)
+        self.inputs.append(kwargs.get("user_input"))
         output = self.outputs.pop(0)
         return StructuredLLMResult(
             output=output, provider=self.provider, model=self.model,
@@ -200,19 +202,97 @@ def test_r2b_adapter_repairs_once_and_aggregates_usage_and_cost():
     assert result.actual_cost_usd == Decimal("0.0004")
     assert result.request_ids == ("req-1", "req-2")
     assert result.finish_reasons == ("stop", "stop")
+    assert [(item.attemptStage, item.validationStage) for item in result.diagnostics] == [
+        ("initial", "provider_dto"), ("repair", "accepted"),
+    ]
+    assert result.diagnostics[0].errorCode == "provider_dto_invalid"
+    assert result.diagnostics[0].fieldPath == "normalizedResearchIntent"
+
+
+def test_r2b_repair_failure_and_fallback_have_distinct_safe_diagnostics():
+    secret = "fixture-secret-must-not-leak"
+    invalid_initial = {"bad": secret}
+    invalid_repair = {"stillBad": secret}
+    model = OpenAICompatibleDeepPlanningModel(
+        FakeClient([invalid_initial, invalid_repair]), pricing()
+    )
+
+    result = DeepResearchPlanner(model).plan(
+        request(), build_planning_context_pack([], request())
+    )
+
+    assert result.fallback_used is True
+    assert result.repaired is True
+    assert [(item.attemptStage, item.validationStage) for item in result.diagnostics] == [
+        ("initial", "provider_dto"),
+        ("repair", "provider_dto"),
+        ("fallback", "fallback"),
+    ]
+    serialized = " ".join(item.model_dump_json() for item in result.diagnostics)
+    assert secret not in serialized
+    assert result.diagnostics[-1].errorCode == "r2b_fallback_used"
+
+
+def test_r2b_quality_gate_diagnostic_drives_one_precise_repair():
+    rejected = proposal()
+    rejected["essentialClarifications"] = ["Should the private token be included?"]
+    client = FakeClient([rejected, proposal()])
+    model = OpenAICompatibleDeepPlanningModel(client, pricing())
+
+    result = DeepResearchPlanner(model).plan(
+        request(), build_planning_context_pack([], request())
+    )
+
+    assert result.fallback_used is False
+    assert result.repaired is True
+    initial = result.diagnostics[0]
+    assert initial.validationStage == "quality_gate"
+    assert initial.errorCode == "quality_gate_rejected"
+    assert initial.fieldPath == "essentialClarifications"
+    assert initial.ruleId == "no_unresolved_essential_clarifications"
+    repair_error = client.inputs[1]["researchContext"]["repairError"]
+    assert "rule=no_unresolved_essential_clarifications" in repair_error
+    assert "private token" not in repair_error
+
+
+def test_r2b_backend_contract_reports_dynamic_query_limit_without_truncation():
+    too_many = proposal()
+    too_many["subquestions"][0]["queries"] = [
+        {"source": "internal", "query": f"evidence query {index}"}
+        for index in range(3)
+    ]
+    client = FakeClient([too_many, proposal()])
+    model = OpenAICompatibleDeepPlanningModel(client, pricing())
+
+    result = DeepResearchPlanner(model).plan(
+        request(), build_planning_context_pack([], request())
+    )
+
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.validationStage == "backend_contract"
+    assert diagnostic.fieldPath == "retrievalProposals"
+    assert diagnostic.ruleId == "effective_query_limit"
+    assert result.repaired is True
+    assert len(result.plan.retrievalProposals) == 1
 
 
 def test_output_budget_exhaustion_never_uses_bounded_repair():
     client = OutputBudgetExhaustedClient()
     model = OpenAICompatibleDeepPlanningModel(client, pricing())
+    diagnostics = []
     with pytest.raises(DeepProviderError) as caught:
         DeepResearchPlanner(model).plan(
-            request(), build_planning_context_pack([], request())
+            request(), build_planning_context_pack([], request()),
+            diagnostic_sink=diagnostics.append,
         )
     assert client.calls == 1
     assert caught.value.error_kind == "output_budget_exhausted"
     assert caught.value.finish_reasons == ("length",)
     assert caught.value.usage.reasoning_tokens == 950
+    assert len(diagnostics) == 1
+    assert diagnostics[0].validationStage == "provider_terminal"
+    assert diagnostics[0].errorCode == "output_budget_exhausted"
+    assert diagnostics[0].reasoningTokens == 950
 
 
 @pytest.mark.parametrize(

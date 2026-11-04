@@ -411,7 +411,23 @@ class DeepResearchCoordinator:
                             retryable=False,
                         )
                     try:
-                        planned = self.planner.plan(request, context)
+                        def persist_r2b_diagnostic(diagnostic: Any) -> None:
+                            recorded = self.gateway.record_deep_research_validation_diagnostic(
+                                job,
+                                worker_id,
+                                operation_id=str(operation_id),
+                                diagnostic=diagnostic.model_dump(mode="json"),
+                            )
+                            if recorded is None:
+                                raise LeaseLostError(
+                                    "Worker lease expired before validation diagnostic persistence"
+                                )
+
+                        planned = self.planner.plan(
+                            request,
+                            context,
+                            diagnostic_sink=persist_r2b_diagnostic,
+                        )
                     except Exception as error:
                         from personal_brain.research.deep_llm import DeepProviderError
                         if not isinstance(error, DeepProviderError):

@@ -89,9 +89,18 @@ class DeepOperationPreflight:
 
 
 class DeepModelValidationError(ValueError):
-    def __init__(self, message: str, call: DeepModelCall) -> None:
+    def __init__(
+        self,
+        message: str,
+        call: DeepModelCall,
+        *,
+        field_path: str | None = None,
+        rule_id: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.call = call
+        self.field_path = field_path
+        self.rule_id = rule_id
 
 
 class DeepProviderError(RuntimeError):
@@ -264,7 +273,14 @@ class _StructuredDeepModel:
         try:
             validated = self.output_model.model_validate(call.output)
         except ValidationError as error:
-            raise DeepModelValidationError(str(error)[:2000], call) from error
+            issue = error.errors(include_url=False, include_input=False)[0]
+            field_path = ".".join(str(value) for value in issue.get("loc", ())) or None
+            rule_id = str(issue.get("type") or "pydantic_validation")[:128]
+            message = str(issue.get("msg") or "Provider DTO validation failed")
+            printable = message.encode("ascii", errors="replace").decode("ascii")
+            raise DeepModelValidationError(
+                printable[:500], call, field_path=field_path, rule_id=rule_id
+            ) from error
         return DeepModelCall(
             output=validated.model_dump(mode="json"),
             usage=call.usage,

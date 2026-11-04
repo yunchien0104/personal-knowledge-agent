@@ -979,3 +979,20 @@
 - Next action: isolated Staging/provider verification only—full historical pgTAP,
   true multi-session budget contention, browser E2E, provider quality, redirect/
   DNS enforcement, corpus/load latency, and capped real cost measurements.
+
+### Deep Research R2B durable validation diagnostics (local, 2026-11-04)
+
+- Added fenced, append-only R2B attempt diagnostics with owner-scoped forced RLS;
+  no Prompt, Evidence, secret, or raw model output is persisted or returned.
+- Initial, repair, provider-terminal, backend-contract, quality-gate, accepted,
+  and fallback outcomes now have distinct safe codes, paths, rules, and usage.
+- Aligned the Prompt with exact objective preservation, dynamic total query limits,
+  Web authorization, and clarification gate behavior. Duplicate/unknown dependency
+  keys are rejected instead of overwritten or discarded; comparison quality uses
+  the authoritative objective.
+- PASS: Worker offline 215 tests plus 9 subtests; focused 67/67; clean 34-migration
+  Local replay; complete pgTAP 20 files / 540 assertions; diagnostics 32/32;
+  relevant replay/Ledger/concurrency 78/78; public schema lint 0 errors.
+- No paid Provider call, Hosted Supabase access, push, merge, or deploy. Historical
+  rejected raw outputs were not durable, so their exact validation rules remain
+  UNKNOWN. Next real verification requires a new explicit budget authorization.

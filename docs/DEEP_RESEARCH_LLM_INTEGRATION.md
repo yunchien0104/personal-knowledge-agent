@@ -147,3 +147,39 @@ The disposable stack was stopped with `--no-backup`; its container and volume we
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
 3. R2C remains real-provider unverified. Web provider and frontend work were intentionally out of scope.
 4. A durable reconciliation procedure is still required for a crash after a provider response but before its output/cost metadata becomes durable; the coordinator now blocks the ambiguous `running` operation instead of replaying it.
+
+## R2B validation diagnostics and gate alignment (2026-11-04)
+
+The latest authorized R2B verification consumed one initial call and one bounded repair. Both returned `finish_reason=stop`; aggregate usage was 2,115 input, 1,369 output, 0 reasoning, and the durable Ledger settled $0.0181 while releasing $0.0578. Both attempts were rejected before an authoritative ResearchPlan was produced, so R2C was not reserved or called. The old process retained request IDs and usage but not the validation stage or rule. The raw outputs are unavailable; the exact historical rejection reasons remain **UNKNOWN** and are not inferred from later fixtures.
+
+Migration `20261104054237_deep_research_validation_diagnostics.sql` adds append-only `research_validation_diagnostics`. Each row is fenced to a running Operation, Job lease owner, and lease generation and stores only attempt/stage, request ID, finish reason, token counts, validation stage, error code, field path, rule ID, and a bounded printable-ASCII summary. It deliberately has no Prompt, Evidence, API key, or raw model-output field. Authenticated owners have RLS-scoped read access; cross-user reads and all authenticated writes are denied. Worker writes use `record_deep_research_validation_diagnostic(...)`; stale, terminal, and conflicting replay writes fail closed.
+
+Owner query:
+
+```sql
+select attempt_number, attempt_stage, provider_request_id, finish_reason,
+       input_tokens, output_tokens, reasoning_tokens, validation_stage,
+       error_code, field_path, rule_id, diagnostic_summary, created_at
+from public.research_validation_diagnostics
+where research_run_id = :run_id and operation_id = :operation_id
+order by attempt_number;
+```
+
+Tracked examples now covered offline and in pgTAP:
+
+- Initial DTO failure: `provider_dto / provider_dto_invalid`, exact Pydantic field path and rule, with authoritative request/usage metadata.
+- Repair quality rejection: `quality_gate / quality_gate_rejected`, for example `essentialClarifications / no_unresolved_essential_clarifications`.
+- Exhausted bounded repair: a separate attempt 3 `fallback / r2b_fallback_used / bounded_repair_exhausted` row. A successful repair instead records attempt 2 as `accepted` and creates no fallback row.
+
+Confirmed Prompt/DTO/Contract/gate mismatches and fixes:
+
+1. The DTO permits up to four queries per subquestion while the request has a dynamic total `maxQueries`; the Prompt did not explicitly state the aggregate limit. The Prompt now does, and backend rejection reports `retrievalProposals / effective_query_limit` without truncation.
+2. The authoritative contract requires the objective to remain exact while the Prompt only said to preserve it. The Prompt now says to copy it exactly; the backend rule remains authoritative.
+3. The DTO permits essential clarifications while the gate rejects any unresolved clarification. The Prompt now says to keep the list empty when planning is possible and to express evidence gaps as requirements. The safety gate remains unchanged.
+4. Duplicate subquestion keys could overwrite conversion mappings and unknown dependency keys were silently discarded. DTO validation now rejects both before conversion.
+5. The comparison gate used model-authored `normalizedResearchIntent`, which could falsely introduce comparison semantics. It now evaluates the already-authoritative plan objective.
+6. Repair previously received a generic exception string and second-gate failure lost its rule. Repair now receives one safe structured `stage/code/field/rule/summary` diagnostic and remains capped at one attempt.
+
+Verification used disposable project `pb-r2b-diag-20261104` on port 63322. Clean replay applied **34/34 migrations**. Complete pgTAP: **20 files / 540 assertions PASS**; diagnostics protocol **32/32 PASS**; focused existing durability, infrastructure repair, LLM budget, and two-session concurrency **78/78 PASS**. Public-schema lint reported zero errors. Worker offline suite: **215 passed and 9 subtests passed**; focused R2B/R2C/coordinator/contracts suite: **67/67 PASS**. No paid call or hosted database access occurred.
+
+The next real test must use a new explicit authorization and fresh atomic reservation. Acceptance requires initial or repair diagnostic `validationStage=accepted`, no fallback row, a persisted authoritative ResearchPlan, complete request/finish/usage metadata, and exact Ledger settlement/release. The historical raw output and its exact field/rule failures remain UNKNOWN.

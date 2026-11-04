@@ -82,6 +82,7 @@ class FakeGateway:
         self.lease_valid = True
         self.reservations: list[dict] = []
         self.settlements: list[dict] = []
+        self.validation_diagnostics: list[dict] = []
 
     def heartbeat(self, *_args) -> bool:
         self.heartbeats += 1
@@ -104,6 +105,15 @@ class FakeGateway:
             return False
         self.operations[operation_id] = "running"
         return True
+
+    def record_deep_research_validation_diagnostic(
+        self, _job, _worker, *, operation_id, diagnostic
+    ):
+        self.validation_diagnostics.append({
+            "operation_id": operation_id,
+            "diagnostic": deepcopy(diagnostic),
+        })
+        return {"operationId": operation_id, "attemptNumber": diagnostic["attemptNumber"]}
 
     def settle_deep_research_operation(self, _job, _worker, **kwargs):
         self.settlements.append(deepcopy(kwargs))
@@ -192,7 +202,8 @@ class CountingPlanner:
     def max_operation_cost(self, _request, _context):
         return Decimal("0.0400")
 
-    def plan(self, _request, _context):
+    def plan(self, _request, _context, *, diagnostic_sink=None):
+        del diagnostic_sink
         self.calls += 1
         raise AssertionError("terminal operation must not re-enter R2B")
 
@@ -568,8 +579,11 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
         def max_operation_cost(self, _request, _context):
             return Decimal("0.0400")
 
-        def plan(self, parsed_request, context):
+        def plan(self, parsed_request, context, *, diagnostic_sink=None):
             result = DeepResearchPlanner().plan(parsed_request, context)
+            if diagnostic_sink is not None:
+                for diagnostic in result.diagnostics:
+                    diagnostic_sink(diagnostic)
             return result.__class__(
                 plan=result.plan, quality=result.quality,
                 prompt_version=result.prompt_version,
@@ -608,6 +622,9 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
     paid_settlements = [row for row in gateway.settlements if row["actual_cost_usd"] != "0"]
     assert [row["actual_cost_usd"] for row in paid_settlements] == ["0.0200", "0.0300"]
     assert paid_settlements[0]["error_code"] == "r2b_fallback"
+    assert len(gateway.validation_diagnostics) == 1
+    assert gateway.validation_diagnostics[0]["diagnostic"]["attemptStage"] == "fallback"
+    assert "request" not in gateway.validation_diagnostics[0]["diagnostic"]
     planning_metadata = json.loads(paid_settlements[0]["result_ref"])
     evaluation_metadata = json.loads(paid_settlements[1]["result_ref"])
     assert planning_metadata == {
@@ -630,8 +647,11 @@ def test_deadline_crossed_during_r2b_settles_cost_but_discards_output() -> None:
         def max_operation_cost(self, _request, _context):
             return Decimal("0.0400")
 
-        def plan(self, parsed_request, context):
+        def plan(self, parsed_request, context, *, diagnostic_sink=None):
             result = DeepResearchPlanner().plan(parsed_request, context)
+            if diagnostic_sink is not None:
+                for diagnostic in result.diagnostics:
+                    diagnostic_sink(diagnostic)
             return result.__class__(
                 plan=result.plan, quality=result.quality,
                 prompt_version=result.prompt_version,

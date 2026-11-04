@@ -1,6 +1,9 @@
+import pytest
+
 from personal_brain.research.deep_contracts import ResearchRequestV1
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
+    ProposedResearchPlan,
     build_planning_context_pack,
     planning_prompt,
 )
@@ -81,6 +84,21 @@ def test_context_pack_filters_scope_deduplicates_and_marks_text_untrusted():
     prompt = planning_prompt(request(), pack)
     assert set(prompt) == {"systemInstructions", "researchContext", "outputSchema"}
     assert "untrusted" in prompt["systemInstructions"]
+    assert "total number of queries" in prompt["systemInstructions"]
+    assert "Copy researchContext.request.objective exactly" in prompt["systemInstructions"]
+    assert "essentialClarifications empty" in prompt["systemInstructions"]
+
+
+def test_provider_dto_rejects_duplicate_and_unknown_dependency_keys():
+    duplicate = valid_proposal()
+    duplicate["subquestions"].append({**duplicate["subquestions"][0]})
+    with pytest.raises(ValueError, match="keys must be unique"):
+        ProposedResearchPlan.model_validate(duplicate)
+
+    unknown = valid_proposal()
+    unknown["subquestions"][0]["dependsOnKeys"] = ["missing"]
+    with pytest.raises(ValueError, match="unknown key"):
+        ProposedResearchPlan.model_validate(unknown)
 
 
 def test_planner_repairs_once_and_backend_assigns_authoritative_ids():
