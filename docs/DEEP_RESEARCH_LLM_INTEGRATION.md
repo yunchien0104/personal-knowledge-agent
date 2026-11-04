@@ -8,11 +8,11 @@ Baseline: `00d3c15`
 
 ## Result
 
-Status: **PARTIAL — implementation, offline verification, and Local DB verification pass; REAL_PROVIDER is BLOCKED.**
+Status: **PARTIAL — implementation, offline verification, and Local DB verification pass; the first bounded REAL_PROVIDER verification exposed strict-schema defects and remains BLOCKED.**
 
 R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. No paid call, hosted Supabase access, deployment, push, or merge occurred.
 
-Real-provider verification was deliberately not attempted because `worker/.env` does not contain explicit `R2B_MODEL`, `R2C_MODEL`, `R2B_PRICING_VERIFIED=true`, `R2C_PRICING_VERIFIED=true`, or the four per-million-token price values. An API key and a general research model are present, but substituting or guessing either model or pricing would violate the fail-closed verification requirements. Provider cost: **$0.0000**.
+The initial missing model and pricing configuration was supplied on 2026-11-04. The bounded live verification below used `gpt-6.1-sol` with Standard service tier, low reasoning effort, and explicit $2/M input and $10/M output pricing. The configured API key was neither printed nor overwritten.
 
 ## Implementation
 
@@ -31,6 +31,8 @@ Required shared values: `R2B_R2C_API_BASE_URL`, `R2B_R2C_API_KEY`, `R2B_R2C_PROV
 
 Required per adapter: `R2B_MODEL` / `R2C_MODEL`, `R2B_MAX_OUTPUT_TOKENS` / `R2C_MAX_OUTPUT_TOKENS`, `R2B_TIMEOUT_SECONDS` / `R2C_TIMEOUT_SECONDS`, `{R2B|R2C}_PRICING_VERIFIED=true`, `{R2B|R2C}_INPUT_COST_PER_MILLION_USD`, and `{R2B|R2C}_OUTPUT_COST_PER_MILLION_USD`.
 
+Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls now use `default` (Standard), `low`, `explicit` prompt-cache mode with no breakpoints, and a 90-second timeout. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. The current bounded test setting is 950 maximum completion tokens per adapter.
+
 ## Verification
 
 ### MOCK — PASS
@@ -43,7 +45,7 @@ PYTHONPATH=worker/src:. worker/.venv/bin/pytest worker/tests -q \
   --ignore=worker/tests/research/test_research_pipeline_live.py
 ```
 
-Result: **178 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points; no paid/provider operation was permitted. Coverage includes metadata compatibility, strict schemas, bounded repair, missing-usage unknown outcomes, pricing, reserve-before-call order, actual settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation.
+Latest result: **183 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes, strict schemas, bounded repair, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation.
 
 ### LOCAL_DB — PASS
 
@@ -65,12 +67,17 @@ Results:
 - Dedicated R2B/R2C real PostgreSQL budget test: **14/14 PASS**, including separate reservations, starts, settlements, releases, ledger events, exact run/daily/monthly balances, and hard daily/monthly caps.
 - DB lint: **0 errors**; five pre-existing warnings across four functions.
 
-### REAL_PROVIDER — BLOCKED
+### REAL_PROVIDER — BLOCKED after one R2B and one R2C request
 
-No request was sent and no provider output exists. Required explicit B/C model and verified pricing configuration is absent. This prevented establishing safe worst-case reservations under the approved $0.10 initial B/C test cap. The configured key was never printed or used.
+At execution time, the deterministic fixtures produced reservations of $0.0420 for R2B and $0.0573 for R2C, including one possible bounded repair per operation. The combined $0.0993 stayed below the approved $0.10 cap under the supplied $2/M input and $10/M output rates. Subsequent official-document review found that GPT-6.1 Sol implicit 30-minute cache writes have a distinct $2.50/M rate. Because both live responses lost authoritative usage, their true cache-write component is unknown; the recorded $0.0993 must not be presented as actual spend. The adapter now disables implicit caching and rejects unexpected cache usage. After the strict-schema fixes and a 950-token output limit, the current worst-case reservations are R2B $0.0423 plus R2C $0.0563 = **$0.0986**.
+
+- R2B: OpenAI returned HTTP 400 before model output because `inferredAssumptions` used an untyped object map that was incompatible with strict Structured Outputs. No token usage was returned. The operation was conservatively settled as `outcome_unknown`, retaining the full $0.0420 reservation as uncertain. The schema now uses a typed `ProposedAssumption`; offline strict-schema validation passes. R2B was not retried.
+- R2C: OpenAI returned a schema-shaped response, but Pydantic rejected `expectedInformationGain=10` and `dependencyImpact=10` because the contract maximum is 5. The provider-compatible schema had removed unsupported JSON Schema numeric bounds. The test process did not persist the `DeepModelValidationError.call` metadata before exiting, so token usage and actual cost cannot be reconstructed safely. The operation was conservatively settled as `outcome_unknown`, retaining $0.0573 as uncertain. Numeric bounds are now preserved as schema descriptions while Pydantic remains authoritative. R2C was not retried.
+- Ledger before fixture cleanup: R2B `reserved 0.0420`, `uncertain 0.0420`; R2C `reserved 0.0573`, `uncertain 0.0573`; run/daily/monthly balances each `reserved 0`, `actual 0`, `uncertain 0.0993`.
+- The live fixture was then removed precisely. The isolated database regression returned to **19 files, 507/507 assertions PASS**. No complete Deep Research workflow ran.
 
 ## Remaining blockers
 
-1. Add explicit approved `R2B_MODEL` and `R2C_MODEL` values and independently verified price values/flags, then run exactly one non-sensitive bounded R2B call and one bounded R2C call with total reservations at or below $0.10. Verify response schema, authoritative usage, request IDs, actual ledger settlement, and no fallback.
+1. Do not retry under the same $0.10 test budget: its full $0.0993 is conservatively accounted as uncertain. A future explicitly approved test budget must catch and durably record validation-error call metadata before process exit, then verify the repaired strict schemas with fresh reservations.
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
 3. Provider/staging credentials and adapter behavior remain unverified; Web provider and frontend work were intentionally out of scope.

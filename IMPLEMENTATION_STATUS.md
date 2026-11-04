@@ -11,11 +11,13 @@
   actual usage afterward. Unknown provider outcomes retain the full reservation
   as uncertain. Additive database enforcement covers $0.50/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
-- PASS (MOCK): 178 Worker tests and 9 subtests.
+- PASS (MOCK): 183 Worker tests and 9 subtests.
 - PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 507 assertions,
   including 14 dedicated R2B/R2C ledger assertions; DB lint has zero errors.
-- BLOCKED (REAL_PROVIDER): explicit `R2B_MODEL`, `R2C_MODEL`, and independently
-  verified pricing flags/values are absent. No request was sent and cost was $0.
+- BLOCKED (REAL_PROVIDER): one bounded request each exposed an R2B untyped-map
+  schema rejection and an R2C numeric-bound validation failure. Both schemas were
+  repaired offline, but the full $0.0993 test cap remains conservatively uncertain,
+  so neither request was retried and authoritative usage/cost is unavailable.
 - Remaining full paid Deep E2E blocker: R2A/R2E/R2F ledger integration.
 - Canonical detail: `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`.
 
