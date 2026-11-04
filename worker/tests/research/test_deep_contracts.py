@@ -273,6 +273,35 @@ def test_missing_requirement_cannot_be_overridden_by_overall_sufficient():
         EvidenceAssessmentV1.model_validate(assessment_data(overallStatus="sufficient"))
 
 
+def test_overall_sufficient_requires_sufficiency_pass_and_no_critical_gap():
+    covered = assessment_data(
+        overallStatus="sufficient",
+        requirementCoverage=[{
+            "requirementId": "req_primary", "status": "satisfied",
+            "sufficiency": "concern", "independence": "pass",
+            "supportingEvidenceIds": [], "contradictingEvidenceIds": [],
+            "explanation": "Coverage exists but is not sufficient",
+        }],
+        subquestionStatus=[{
+            "subquestionId": "sq_first", "status": "satisfied",
+            "requirementIds": ["req_primary"],
+        }],
+    )
+    with pytest.raises(ValidationError, match="satisfied and sufficient"):
+        EvidenceAssessmentV1.model_validate(covered)
+
+    covered["requirementCoverage"][0]["sufficiency"] = "pass"
+    covered["prioritizedGaps"] = [{
+        "id": "gap_critical", "requirementId": "req_primary",
+        "severity": "critical", "expectedInformationGain": 5,
+        "resolvability": 5, "dependencyImpact": 5,
+        "proposedAction": "search_internal",
+        "explanation": "A critical question remains unresolved",
+    }]
+    with pytest.raises(ValidationError, match="critical research gap"):
+        EvidenceAssessmentV1.model_validate(covered)
+
+
 def test_iteration_transition_is_explicit_and_version_fenced():
     previous = ResearchIterationStateV1.model_validate(iteration_data())
     next_state = ResearchIterationStateV1.model_validate(iteration_data(

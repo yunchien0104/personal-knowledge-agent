@@ -58,7 +58,17 @@ class ResearchIterationController:
         assessment: EvidenceAssessmentV1,
         state: ResearchIterationStateV1,
     ) -> ControllerDecision:
-        if assessment.overallStatus == "sufficient" and not assessment.conflicts:
+        has_material_contradiction = any(
+            item.classification == "contradiction" for item in assessment.conflicts
+        )
+        has_critical_gap = any(
+            item.severity == "critical" for item in assessment.prioritizedGaps
+        )
+        if (
+            assessment.overallStatus == "sufficient"
+            and not has_material_contradiction
+            and not has_critical_gap
+        ):
             return _stop("quality_reached", "complete")
         if state.currentRound >= request.effectiveLimits.maxRounds:
             return _stop("max_rounds_reached", "qualified_partial")

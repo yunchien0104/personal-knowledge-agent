@@ -18,6 +18,7 @@ from personal_brain.research.deep_contracts import (
     ResearchPlanV1,
 )
 from personal_brain.research.deep_coordinator import DeepResearchCoordinator, _operation_id
+from personal_brain.research.deep_diagnostics import R2CValidationDiagnostic
 from personal_brain.research.deep_evaluation import EvidenceEvaluator, EvaluationResult
 from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
 from personal_brain.supabase_gateway import ClaimedJob, GatewayError
@@ -115,6 +116,15 @@ class FakeGateway:
         })
         return {"operationId": operation_id, "attemptNumber": diagnostic["attemptNumber"]}
 
+    def record_deep_research_evaluation_diagnostic(
+        self, _job, _worker, *, operation_id, diagnostic
+    ):
+        self.validation_diagnostics.append({
+            "operation_id": operation_id,
+            "diagnostic": deepcopy(diagnostic),
+        })
+        return {"operationId": operation_id, "attemptNumber": diagnostic["attemptNumber"]}
+
     def settle_deep_research_operation(self, _job, _worker, **kwargs):
         self.settlements.append(deepcopy(kwargs))
         self.operations[kwargs["operation_id"]] = kwargs["status"]
@@ -166,7 +176,7 @@ class FakeRetrieval:
 class ProgressiveEvaluator:
     calls: int = 0
 
-    def assess(self, plan, records, *, user_id):
+    def assess(self, plan, records, *, user_id, diagnostic_sink=None):
         del user_id
         self.calls += 1
         satisfied = len(records) >= 2
@@ -192,7 +202,11 @@ class ProgressiveEvaluator:
             "telemetry": {"modelProvider": "test", "modelName": "test", "promptVersion": "test-v1",
                           "inputTokens": 0, "outputTokens": 0, "latencyMs": 0, "costUsd": "0"},
         })
-        return EvaluationResult(assessment, repaired=False, fallback_used=False)
+        result = EvaluationResult(assessment, repaired=False, fallback_used=False)
+        if diagnostic_sink is not None:
+            for diagnostic in result.diagnostics:
+                diagnostic_sink(diagnostic)
+        return result
 
 
 @dataclass
@@ -599,8 +613,17 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
             del user_id
             return Decimal("0.0500")
 
-        def assess(self, plan, records, *, user_id):
+        def assess(self, plan, records, *, user_id, diagnostic_sink=None):
             result = super().assess(plan, records, user_id=user_id)
+            if diagnostic_sink is not None:
+                diagnostic_sink(R2CValidationDiagnostic(
+                    attemptNumber=1, attemptStage="initial",
+                    requestId="req-r2c", finishReason="stop",
+                    inputTokens=200, outputTokens=50, reasoningTokens=20,
+                    costUsd=Decimal("0.0300"), latencyMs=10,
+                    validationStage="accepted",
+                    diagnosticSummary="R2C fixture accepted",
+                ))
             return EvaluationResult(
                 result.assessment, repaired=False, fallback_used=False,
                 actual_cost_usd=Decimal("0.0300"),
@@ -622,8 +645,10 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
     paid_settlements = [row for row in gateway.settlements if row["actual_cost_usd"] != "0"]
     assert [row["actual_cost_usd"] for row in paid_settlements] == ["0.0200", "0.0300"]
     assert paid_settlements[0]["error_code"] == "r2b_fallback"
-    assert len(gateway.validation_diagnostics) == 1
+    assert len(gateway.validation_diagnostics) == 2
     assert gateway.validation_diagnostics[0]["diagnostic"]["attemptStage"] == "fallback"
+    assert gateway.validation_diagnostics[1]["diagnostic"]["schemaVersion"] == "r2c-validation-diagnostic-v1"
+    assert gateway.validation_diagnostics[1]["diagnostic"]["costUsd"] == "0.0300"
     assert "request" not in gateway.validation_diagnostics[0]["diagnostic"]
     planning_metadata = json.loads(paid_settlements[0]["result_ref"])
     evaluation_metadata = json.loads(paid_settlements[1]["result_ref"])

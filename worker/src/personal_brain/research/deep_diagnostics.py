@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Callable, Literal
 
 from pydantic import Field, field_validator
@@ -20,10 +21,9 @@ ValidationStage = Literal[
 ]
 
 
-class R2BValidationDiagnostic(DeepStrictModel):
-    schemaVersion: Literal["r2b-validation-diagnostic-v1"] = (
-        "r2b-validation-diagnostic-v1"
-    )
+class DeepValidationDiagnosticFields(DeepStrictModel):
+    """Privacy-bounded metadata shared by R2B and R2C attempts."""
+
     attemptNumber: int = Field(ge=1, le=3)
     attemptStage: AttemptStage
     requestId: str | None = Field(default=None, min_length=1, max_length=200)
@@ -31,6 +31,8 @@ class R2BValidationDiagnostic(DeepStrictModel):
     inputTokens: int = Field(default=0, ge=0)
     outputTokens: int = Field(default=0, ge=0)
     reasoningTokens: int = Field(default=0, ge=0)
+    costUsd: Decimal = Field(default=Decimal("0"), ge=0, max_digits=8, decimal_places=4)
+    latencyMs: int = Field(default=0, ge=0)
     validationStage: ValidationStage
     errorCode: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,64}$")
     fieldPath: str | None = Field(default=None, min_length=1, max_length=300)
@@ -59,4 +61,17 @@ class R2BValidationDiagnostic(DeepStrictModel):
         return " | ".join(parts)[:1000]
 
 
+class R2BValidationDiagnostic(DeepValidationDiagnosticFields):
+    schemaVersion: Literal["r2b-validation-diagnostic-v1"] = (
+        "r2b-validation-diagnostic-v1"
+    )
+
+
+class R2CValidationDiagnostic(DeepValidationDiagnosticFields):
+    schemaVersion: Literal["r2c-validation-diagnostic-v1"] = (
+        "r2c-validation-diagnostic-v1"
+    )
+
+
 R2BDiagnosticSink = Callable[[R2BValidationDiagnostic], None]
+R2CDiagnosticSink = Callable[[R2CValidationDiagnostic], None]

@@ -359,9 +359,16 @@ class EvidenceAssessmentV1(DeepStrictModel):
         if len(coverage_ids) != len(set(coverage_ids)):
             raise ValueError("Requirement Coverage must be unique")
         if self.overallStatus == "sufficient" and any(
-            item.status != "satisfied" for item in self.requirementCoverage
+            item.status != "satisfied" or item.sufficiency != "pass"
+            for item in self.requirementCoverage
         ):
-            raise ValueError("overall sufficient requires every assessed requirement to be satisfied")
+            raise ValueError(
+                "overall sufficient requires every assessed requirement to be satisfied and sufficient"
+            )
+        if self.overallStatus == "sufficient" and any(
+            item.severity == "critical" for item in self.prioritizedGaps
+        ):
+            raise ValueError("overall sufficient cannot retain a critical research gap")
         evidence_ids = [item.evidenceId for item in self.evidenceQuality]
         if len(evidence_ids) != len(set(evidence_ids)):
             raise ValueError("Evidence Quality entries must be unique")

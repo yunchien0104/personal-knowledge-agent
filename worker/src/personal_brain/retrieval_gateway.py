@@ -305,6 +305,26 @@ class RetrievalSupabaseGateway(SupabaseGateway):
         )
         return result if isinstance(result, dict) else None
 
+    def record_deep_research_evaluation_diagnostic(
+        self,
+        job: Any,
+        worker_id: str,
+        *,
+        operation_id: str,
+        diagnostic: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        result = self._rpc(
+            "record_deep_research_evaluation_diagnostic",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_operation_id": operation_id,
+                "p_diagnostic": diagnostic,
+            },
+        )
+        return result if isinstance(result, dict) else None
+
     def settle_deep_research_operation(
         self,
         job: Any,

@@ -183,3 +183,29 @@ Confirmed Prompt/DTO/Contract/gate mismatches and fixes:
 Verification used disposable project `pb-r2b-diag-20261104` on port 63322. Clean replay applied **34/34 migrations**. Complete pgTAP: **20 files / 540 assertions PASS**; diagnostics protocol **32/32 PASS**; focused existing durability, infrastructure repair, LLM budget, and two-session concurrency **78/78 PASS**. Public-schema lint reported zero errors. Worker offline suite: **215 passed and 9 subtests passed**; focused R2B/R2C/coordinator/contracts suite: **67/67 PASS**. No paid call or hosted database access occurred.
 
 The next real test must use a new explicit authorization and fresh atomic reservation. Acceptance requires initial or repair diagnostic `validationStage=accepted`, no fallback row, a persisted authoritative ResearchPlan, complete request/finish/usage metadata, and exact Ledger settlement/release. The historical raw output and its exact field/rule failures remain UNKNOWN.
+
+## R2C durable diagnostics and research-quality semantics (2026-11-04)
+
+Migration `20261104065453_extend_validation_diagnostics_to_r2c.sql` extends the existing append-only diagnostics table without replacing the R2B protocol. Each row now identifies `research_module` (`r2b` or `r2c`) and records bounded per-attempt latency and priced cost in addition to request ID, finish reason, token usage, validation stage, error code, field path, rule ID, and safe summary. Old `r2b-validation-diagnostic-v1` payloads remain valid; R2C uses `r2c-validation-diagnostic-v1` through the lease-fenced service-role RPC `record_deep_research_evaluation_diagnostic(...)`. Existing forced owner RLS, authenticated read-only access, cross-user denial, append-only trigger, replay conflict checks, and operation lease generation fencing remain in force.
+
+Owner query:
+
+```sql
+select research_module, attempt_number, attempt_stage, provider_request_id,
+       finish_reason, input_tokens, output_tokens, reasoning_tokens,
+       attempt_cost_usd, latency_ms, validation_stage, error_code,
+       field_path, rule_id, diagnostic_summary, created_at
+from public.research_validation_diagnostics
+where user_id = auth.uid() and research_run_id = :run_id
+order by operation_id, attempt_number;
+```
+
+R2C now durably distinguishes accepted output, Provider DTO rejection, backend-contract rejection, Provider terminal state, bounded-repair outcome, and fallback. Initial and repair attempts retain their own authoritative metadata. No Prompt, raw Evidence, API key, or raw model output is stored. The operation Ledger remains the authoritative source for reservation and settlement; the diagnostic cost is an immutable per-attempt observation and does not mutate balances.
+
+The Contract, Prompt, and R2D decision rule now share one definition: `overallStatus=sufficient` means the available evidence is adequate to answer the research question, not that a proposed claim is true. A well-supported negative answer may therefore be sufficient. `sufficient` additionally requires every evidence requirement to be `satisfied`, every sufficiency decision to be `pass`, and no critical gap. An unresolved material contradiction remains `conflicted`; differences caused by condition, scope, date, or definition are represented as such and do not by themselves force another research round. R2D reaches the quality target only when this sufficiency condition holds without a material contradiction or critical gap.
+
+Offline quality fixtures cover: sufficient supporting evidence, sufficient refuting evidence, insufficient evidence, material contradiction, condition-dependent outcomes, and non-independent sources. R2C-to-R2D contract tests verify that evidence sufficiency, claim support, contradictions, and critical gaps cannot be conflated.
+
+Verification used a newly created disposable Local Supabase/PostgreSQL stack on database port 65422. It replayed **35/35 migrations**, then ran six focused pgTAP files with **138/138 assertions PASS**, including the new R2C diagnostics protocol **28/28**, existing R2B compatibility, owner/cross-user RLS, stale-lease rejection, append-only enforcement, durability, infrastructure repair, Ledger accounting, and two-session concurrency. The stack was stopped after verification. Worker results: focused R2B/R2C/R2D **75/75 PASS**, complete Research offline **100/100 PASS**, and complete non-provider Worker regression **232 passed plus 9 subtests**. The three explicitly live-provider test modules were not executed because this task prohibited paid calls.
+
+No paid Provider call, hosted Supabase access, Legacy/R1/R2A/R2E/R2F change, push, merge, or deployment occurred. Remaining full-Deep blocker: paid R2A/R2E/R2F Ledger/checkpoint integration is still outside this change; real-provider R2C diagnostics have not been re-exercised after this additive persistence change.

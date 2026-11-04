@@ -43,7 +43,9 @@ def test_quality_hard_limits_and_diminishing_returns_stop_truthfully():
     request, plan, assessment, state = contracts()
     sufficient = assessment.model_copy(update={
         "overallStatus": "sufficient",
-        "requirementCoverage": [item.model_copy(update={"status": "satisfied"}) for item in assessment.requirementCoverage],
+        "requirementCoverage": [item.model_copy(update={
+            "status": "satisfied", "sufficiency": "pass"
+        }) for item in assessment.requirementCoverage],
     })
     assert ResearchIterationController().decide(request, plan, sufficient, state).stop_reason == "quality_reached"
     maxed = state.model_copy(update={"currentRound": request.effectiveLimits.maxRounds})

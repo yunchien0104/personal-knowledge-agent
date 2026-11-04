@@ -8,6 +8,7 @@ from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import Field
+from pydantic import ValidationError
 
 from personal_brain.research.deep_contracts import (
     AssessmentOverallStatusV1,
@@ -24,6 +25,10 @@ from personal_brain.research.deep_contracts import (
     DeepStrictModel,
 )
 from personal_brain.llm_client import LLMUsage
+from personal_brain.research.deep_diagnostics import (
+    R2CDiagnosticSink,
+    R2CValidationDiagnostic,
+)
 
 
 R2C_PROMPT_VERSION = "r2c-evidence-v1"
@@ -77,6 +82,41 @@ class EvaluationResult:
     latency_ms: int = 0
     request_ids: tuple[str, ...] = ()
     finish_reasons: tuple[str, ...] = ()
+    diagnostics: tuple[R2CValidationDiagnostic, ...] = ()
+
+
+def _r2c_backend_diagnostic(
+    error: Exception,
+    *,
+    attempt_number: int,
+    attempt_stage: str,
+    response: Any,
+) -> R2CValidationDiagnostic:
+    field_path = None
+    rule_id = "r2c_backend_contract"
+    if isinstance(error, ValidationError):
+        issue = error.errors(include_url=False, include_input=False)[0]
+        field_path = ".".join(str(value) for value in issue.get("loc", ())) or None
+        rule_id = str(issue.get("type") or rule_id)[:128]
+    summary = " ".join(
+        str(error).encode("ascii", errors="replace").decode("ascii").split()
+    )[:500]
+    return R2CValidationDiagnostic(
+        attemptNumber=attempt_number,
+        attemptStage=attempt_stage,
+        requestId=getattr(response, "request_id", None),
+        finishReason=getattr(response, "finish_reason", None),
+        inputTokens=getattr(getattr(response, "usage", None), "input_tokens", 0),
+        outputTokens=getattr(getattr(response, "usage", None), "output_tokens", 0),
+        reasoningTokens=getattr(getattr(response, "usage", None), "reasoning_tokens", 0),
+        costUsd=getattr(response, "cost_usd", Decimal("0")),
+        latencyMs=getattr(response, "latency_ms", 0),
+        validationStage="backend_contract",
+        errorCode="backend_contract_invalid",
+        fieldPath=field_path,
+        ruleId=rule_id,
+        diagnosticSummary=summary or "R2C backend contract validation failed",
+    )
 
 
 def _lineage_key(record: EvidenceRecordV1) -> str:
@@ -126,6 +166,12 @@ def evaluation_prompt(
             "are not automatically contradictions; derivative sources are not independent. Evaluate "
             "relevance, reliability, freshness, sufficiency, contradiction, and independence. Never "
             "introduce uncited factual conclusions. Propose gaps and actions; do not execute them. "
+            "overallStatus=sufficient means the supplied evidence is sufficient to answer the "
+            "research question; it does not mean a proposition was proven or supported. Evidence "
+            "may sufficiently support a negative answer. Use conflicted for unresolved material "
+            "contradictions, and do not treat scope, date, definition, or condition differences as "
+            "contradictions. Sufficient requires every requirement to be satisfied with sufficiency=pass "
+            "and no critical gap. "
             "Every expectedInformationGain, resolvability, and dependencyImpact score must be an "
             "integer from 1 through 5 inclusive."
         ),
@@ -252,6 +298,7 @@ class EvidenceEvaluator:
         *,
         user_id: UUID,
         usage: EvaluationUsage = EvaluationUsage(),
+        diagnostic_sink: R2CDiagnosticSink | None = None,
     ) -> EvaluationResult:
         selected, lineage = deterministic_precheck(records, user_id=user_id, run_id=plan.runId)
         provider = self.model.provider if self.model else "local"
@@ -262,9 +309,19 @@ class EvidenceEvaluator:
         request_ids: tuple[str, ...] = ()
         finish_reasons: tuple[str, ...] = ()
         repaired = False
+        diagnostics: list[R2CValidationDiagnostic] = []
+
+        def emit(diagnostic: R2CValidationDiagnostic) -> None:
+            diagnostics.append(diagnostic)
+            if diagnostic_sink is not None:
+                diagnostic_sink(diagnostic)
+
         if self.model:
             error_text = None
             for attempt in range(2):
+                attempt_number = attempt + 1
+                attempt_stage = "initial" if attempt == 0 else "repair"
+                response = None
                 try:
                     response = self.model.evaluate(evaluation_prompt(plan, selected)) if attempt == 0 else self.model.repair(
                         evaluation_prompt(plan, selected, repair_error=error_text)
@@ -303,8 +360,26 @@ class EvidenceEvaluator:
                         "telemetry": telemetry.model_dump(mode="json"),
                     })
                     assessment = EvidenceAssessmentV1.model_validate(authoritative)
+                    assessment = _validate_references(
+                        assessment, plan, selected, lineage
+                    )
+                    emit(R2CValidationDiagnostic(
+                        attemptNumber=attempt_number,
+                        attemptStage=attempt_stage,
+                        requestId=getattr(response, "request_id", None),
+                        finishReason=getattr(response, "finish_reason", None),
+                        inputTokens=getattr(getattr(response, "usage", None), "input_tokens", 0),
+                        outputTokens=getattr(getattr(response, "usage", None), "output_tokens", 0),
+                        reasoningTokens=getattr(getattr(response, "usage", None), "reasoning_tokens", 0),
+                        costUsd=getattr(response, "cost_usd", Decimal("0")),
+                        latencyMs=getattr(response, "latency_ms", 0),
+                        validationStage="accepted",
+                        diagnosticSummary=(
+                            "R2C attempt passed Provider DTO and EvidenceAssessment contract"
+                        ),
+                    ))
                     return EvaluationResult(
-                        _validate_references(assessment, plan, selected, lineage),
+                        assessment,
                         repaired=attempt == 1,
                         fallback_used=False,
                         usage=aggregate_usage,
@@ -312,6 +387,7 @@ class EvidenceEvaluator:
                         latency_ms=aggregate_latency,
                         request_ids=request_ids,
                         finish_reasons=finish_reasons,
+                        diagnostics=tuple(diagnostics),
                     )
                 except Exception as error:
                     from personal_brain.research.deep_llm import (
@@ -321,6 +397,23 @@ class EvidenceEvaluator:
                         repair_policy,
                     )
                     if isinstance(error, DeepProviderError):
+                        emit(R2CValidationDiagnostic(
+                            attemptNumber=attempt_number,
+                            attemptStage=attempt_stage,
+                            requestId=error.request_ids[-1] if error.request_ids else None,
+                            finishReason=error.finish_reasons[-1] if error.finish_reasons else None,
+                            inputTokens=error.usage.input_tokens,
+                            outputTokens=error.usage.output_tokens,
+                            reasoningTokens=error.usage.reasoning_tokens,
+                            costUsd=error.known_cost_usd,
+                            latencyMs=error.latency_ms,
+                            validationStage="provider_terminal",
+                            errorCode=error.error_kind[:64],
+                            ruleId="provider_terminal_state",
+                            diagnosticSummary=(
+                                f"Provider attempt ended with {error.error_kind}"
+                            )[:500],
+                        ))
                         raise error.with_previous(
                             usage=aggregate_usage,
                             cost_usd=aggregate_cost,
@@ -339,11 +432,33 @@ class EvidenceEvaluator:
                         if error.call.finish_reason:
                             finish_reasons = (*finish_reasons, error.call.finish_reason)
                         error_text = bounded_repair_diagnostic(error)
+                        emit(R2CValidationDiagnostic(
+                            attemptNumber=attempt_number,
+                            attemptStage=attempt_stage,
+                            requestId=error.call.request_id,
+                            finishReason=error.call.finish_reason,
+                            inputTokens=error.call.usage.input_tokens,
+                            outputTokens=error.call.usage.output_tokens,
+                            reasoningTokens=error.call.usage.reasoning_tokens,
+                            costUsd=error.call.cost_usd,
+                            latencyMs=error.call.latency_ms,
+                            validationStage="provider_dto",
+                            errorCode="provider_dto_invalid",
+                            fieldPath=error.field_path,
+                            ruleId=error.rule_id,
+                            diagnosticSummary=str(error)[:500],
+                        ))
                         repaired = True
                         continue
                     if repair_policy(error) != "repair_once":
                         raise
                     error_text = bounded_repair_diagnostic(error)
+                    emit(_r2c_backend_diagnostic(
+                        error,
+                        attempt_number=attempt_number,
+                        attempt_stage=attempt_stage,
+                        response=response,
+                    ))
                     repaired = True
         aggregate_evaluation_usage = EvaluationUsage(
             aggregate_usage.input_tokens,
@@ -351,6 +466,16 @@ class EvidenceEvaluator:
             aggregate_latency,
             aggregate_cost,
         )
+        emit(R2CValidationDiagnostic(
+            attemptNumber=3,
+            attemptStage="fallback",
+            validationStage="fallback",
+            errorCode="r2c_fallback_used",
+            ruleId="bounded_repair_exhausted",
+            diagnosticSummary=(
+                "Conservative R2C fallback used after provider evaluation was unavailable or rejected"
+            ),
+        ))
         return EvaluationResult(
             _fallback_assessment(
                 plan, provider, model_name, aggregate_evaluation_usage, request_ids
@@ -362,6 +487,7 @@ class EvidenceEvaluator:
             latency_ms=aggregate_latency,
             request_ids=request_ids,
             finish_reasons=finish_reasons,
+            diagnostics=tuple(diagnostics),
         )
 
     def max_operation_cost(

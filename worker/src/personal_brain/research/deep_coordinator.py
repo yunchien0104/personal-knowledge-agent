@@ -677,8 +677,23 @@ class DeepResearchCoordinator:
                         )
                     if evaluation_status == ADMITTED_OPERATION_STATUS:
                         try:
+                            def persist_r2c_diagnostic(diagnostic: Any) -> None:
+                                recorded = self.gateway.record_deep_research_evaluation_diagnostic(
+                                    job,
+                                    worker_id,
+                                    operation_id=str(evaluation_id),
+                                    diagnostic=diagnostic.model_dump(mode="json"),
+                                )
+                                if recorded is None:
+                                    raise LeaseLostError(
+                                        "Worker lease expired before R2C validation diagnostic persistence"
+                                    )
+
                             evaluated = self.evaluator.assess(
-                                plan, records, user_id=request.userId
+                                plan,
+                                records,
+                                user_id=request.userId,
+                                diagnostic_sink=persist_r2c_diagnostic,
                             )
                         except Exception as error:
                             from personal_brain.research.deep_llm import DeepProviderError

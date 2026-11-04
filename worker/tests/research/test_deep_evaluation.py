@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -10,6 +11,8 @@ from personal_brain.research.deep_evaluation import (
     evaluation_prompt,
 )
 from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
+from personal_brain.research.deep_llm import DeepModelCall
+from personal_brain.llm_client import LLMUsage
 
 
 USER_ID = "30000000-0000-4000-8000-000000000001"
@@ -158,3 +161,78 @@ def test_r2c_evidence_limit_blocks_instead_of_silently_truncating():
         deterministic_precheck(
             records, user_id=UUID(USER_ID), run_id=UUID(RUN_ID)
         )
+
+
+def test_r2c_accepted_attempt_emits_safe_usage_cost_diagnostic():
+    research_plan = plan()
+    record = evidence("30000000-0000-4000-8000-000000000020")
+
+    class MetadataModel(FixtureModel):
+        def evaluate(self, prompt):
+            self.prompt = prompt
+            return DeepModelCall(
+                output=self.output, usage=LLMUsage(120, 60, 180, reasoning_tokens=10),
+                cost_usd=Decimal("0.0012"), latency_ms=25,
+                request_id="req-r2c-accepted", provider="fixture",
+                model_name="fixture-v1", finish_reason="stop",
+            )
+
+    diagnostics = []
+    result = EvidenceEvaluator(MetadataModel(
+        assessment_output(research_plan, [str(record.evidenceId)])
+    )).assess(
+        research_plan, [record], user_id=UUID(USER_ID),
+        diagnostic_sink=diagnostics.append,
+    )
+
+    assert result.fallback_used is False
+    assert [(item.attemptStage, item.validationStage) for item in diagnostics] == [
+        ("initial", "accepted")
+    ]
+    assert diagnostics[0].costUsd == Decimal("0.0012")
+    assert diagnostics[0].reasoningTokens == 10
+    assert diagnostics[0].requestId == "req-r2c-accepted"
+
+
+def test_r2c_backend_failure_repair_and_fallback_have_distinct_diagnostics():
+    research_plan = plan()
+    record = evidence("30000000-0000-4000-8000-000000000020")
+    invalid = assessment_output(
+        research_plan, ["30000000-0000-4000-8000-000000000099"]
+    )
+    valid = assessment_output(research_plan, [str(record.evidenceId)])
+
+    class RepairingModel(FixtureModel):
+        def evaluate(self, _prompt):
+            return invalid
+
+        def repair(self, prompt):
+            self.repair_prompt = prompt
+            return valid
+
+    diagnostics = []
+    model = RepairingModel(invalid)
+    repaired = EvidenceEvaluator(model).assess(
+        research_plan, [record], user_id=UUID(USER_ID),
+        diagnostic_sink=diagnostics.append,
+    )
+    assert repaired.fallback_used is False
+    assert repaired.repaired is True
+    assert [(item.attemptStage, item.validationStage) for item in diagnostics] == [
+        ("initial", "backend_contract"), ("repair", "accepted")
+    ]
+    assert diagnostics[0].errorCode == "backend_contract_invalid"
+    assert model.repair_prompt["repairError"]
+
+    fallback_diagnostics = []
+    failed = EvidenceEvaluator(FixtureModel(invalid)).assess(
+        research_plan, [record], user_id=UUID(USER_ID),
+        diagnostic_sink=fallback_diagnostics.append,
+    )
+    assert failed.fallback_used is True
+    assert [(item.attemptStage, item.validationStage) for item in fallback_diagnostics] == [
+        ("initial", "backend_contract"),
+        ("repair", "backend_contract"),
+        ("fallback", "fallback"),
+    ]
+    assert fallback_diagnostics[-1].errorCode == "r2c_fallback_used"

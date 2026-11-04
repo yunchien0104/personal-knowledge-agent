@@ -996,3 +996,21 @@
 - No paid Provider call, Hosted Supabase access, push, merge, or deploy. Historical
   rejected raw outputs were not durable, so their exact validation rules remain
   UNKNOWN. Next real verification requires a new explicit budget authorization.
+
+### Deep Research R2C diagnostics and quality semantics (local, 2026-11-04)
+
+- Extended the existing append-only validation diagnostics protocol to R2C while
+  preserving R2B payload compatibility, owner-scoped forced RLS, service-role-only
+  writes, lease-generation fencing, attempt replay checks, and Ledger behavior.
+- R2C initial, repair, Provider terminal, DTO/contract rejection, accepted, and
+  fallback outcomes now persist safe per-attempt metadata, usage, cost, and latency;
+  Prompt, raw Evidence, secrets, and raw model output are not stored.
+- Aligned Contract, Prompt, and R2D: `sufficient` means evidence can answer the
+  question, including a supported negative answer, rather than proving a claim.
+  It requires satisfied requirements, passing sufficiency checks, and no critical
+  gap; only unresolved material contradictions block the quality target.
+- PASS: six offline research-quality cases; focused R2B/R2C/R2D 75/75; Research
+  offline 100/100; full non-provider Worker 232 tests plus 9 subtests; clean 35-
+  migration Local replay; focused pgTAP 138/138, including R2C diagnostics 28/28.
+- No paid call or hosted/production access occurred. Paid R2A/R2E/R2F Ledger and
+  checkpoint integration remains a blocker for unrestricted full Deep E2E.
