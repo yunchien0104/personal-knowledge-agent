@@ -10,12 +10,22 @@ export async function GET(request: Request) {
   const pagination = parsePagination(request.url);
   if ("error" in pagination) return pagination.error;
 
-  const { data, error, count } = await auth.supabase
+  const scope = new URL(request.url).searchParams.get("scope");
+  if (scope !== null && scope !== "knowledge") {
+    return jsonError(400, "INVALID_SCOPE", "Notes scope is invalid.");
+  }
+
+  let query = auth.supabase
     .from("notes")
     .select(NOTE_COLUMNS, { count: "exact" })
     .order("updated_at", { ascending: false })
-    .order("id", { ascending: false })
-    .range(pagination.offset, pagination.offset + pagination.limit - 1);
+    .order("id", { ascending: false });
+  if (scope === "knowledge") query = query.eq("note_type", "source_note");
+
+  const { data, error, count } = await query.range(
+    pagination.offset,
+    pagination.offset + pagination.limit - 1,
+  );
 
   if (error) return jsonError(500, "DATABASE_ERROR", "Notes could not be loaded.");
   return jsonSuccess(data, 200, { ...pagination, total: count ?? 0 });

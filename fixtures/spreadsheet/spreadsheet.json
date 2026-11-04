@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "title": "Synthetic quarterly model",
+  "columns": ["Item", "Q1", "Q2", "Q3", "Total"],
+  "rows": [
+    ["Alpha", 12, 14, 16, { "formula": "=SUM(B2:D2)" }],
+    ["Beta", 8, 11, 13, { "formula": "=SUM(B3:D3)" }],
+    ["Grand Total", { "formula": "=SUM(B2:B3)" }, { "formula": "=SUM(C2:C3)" }, { "formula": "=SUM(D2:D3)" }, { "formula": "=SUM(E2:E3)" }]
+  ]
+}

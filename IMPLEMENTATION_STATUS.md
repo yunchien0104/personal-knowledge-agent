@@ -1,5 +1,14 @@
 # Personal Brain Implementation Status
 
+## Notes Editor + AI Cursor integration (2026-11-05)
+
+- Integrated the isolated Notes workspace onto the committed Deep Research branch without replacing Research, Auth, shared API, Supabase, or Worker implementations.
+- Added the Tiptap editor, spreadsheet workbooks/formulas, PDF export, autosave/OCC, inline AI cursor/popover, and explicit OpenAI/Gemini provider adapters.
+- Added the Personal Notes baseline and two additive reference-separation migrations for review only; no hosted or production migration was executed.
+- PASS: TypeScript, ESLint, production build, 70 Notes tests, 34 existing Web unit regressions, 18 local Auth/API/PDF integration tests, and 255 offline Worker tests plus 9 subtests (1 skipped).
+- BLOCKED: Playwright reaches the production test server but macOS sandbox policy denies Chromium Mach Port registration before assertions. Real AI providers and hosted Supabase were not called.
+- Next: review the three additive Notes migrations, then replay them and pgTAP in a disposable database before any staging or production migration decision.
+
 ## Deep Research per-run budget cap (2026-11-05)
 
 - Raised only the Deep Research per-run hard cap from US$0.50 to US$1.00.

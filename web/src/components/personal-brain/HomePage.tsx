@@ -19,7 +19,7 @@ export function HomePage() {
     let active = true;
     void Promise.all([
       getApi<Asset[]>("/api/assets?limit=12"),
-      getApi<Note[]>("/api/notes?limit=12"),
+      getApi<Note[]>("/api/notes?limit=12&scope=knowledge"),
       getApi<Opportunity[]>("/api/research/opportunities?limit=4"),
       getApi<Topic[]>("/api/topics"),
     ]).then(([assets, notes, suggestions, topicList]) => {

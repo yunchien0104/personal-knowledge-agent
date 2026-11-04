@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "sourceKind": "threads",
+  "canonicalUrl": "https://www.threads.net/@synthetic/post/fixture001",
+  "externalId": "fixture001",
+  "author": "synthetic_account",
+  "text": "Synthetic Threads post used only for Notes import tests.",
+  "segments": [{ "index": 0, "text": "Synthetic Threads post used only for Notes import tests." }]
+}

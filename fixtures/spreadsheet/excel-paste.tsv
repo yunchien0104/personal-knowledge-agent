@@ -1,0 +1,4 @@
+Item	Q1	Q2	Q3	Total
+Alpha	12	14	16	=SUM(B2:D2)
+Beta	8	11	13	=SUM(B3:D3)
+Grand Total	=SUM(B2:B3)	=SUM(C2:C3)	=SUM(D2:D3)	=SUM(E2:E3)

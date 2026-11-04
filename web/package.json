@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
@@ -17,13 +18,30 @@
     "test:retrieval": "node --experimental-strip-types --test tests/retrieval.test.ts",
     "test:research": "node --experimental-strip-types --test tests/research.test.ts",
     "test:threads": "node --experimental-strip-types --test tests/threads-ingestion.test.ts",
-    "test:instagram": "node --experimental-strip-types --test tests/instagram-ingestion.test.ts tests/instagram-reel-ingestion.test.ts"
+    "test:instagram": "node --experimental-strip-types --test tests/instagram-ingestion.test.ts tests/instagram-reel-ingestion.test.ts",
+    "test:notes": "node --experimental-strip-types --test tests/personal-notes-contract.test.ts tests/personal-notes-editor.test.ts tests/reference-sources.test.ts tests/note-pdf.test.ts tests/ai-assistant-ui.test.ts && node --import tsx --test tests/spreadsheet-node.test.ts tests/spreadsheet-workbook.test.ts tests/note-pdf-render.test.mts tests/ai-editor-transaction.test.ts tests/notes-ai-provider.test.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@react-pdf/renderer": "4.9.0",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.118.0",
-    "lucide-react": "^1.61.0",
+    "@tiptap/core": "^3.32.2",
+    "@tiptap/extension-highlight": "3.32.2",
+    "@tiptap/extension-placeholder": "^3.32.2",
+    "@tiptap/extension-table": "^3.32.2",
+    "@tiptap/extension-table-cell": "^3.32.2",
+    "@tiptap/extension-table-header": "^3.32.2",
+    "@tiptap/extension-table-row": "^3.32.2",
+    "@tiptap/extension-task-item": "^3.32.2",
+    "@tiptap/extension-task-list": "^3.32.2",
+    "@tiptap/extension-text-style": "3.32.2",
+    "@tiptap/extension-underline": "3.32.2",
+    "@tiptap/react": "^3.32.2",
+    "@tiptap/starter-kit": "^3.32.2",
+    "lucide-react": "^1.67.0",
     "next": "16.4.2",
+    "openai": "7.50.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "4.6.7"
@@ -34,9 +52,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@playwright/test": "1.64.1",
     "eslint": "^9",
     "eslint-config-next": "16.4.2",
     "tailwindcss": "^4",
+    "tsx": "4.23.15",
     "typescript": "^5"
   }
 }
