@@ -9,9 +9,17 @@ export type Asset = {
   updated_at: string;
   ingestion_job: {
     id: string;
+    job_type: string;
     status: string;
+    progress_percent: number;
+    progress_stage: string;
     last_error_code: string | null;
     last_error_message: string | null;
+  } | null;
+  workflow_progress: {
+    percent: number;
+    stage: string;
+    state: "active" | "completed" | "failed";
   } | null;
 };
 
@@ -49,6 +57,7 @@ export type KnowledgeNote = {
   manual_topic_override: boolean;
   source_asset_id: string | null;
   source_status: string | null;
+  source_type: Asset["source_type"] | null;
 };
 
 export type Opportunity = {
@@ -151,7 +160,14 @@ export type ResearchRun = {
   createdAt: string;
   updatedAt: string;
   errorCode: string | null;
-  note: { id: string; title: string; body: string; publicationState: string } | null;
+  jobProgress: { percent: number; stage: string } | null;
+  note: {
+    id: string;
+    title: string;
+    body: string;
+    publicationState: string;
+    topics: TopicChip[];
+  } | null;
   citations: ResearchCitation[];
   deepResult: {
     status: "verified_complete" | "verified_partial" | "insufficient";

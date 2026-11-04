@@ -23,7 +23,7 @@ from personal_brain.supabase_gateway import GatewayError
 MAX_VIDEO_BYTES = 150 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
 MAX_KEYFRAMES = 8
-PROCESSOR_VERSION = "instagram-reel-cloud-v2"
+PROCESSOR_VERSION = "instagram-reel-cloud-v3"
 
 
 class _RejectRedirects(HTTPRedirectHandler):
@@ -57,7 +57,16 @@ class Keyframe:
 class ReelAcquisitionProvider:
     """Strict boundary for a licensed cloud provider that resolves public Reels."""
 
-    def __init__(self, endpoint: str, api_key: str, allowed_media_hosts: set[str], *, timeout_seconds: int = 45) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        allowed_media_hosts: set[str],
+        *,
+        authenticated_media_hosts: set[str] | None = None,
+        allowed_media_host_suffixes: set[str] | None = None,
+        timeout_seconds: int = 45,
+    ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("REEL_ACQUISITION_API_URL must be a trusted HTTPS URL")
@@ -68,8 +77,43 @@ class ReelAcquisitionProvider:
         self.endpoint = endpoint
         self.api_key = api_key
         self.allowed_media_hosts = {host.lower() for host in allowed_media_hosts}
+        self.allowed_media_host_suffixes = {
+            suffix.lower() for suffix in (allowed_media_host_suffixes or set())
+        }
+        if any(
+            not suffix.startswith(".")
+            or ".." in suffix
+            or not re.fullmatch(r"\.[a-z0-9.-]+", suffix)
+            for suffix in self.allowed_media_host_suffixes
+        ):
+            raise ValueError("Media host suffix allowlist is invalid")
+        self.authenticated_media_hosts = {
+            host.lower() for host in (authenticated_media_hosts or set())
+        }
+        if not self.authenticated_media_hosts <= self.allowed_media_hosts:
+            raise ValueError("Authenticated media hosts must be explicitly allowed")
         self.timeout_seconds = timeout_seconds
         self._opener = build_opener(_RejectRedirects())
+
+    def _is_allowed_media_url(self, value: str) -> bool:
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        host = parsed.hostname.lower() if parsed.hostname else ""
+        return (
+            parsed.scheme == "https"
+            and bool(host)
+            and parsed.username is None
+            and parsed.password is None
+            and port in {None, 443}
+            and not parsed.fragment
+            and (
+                host in self.allowed_media_hosts
+                or any(host.endswith(suffix) for suffix in self.allowed_media_host_suffixes)
+            )
+        )
 
     @classmethod
     def from_environment(cls) -> ReelAcquisitionProvider:
@@ -97,8 +141,7 @@ class ReelAcquisitionProvider:
         if not isinstance(payload, Mapping):
             raise GatewayError("invalid_reel_provider_response", "Reel provider returned invalid data", retryable=False)
         video_url = payload.get("video_url")
-        parsed_video = urlparse(video_url if isinstance(video_url, str) else "")
-        if parsed_video.scheme != "https" or parsed_video.hostname is None or parsed_video.hostname.lower() not in self.allowed_media_hosts:
+        if not isinstance(video_url, str) or not self._is_allowed_media_url(video_url):
             raise GatewayError("untrusted_reel_media_url", "Reel provider returned an untrusted media URL", retryable=False)
         caption = payload.get("caption")
         if caption is not None and (not isinstance(caption, str) or len(caption) > 200_000):
@@ -110,9 +153,12 @@ class ReelAcquisitionProvider:
 
     def download_video(self, url: str, target: Path) -> None:
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.hostname is None or parsed.hostname.lower() not in self.allowed_media_hosts:
+        if not self._is_allowed_media_url(url):
             raise GatewayError("untrusted_reel_media_url", "Reel media URL is not trusted", retryable=False)
-        request = Request(url, headers={"accept": "video/mp4,video/webm"}, method="GET")
+        headers = {"accept": "video/mp4,video/webm"}
+        if parsed.hostname.lower() in self.authenticated_media_hosts:
+            headers["authorization"] = f"Bearer {self.api_key}"
+        request = Request(url, headers=headers, method="GET")
         try:
             with self._opener.open(request, timeout=90) as response, target.open("wb") as output:
                 content_type = response.headers.get_content_type()
@@ -128,6 +174,224 @@ class ReelAcquisitionProvider:
             raise GatewayError("reel_media_http_error", f"Reel media download failed with status {error.code}", retryable=error.code == 429 or error.code >= 500) from error
         except (TimeoutError, URLError) as error:
             raise GatewayError("reel_media_unavailable", "Reel media is temporarily unavailable", retryable=True) from error
+
+    def fetch_fallback(self, canonical_url: str) -> AcquiredReel | None:
+        return None
+
+
+class ApifyReelAcquisitionProvider(ReelAcquisitionProvider):
+    """Adapter for Apify's official Instagram Reel Scraper output."""
+
+    DEFAULT_ACTOR_ID = "apify~instagram-reel-scraper"
+    _ACTOR_ID = re.compile(r"^[A-Za-z0-9_-]+(?:~[A-Za-z0-9_-]+)?$")
+
+    def __init__(self, api_key: str, *, actor_id: str = DEFAULT_ACTOR_ID, timeout_seconds: int = 300) -> None:
+        if not self._ACTOR_ID.fullmatch(actor_id):
+            raise ValueError("APIFY_REEL_ACTOR_ID is invalid")
+        endpoint = (
+            f"https://api.apify.com/v2/acts/{actor_id}/"
+            "run-sync-get-dataset-items"
+        )
+        super().__init__(
+            endpoint,
+            api_key,
+            {"api.apify.com"},
+            authenticated_media_hosts={"api.apify.com"},
+            allowed_media_host_suffixes={".fbcdn.net", ".cdninstagram.com"},
+            timeout_seconds=timeout_seconds,
+        )
+
+    @classmethod
+    def from_environment(cls) -> ApifyReelAcquisitionProvider:
+        return cls(
+            os.environ.get("APIFY_API_TOKEN", ""),
+            actor_id=os.environ.get("APIFY_REEL_ACTOR_ID", cls.DEFAULT_ACTOR_ID),
+        )
+
+    def fetch(self, canonical_url: str) -> AcquiredReel:
+        return self._fetch(canonical_url, include_downloaded_video=False)
+
+    def fetch_fallback(self, canonical_url: str) -> AcquiredReel:
+        return self._fetch(canonical_url, include_downloaded_video=True)
+
+    def _fetch(self, canonical_url: str, *, include_downloaded_video: bool) -> AcquiredReel:
+        request = Request(
+            self.endpoint,
+            data=json.dumps(
+                {
+                    "username": [canonical_url],
+                    "resultsLimit": 1,
+                    "includeDownloadedVideo": include_downloaded_video,
+                    "includeTranscript": False,
+                    "includeSharesCount": False,
+                },
+                separators=(",", ":"),
+            ).encode(),
+            headers={
+                "authorization": f"Bearer {self.api_key}",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                payload = json.loads(response.read())
+        except HTTPError as error:
+            detail = ""
+            try:
+                payload = json.loads(error.read(2048))
+                error_type = payload.get("error", {}).get("type")
+                if isinstance(error_type, str) and re.fullmatch(r"[a-z0-9-]{1,80}", error_type):
+                    detail = f" ({error_type})"
+            except (json.JSONDecodeError, OSError, TypeError, AttributeError):
+                pass
+            raise GatewayError(
+                "reel_provider_http_error",
+                f"Reel provider failed with status {error.code}{detail}",
+                retryable=error.code == 429 or error.code >= 500,
+            ) from error
+        except (TimeoutError, URLError, json.JSONDecodeError) as error:
+            raise GatewayError(
+                "reel_provider_unavailable",
+                "Reel provider is temporarily unavailable",
+                retryable=True,
+            ) from error
+        return self._map_output(
+            canonical_url,
+            payload,
+            use_stored_video=include_downloaded_video,
+        )
+
+    @classmethod
+    def _map_output(
+        cls,
+        canonical_url: str,
+        payload: Any,
+        *,
+        use_stored_video: bool = False,
+    ) -> AcquiredReel:
+        if not isinstance(payload, list) or not payload:
+            raise GatewayError(
+                "reel_not_found",
+                "Apify returned no Reel for the submitted URL",
+                retryable=False,
+            )
+        expected_shortcode = _reel_shortcode(canonical_url)
+        matches = [
+            item
+            for item in payload
+            if isinstance(item, Mapping) and item.get("shortCode") == expected_shortcode
+        ]
+        if len(matches) != 1:
+            raise GatewayError(
+                "reel_identity_mismatch",
+                "Apify output did not uniquely match the submitted Reel",
+                retryable=False,
+            )
+        item = matches[0]
+        if item.get("type") != "Video" or item.get("productType") not in {None, "clips"}:
+            raise GatewayError(
+                "invalid_reel_provider_response",
+                "Apify output is not an Instagram Reel video",
+                retryable=False,
+            )
+        video_url = item.get("downloadedVideo" if use_stored_video else "videoUrl")
+        parsed_video = urlparse(video_url if isinstance(video_url, str) else "")
+        try:
+            media_port = parsed_video.port
+        except ValueError:
+            media_port = -1
+        stored_video_valid = (
+            parsed_video.scheme == "https"
+            and parsed_video.hostname == "api.apify.com"
+            and parsed_video.username is None
+            and parsed_video.password is None
+            and media_port in {None, 443}
+            and parsed_video.path.startswith("/v2/key-value-stores/")
+            and not parsed_video.fragment
+        )
+        direct_video_valid = (
+            parsed_video.scheme == "https"
+            and parsed_video.hostname is not None
+            and parsed_video.username is None
+            and parsed_video.password is None
+            and media_port in {None, 443}
+            and not parsed_video.fragment
+            and any(
+                parsed_video.hostname.lower().endswith(suffix)
+                for suffix in (".fbcdn.net", ".cdninstagram.com")
+            )
+        )
+        if use_stored_video and not stored_video_valid:
+            raise GatewayError(
+                "reel_video_not_downloaded",
+                "Apify did not return the requested stored Reel video",
+                retryable=False,
+            )
+        if not use_stored_video and not isinstance(video_url, str):
+            raise GatewayError(
+                "reel_direct_video_unavailable",
+                "Apify did not return a direct Reel video URL",
+                retryable=True,
+            )
+        if not use_stored_video and not direct_video_valid:
+            raise GatewayError(
+                "untrusted_reel_media_url",
+                "Apify returned an untrusted direct Reel video URL",
+                retryable=False,
+            )
+        caption = item.get("caption")
+        if caption is not None and (not isinstance(caption, str) or len(caption) > 200_000):
+            raise GatewayError(
+                "invalid_reel_provider_response",
+                "Apify Reel caption is invalid",
+                retryable=False,
+            )
+        duration = item.get("videoDuration")
+        if duration is not None and (
+            not isinstance(duration, (int, float))
+            or isinstance(duration, bool)
+            or not 0 < float(duration) <= MAX_DURATION_SECONDS
+        ):
+            raise GatewayError(
+                "reel_duration_unsupported",
+                "Reel duration exceeds the processing limit",
+                retryable=False,
+            )
+        published_at = item.get("timestamp")
+        if published_at is not None:
+            if not isinstance(published_at, str) or not _is_iso_datetime(published_at):
+                raise GatewayError(
+                    "invalid_reel_provider_response",
+                    "Apify Reel timestamp is invalid",
+                    retryable=False,
+                )
+        return AcquiredReel(
+            video_url,
+            caption.strip() if isinstance(caption, str) and caption.strip() else None,
+            {
+                "external_id": item.get("ownerId") if isinstance(item.get("ownerId"), str) else None,
+                "handle": item.get("ownerUsername") if isinstance(item.get("ownerUsername"), str) else None,
+                "display_name": item.get("ownerFullName") if isinstance(item.get("ownerFullName"), str) else None,
+            },
+            published_at,
+        )
+
+
+def _reel_shortcode(value: str) -> str:
+    parsed = urlparse(value)
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 2 or parts[0] not in {"reel", "reels"} or not re.fullmatch(r"[A-Za-z0-9_-]+", parts[1]):
+        raise GatewayError("invalid_reel_url", "Instagram Reel URL is invalid", retryable=False)
+    return parts[1]
+
+
+def _is_iso_datetime(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
 
 class ReelMediaProcessor:
@@ -257,24 +521,82 @@ class InstagramReelCloudPipeline:
 
     @classmethod
     def from_environment(cls) -> InstagramReelCloudPipeline:
-        return cls(ReelAcquisitionProvider.from_environment(), OpenAIReelUnderstanding.from_environment())
+        provider_name = os.environ.get("REEL_ACQUISITION_PROVIDER", "generic").strip().lower()
+        if provider_name == "apify":
+            provider = ApifyReelAcquisitionProvider.from_environment()
+        elif provider_name == "generic":
+            provider = ReelAcquisitionProvider.from_environment()
+        else:
+            raise ValueError("REEL_ACQUISITION_PROVIDER must be generic or apify")
+        return cls(provider, OpenAIReelUnderstanding.from_environment())
 
-    def process(self, source_url: str, external_id: str, pulse: Callable[[], None]) -> tuple[dict[str, Any], dict[str, bytes]]:
-        acquired = self.provider.fetch(source_url)
+    def process(
+        self,
+        source_url: str,
+        external_id: str,
+        pulse: Callable[[], None],
+        progress: Callable[[int, str], None],
+    ) -> tuple[dict[str, Any], dict[str, bytes]]:
+        progress(5, "acquiring_source")
+        try:
+            acquired = self.provider.fetch(source_url)
+        except GatewayError as error:
+            if error.code != "reel_direct_video_unavailable":
+                raise
+            acquired = self._fallback_acquisition(source_url, progress, 10)
         with TemporaryDirectory(prefix="personal-brain-reel-") as temporary:
             directory = Path(temporary)
             video = directory / "source-video"
-            self.provider.download_video(acquired.video_url, video)
+            progress(15, "downloading_media")
+            try:
+                self.provider.download_video(acquired.video_url, video)
+            except GatewayError as error:
+                if error.code not in {
+                    "reel_media_http_error",
+                    "reel_media_unavailable",
+                    "invalid_reel_media",
+                }:
+                    raise
+                acquired = self._fallback_acquisition(source_url, progress, 16)
+                self.provider.download_video(acquired.video_url, video)
             pulse()
+            progress(30, "preparing_media")
             duration = self.media.duration(video)
+            progress(40, "transcribing_audio")
             transcript = self.understanding.transcribe(self.media.audio_chunks(video, directory))
             pulse()
+            progress(65, "extracting_keyframes")
             raw_frames = self.media.keyframes(video, directory, duration)
-            frames = [Keyframe(frame_id, timestamp, content, self.understanding.describe_frame(content, timestamp)) for frame_id, timestamp, content in raw_frames]
+            frames: list[Keyframe] = []
+            for index, (frame_id, timestamp, content) in enumerate(raw_frames, 1):
+                progress(70 + round(20 * index / max(len(raw_frames), 1)), "analyzing_frames")
+                frames.append(Keyframe(
+                    frame_id,
+                    timestamp,
+                    content,
+                    self.understanding.describe_frame(content, timestamp),
+                ))
             pulse()
         if not acquired.caption and not transcript:
             raise InstagramContractError("Reel has neither a caption nor a usable transcript")
+        progress(92, "assembling_contract")
         return build_cloud_contract(source_url, external_id, acquired, duration, transcript, frames, self.understanding.vision_model), {frame.id: frame.content for frame in frames}
+
+    def _fallback_acquisition(
+        self,
+        source_url: str,
+        progress: Callable[[int, str], None],
+        progress_percent: int,
+    ) -> AcquiredReel:
+        progress(progress_percent, "acquiring_fallback")
+        fallback = self.provider.fetch_fallback(source_url)
+        if fallback is None:
+            raise GatewayError(
+                "reel_direct_video_unavailable",
+                "The direct Reel video is unavailable and no safe fallback is configured",
+                retryable=True,
+            )
+        return fallback
 
 
 def build_cloud_contract(source_url: str, external_id: str, acquired: AcquiredReel, duration: float, transcript: list[TimedText], frames: list[Keyframe], vision_model: str) -> dict[str, Any]:

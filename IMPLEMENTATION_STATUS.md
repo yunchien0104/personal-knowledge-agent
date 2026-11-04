@@ -172,6 +172,45 @@
 - No Cloud, production, hosted database, Storage, Worker, deployment, or paid
   model operation was performed.
 
+## 2026-10-30 Ask Knowledge Base integration
+
+- PASS locally: `/ask` now reuses the authenticated Research pipeline instead of
+  stopping at raw Retrieval results: `start_research` -> Render Worker -> Hybrid
+  Retrieval -> grounded generation -> verification -> persisted Research Note.
+- PASS locally: completed answers render their verified Evidence quotes and source
+  links; insufficient or failed runs keep the existing safe, allowlisted errors.
+- FIXED: the database's successful terminal status is `draft_ready`; Ask and
+  Research UI now treat it as ready instead of polling until timeout.
+- PASS: 23 focused Web tests for Research, Retrieval, Threads, Instagram Post, and
+  Instagram Reel; Web typecheck, ESLint, and production build.
+- PASS: 35 focused Worker tests for Research and the three social ingestion paths.
+- HOSTED BASELINE: Instagram Reel has completed ingestion, Source Note, and 10
+  Retrieval chunks. Threads and Instagram Post require isolated hosted fixtures
+  before their E2E status can be marked PASS.
+- ADDED: ready Threads, Instagram Post, and Instagram Reel Assets now
+  automatically enqueue the existing idempotent Source Note job. A one-time
+  additive backfill covers ready social sources that predate the trigger.
+- PASS: focused local pgTAP for all three social protocols is 99/99; Local DB
+  lint has no error (one unrelated pre-existing unused-variable warning).
+- PASS: 30 focused Source Note/social Worker tests plus the affected Web tests,
+  typecheck, and ESLint.
+
+## 2026-10-29 Instagram Reel hosted E2E
+
+- PASS: Cloud backup and isolated restore verification completed before the three
+  approved Reel/Threads migrations; Cloud migration history is now aligned.
+- PASS: URL-only Reel submission now creates an Asset and enqueues a durable Job.
+- FIXED LOCALLY: `WORKER_CAPABILITY=all` now claims each `media` Job once and
+  dispatches by `job_type`, preventing Threads/Instagram Post handlers from
+  consuming Reel Jobs as unsupported.
+- PASS: 32 focused runner, Reel, Instagram Post, and Threads unit tests.
+- PASS: Render worker dispatch fix `ed363e6` is Live and the Reel Job reaches the
+  correct handler; the previous `invalid_claim` failure is resolved.
+- FIXED LOCALLY: removed unsupported dataset-export query parameters from the
+  generated Apify sync endpoint and retained a one-result Actor input limit.
+- NEXT: deploy the Apify endpoint fix, then verify publication, Source Note
+  generation, and retrieval through the hosted Preview.
+
 ## Current phase
 
 - R1 Unified Hybrid Retrieval is implemented locally and awaits isolated Staging
@@ -991,9 +1030,20 @@
   bounded temporary video download, FFmpeg audio/keyframe extraction, chunked
   `gpt-transcribe` transcription, Vision observations and Unified Reel Contract
   v2 provenance. Original video remains temporary and is deleted after a Job.
+- Added a concrete adapter for the official Apify Reel Scraper's real All-fields
+  array output. It requests one downloaded public Reel, verifies the shortcode,
+  maps caption/author/publish time, and uses only the stored `downloadedVideo`
+  on `api.apify.com`; expiring Instagram CDN video/audio URLs are ignored.
+- Apify credentials stay server-side and are sent only to `api.apify.com`.
+  Missing or mismatched results and outputs without a stored video fail closed.
+- The existing paid Render Background Worker is the deployment target. Its
+  server-only environment contains the Apify/OpenAI credentials; deployment
+  must also set the provider mode and a 420-second queue lease so a bounded
+  provider or model call cannot outlive the lease. The unrelated Free Web
+  Service Blueprint is intentionally unchanged to avoid creating a duplicate.
 - Contract v2 labels AI-derived visual observations separately from source
   transcript text. It is backward compatible with existing Contract v1 imports.
-- PASS locally: 39 affected Worker tests, including six cloud-pipeline
+- PASS locally: 59 affected Worker tests, including twelve cloud-pipeline
   unit/media checks, the bundled FFmpeg binary, silent-video handling and
   existing Reel/Source Note/Retrieval regressions; Web TypeScript/ESLint, ten
   Instagram Web tests, Next.js production build, and `git diff --check`.
@@ -1001,8 +1051,14 @@
   394-assertion pgTAP suite includes the Reel cloud-pipeline protocol and all
   existing queue/RLS/publication regressions.
 - Cloud migration/deployment and paid live-provider E2E remain pending. They
-  require the acquisition provider endpoint/key/allowlist and Worker FFmpeg
-  runtime configuration; no live paid call or Cloud mutation was performed.
+  require `APIFY_API_TOKEN`, `OPENAI_API_KEY`, the Apify provider mode and Worker
+  FFmpeg runtime configuration; no live paid call or Cloud mutation was performed.
+- PASS with the authorized sample output: its stored 5,101,953-byte MP4
+  downloaded without redirect, FFmpeg measured 106.25 seconds and extracted
+  four audio chunks plus four keyframes; the temporary directory was removed.
+- The intended hosted target is the existing always-on paid Render Background
+  Worker (`personal-knowledge-agent`, 0.5c-512mb), not the unrelated Free Web
+  Service described by `render.yaml`.
 
 ### Threads ingestion workflow restoration (local implementation, 2026-10-29)
 
@@ -1127,3 +1183,97 @@
   $1.0575/$1.1517. Cross-run daily/monthly
   aggregate holds remain a separate durability limitation.
 - Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.
+
+### Hosted Instagram Reel URL-only E2E (2026-10-30)
+
+- Fixed the shared media queue so one dispatcher claims each Job once and routes
+  `ingest_instagram_reel`, `ingest_instagram_post`, and `ingest_threads` to the
+  matching handler. This prevents a different media handler from claiming and
+  rejecting a valid Reel Job.
+- Fixed the Apify synchronous Actor call to use the supported endpoint without
+  unsupported dataset query parameters; the one-result cost bound remains in
+  Actor input. Provider errors expose only a safe Apify error type.
+- PASS hosted URL-only E2E with Reel `DeWz1ZQN7cA`: API acquisition, caption,
+  audio transcription, keyframe analysis, Contract v2, private artifacts,
+  validated Revision, nine Evidence rows, grounded Source Note and Citations,
+  ten Retrieval chunks, Library reading and Hybrid Retrieval all completed.
+- Render deploy `dep-dbhj0bqvcj2c73856vj0` is Live on commit `c0590dd`.
+  The affected Worker suite passed 32/32 before deployment.
+- Fixed the Web retrieval presentation to infer Instagram Reel, Instagram Post,
+  and Threads labels from immutable citation locators instead of showing every
+  original-source result as a PDF. Retrieval tests pass 4/4; TypeScript and
+  focused ESLint pass. This final Web-only display fix still requires a Vercel
+  deployment before it is visible on the hosted Preview.
+
+### Library workflow progress (2026-10-30)
+
+- Added monotonic progress fields to the existing RLS-protected durable Job and
+  a lease/generation-fenced service-role-only progress RPC. Status transitions
+  still control completion and failure; the browser cannot write progress.
+- Reel cloud ingestion now reports acquisition, download, transcription,
+  keyframe extraction, visual analysis, validation, upload and publication.
+  Library aggregates ingestion (0–70%), automatic Source Note (70–90%) and
+  Retrieval indexing (90–100%) and displays the real stage plus percentage.
+- PASS locally: progress pgTAP 13/13, affected Worker tests 24/24, Web progress
+  tests 4/4, TypeScript, ESLint, Next production build and `git diff --check`.
+- Cloud migration, Worker deploy and Vercel deploy remain pending until the
+  linked-project dry-run confirms this is the only Cloud migration.
+
+### Instagram Reel direct-download fast path (2026-10-30)
+
+- Changed Apify acquisition to request metadata plus the short-lived direct
+  Instagram video URL instead of making Apify download and store every video.
+  The Worker downloads it immediately, avoiding the previous double transfer.
+- Direct media remains fail-closed: HTTPS only, no redirects or URL credentials,
+  bounded MIME/size/timeouts, and only Meta-controlled `.fbcdn.net` and
+  `.cdninstagram.com` suffixes. Apify credentials are never sent to either CDN.
+- If the signed direct URL is missing, expired, or unavailable, the Worker runs
+  the existing stored-video acquisition exactly once as a safe fallback.
+- PASS locally: affected Worker tests 26/26, Web progress 4/4, actual prior
+  All-fields fixture maps to the direct `fbcdn.net` path, TypeScript, ESLint,
+  Python compilation, Next production build and `git diff --check`.
+
+### Hosted Threads browser runtime repair (2026-10-30)
+
+- Confirmed three URL-only Threads Jobs exhausted all three attempts with
+  `threads_fetch_failed`, while the text-fallback fixture succeeded because it
+  correctly bypassed public fetching.
+- Root cause: the hosted Render service uses the native Python runtime with a
+  build command that installs the Python package only; the repository's Docker
+  Chromium installation is therefore not part of the deployed service.
+- Added a native Render build script that installs the pinned Playwright
+  Chromium binary and launches it during the build so a missing binary or
+  incompatible runtime library cannot be released. Render's native build user
+  cannot elevate to root, so the script deliberately avoids `--with-deps`.
+- Browser installation faults now report non-retryable
+  `browser_runtime_missing`; genuine remote fetch failures remain retryable.
+- The first native build confirmed root elevation is unavailable. The second
+  build confirmed Chromium can launch, but hosted retry showed the runtime user
+  could not see the build user's browser cache. The final repair uses
+  Playwright's hermetic package-local browser path for both build and runtime.
+- Source Note pages now live inside the authenticated workspace route group and
+  use the shared App Shell. Their editor, provenance, Claims, and citation cards
+  are responsive and no longer collapse into browser-default narrow controls.
+- Knowledge cards now resolve their source asset type and label generated notes
+  as PDF, Threads, Reels, or Instagram post Source Notes; manual and research
+  note labels remain unchanged.
+
+### Research workspace presentation and ownership (2026-10-30)
+
+- Replaced the exposed Research plan JSON, raw Run ID and database status with
+  a user-facing, automatically refreshed workflow progress bar. The Research
+  Worker now reports planning, retrieval, drafting, verification and publication
+  checkpoints through the existing lease-fenced Job progress RPC.
+- Completed Research notes are rendered inside their Research project and can
+  use the existing owner-scoped topic selection API. Project navigation now
+  shows each creation date above the question instead of an ordinal number.
+- Added a non-destructive `list_knowledge_notes` projection change so Research
+  notes remain stored and RLS-protected but no longer appear in All Knowledge.
+  No note, citation, topic assignment or user data is deleted or moved.
+- PASS locally: Research Web tests 5/5, Research Worker tests 16/16 plus three subtests, TypeScript,
+  focused ESLint, Next production build and `git diff --check`. The targeted
+  pgTAP run is pending because this sandbox cannot access the existing OrbStack
+  Docker socket.
+- Linked Cloud dry-run showed only the new projection migration; migration
+  `20261030144112` was applied successfully and subsequent migration history
+  verification shows Local and Remote aligned. No table data was rewritten.

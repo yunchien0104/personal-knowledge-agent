@@ -73,6 +73,42 @@ export function originLabel(origin: KnowledgeResult["contentOrigin"]) {
   return labels[origin];
 }
 
+export type KnowledgeSourceKind = "PDF" | "IG" | "TH" | "NOTE";
+
+function citationKinds(result: Pick<KnowledgeResult, "citations">) {
+  return new Set(result.citations.flatMap((citation) => {
+    const kind = citation.locator?.kind;
+    return typeof kind === "string" ? [kind] : [];
+  }));
+}
+
+export function knowledgeSourceKind(
+  result: Pick<KnowledgeResult, "resultType" | "citations">,
+): KnowledgeSourceKind {
+  if (result.resultType === "source_note") return "NOTE";
+  const kinds = citationKinds(result);
+  if (kinds.has("threads_post")) return "TH";
+  if ([...kinds].some((kind) => kind.startsWith("instagram_") || kind === "video_segment")) {
+    return "IG";
+  }
+  return "PDF";
+}
+
+export function knowledgeResultTitle(
+  result: Pick<KnowledgeResult, "resultType" | "title" | "citations">,
+) {
+  if (!/^PDF source page\b/.test(result.title)) return result.title;
+  const sourceKind = knowledgeSourceKind(result);
+  if (sourceKind === "TH") return "Threads 來源片段";
+  if (sourceKind === "IG") {
+    const kinds = citationKinds(result);
+    return kinds.has("instagram_caption") || kinds.has("video_segment")
+      ? "Instagram Reel 來源片段"
+      : "Instagram 貼文來源片段";
+  }
+  return result.title;
+}
+
 export async function retrieveKnowledge(
   supabase: SupabaseClient,
   input: RetrievalInput,

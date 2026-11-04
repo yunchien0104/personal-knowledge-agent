@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import json
+import os
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from imageio_ffmpeg import get_ffmpeg_exe
 
 from personal_brain.instagram_reel_cloud import (
     AcquiredReel,
+    ApifyReelAcquisitionProvider,
+    InstagramReelCloudPipeline,
     Keyframe,
     ReelAcquisitionProvider,
     ReelMediaProcessor,
@@ -19,7 +24,7 @@ from personal_brain.instagram_reel_cloud import (
 from personal_brain.instagram_reel_contract import validate_instagram_reel_contract
 from personal_brain.instagram_reel_ingestion import InstagramReelIngestionWorker
 from personal_brain.models import JobPayloadV1
-from personal_brain.supabase_gateway import ClaimedJob
+from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 
 USER_ID = "84000000-0000-4000-8000-000000000001"
@@ -65,9 +70,11 @@ def cloud_job():
 
 
 class FakePipeline:
-    def process(self, source_url, external_id, pulse):
+    def process(self, source_url, external_id, pulse, progress):
         assert source_url == SOURCE_URL
         assert external_id == "C10udReel"
+        progress(40, "transcribing_audio")
+        progress(92, "assembling_contract")
         pulse()
         return cloud_contract(), {"frame-001": JPEG}
 
@@ -79,6 +86,7 @@ class Gateway:
         self.uploads = []
         self.publications = []
         self.failures = []
+        self.progress_events = []
 
     def claim(self, *_args):
         if self.claimed:
@@ -87,6 +95,10 @@ class Gateway:
         return self.job
 
     def heartbeat(self, *_args): return True
+
+    def progress(self, _job, _worker, percent, stage):
+        self.progress_events.append((percent, stage))
+        return True
 
     def upload_immutable(self, path, content, content_hash, content_type="application/json"):
         assert sha256(content).hexdigest() == content_hash
@@ -116,6 +128,208 @@ class InstagramReelCloudTests(unittest.TestCase):
             ReelAcquisitionProvider("http://provider.test/reel", "secret", {"media.test"})
         with self.assertRaises(ValueError):
             ReelAcquisitionProvider("https://provider.test/reel", "secret", set())
+
+    def test_apify_all_fields_output_maps_to_contract_boundary(self):
+        acquired = ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [{
+            "inputUrl": SOURCE_URL,
+            "id": "4000000000000000000",
+            "type": "Video",
+            "shortCode": "C10udReel",
+            "caption": "公開說明文字",
+            "videoUrl": "https://instagram.fmad26-1.fna.fbcdn.net/short-lived.mp4",
+            "audioUrl": "https://instagram.cdn.example/short-lived-audio.mp4",
+            "downloadedVideo": "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+            "timestamp": "2026-10-11T13:53:50.000Z",
+            "ownerId": "123456789",
+            "ownerUsername": "example_author",
+            "ownerFullName": "Example Author",
+            "productType": "clips",
+            "videoDuration": 106.166664,
+        }])
+        self.assertEqual(
+            acquired.video_url,
+            "https://instagram.fmad26-1.fna.fbcdn.net/short-lived.mp4",
+        )
+        self.assertEqual(acquired.caption, "公開說明文字")
+        self.assertEqual(acquired.author, {
+            "external_id": "123456789",
+            "handle": "example_author",
+            "display_name": "Example Author",
+        })
+        self.assertEqual(acquired.published_at, "2026-10-11T13:53:50.000Z")
+
+    def test_apify_fetch_uses_direct_video_and_keeps_stored_fallback(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self):
+                return json.dumps([{
+                    "type": "Video",
+                    "shortCode": "C10udReel",
+                    "productType": "clips",
+                    "videoUrl": "https://scontent.cdninstagram.com/reel.mp4",
+                    "downloadedVideo": "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+                }]).encode()
+
+        class Opener:
+            request = None
+            timeout = None
+
+            def open(self, request, timeout):
+                self.request = request
+                self.timeout = timeout
+                return Response()
+
+        provider = ApifyReelAcquisitionProvider("server-secret")
+        opener = Opener()
+        provider._opener = opener
+        acquired = provider.fetch(SOURCE_URL)
+        request_payload = json.loads(opener.request.data)
+        self.assertEqual(acquired.video_url, "https://scontent.cdninstagram.com/reel.mp4")
+        self.assertEqual(request_payload, {
+            "username": [SOURCE_URL],
+            "resultsLimit": 1,
+            "includeDownloadedVideo": False,
+            "includeTranscript": False,
+            "includeSharesCount": False,
+        })
+        self.assertEqual(opener.request.get_header("Authorization"), "Bearer server-secret")
+        self.assertEqual(
+            opener.request.full_url,
+            "https://api.apify.com/v2/acts/apify~instagram-reel-scraper/run-sync-get-dataset-items",
+        )
+        self.assertEqual(opener.timeout, 300)
+
+        fallback = provider.fetch_fallback(SOURCE_URL)
+        self.assertEqual(
+            fallback.video_url,
+            "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+        )
+        self.assertTrue(json.loads(opener.request.data)["includeDownloadedVideo"])
+
+    def test_apify_output_must_match_shortcode_and_include_trusted_direct_video(self):
+        item = {
+            "type": "Video",
+            "shortCode": "DifferentReel",
+            "productType": "clips",
+            "videoUrl": "https://instagram.fmad26-1.fna.fbcdn.net/reel.mp4",
+        }
+        with self.assertRaisesRegex(Exception, "uniquely match"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+        item["shortCode"] = "C10udReel"
+        item.pop("videoUrl")
+        with self.assertRaisesRegex(Exception, "direct Reel video"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+
+    def test_apify_direct_and_stored_video_urls_fail_closed(self):
+        item = {
+            "type": "Video",
+            "shortCode": "C10udReel",
+            "productType": "clips",
+            "videoUrl": "https://instagram.fmad26-1.fna.fbcdn.net.attacker.test/reel.mp4",
+            "downloadedVideo": "https://attacker@api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+        }
+        with self.assertRaisesRegex(Exception, "untrusted direct Reel video"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+        with self.assertRaisesRegex(Exception, "stored Reel video"):
+            ApifyReelAcquisitionProvider._map_output(
+                SOURCE_URL, [item], use_stored_video=True
+            )
+        item["videoUrl"] = "https://instagram.fmad26-1.fna.fbcdn.net/reel.mp4"
+        item["downloadedVideo"] = "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4"
+        item["timestamp"] = "2026-10-11"
+        with self.assertRaisesRegex(Exception, "timestamp is invalid"):
+            ApifyReelAcquisitionProvider._map_output(SOURCE_URL, [item])
+
+    def test_pipeline_falls_back_only_after_direct_media_download_failure(self):
+        direct = AcquiredReel(
+            "https://instagram.fmad26-1.fna.fbcdn.net/reel.mp4",
+            "caption",
+            None,
+            None,
+        )
+        stored = AcquiredReel(
+            "https://api.apify.com/v2/key-value-stores/store/records/reel.mp4",
+            "caption",
+            None,
+            None,
+        )
+
+        class Provider:
+            downloads = []
+            fallback_calls = 0
+            def fetch(self, _url): return direct
+            def fetch_fallback(self, _url):
+                self.fallback_calls += 1
+                return stored
+            def download_video(self, url, target):
+                self.downloads.append(url)
+                if url == direct.video_url:
+                    raise GatewayError("reel_media_http_error", "expired", retryable=False)
+                target.write_bytes(b"video")
+
+        class Media:
+            def duration(self, _video): return 1.0
+            def audio_chunks(self, _video, _directory): return []
+            def keyframes(self, _video, _directory, _duration): return []
+
+        class Understanding:
+            vision_model = "test-vision"
+            def transcribe(self, _chunks): return []
+
+        provider = Provider()
+        progress = []
+        pipeline = InstagramReelCloudPipeline(provider, Understanding(), Media())
+        contract, frames = pipeline.process(
+            SOURCE_URL,
+            "C10udReel",
+            lambda: None,
+            lambda percent, stage: progress.append((percent, stage)),
+        )
+        self.assertEqual(provider.downloads, [direct.video_url, stored.video_url])
+        self.assertEqual(provider.fallback_calls, 1)
+        self.assertIn((16, "acquiring_fallback"), progress)
+        self.assertEqual(contract["text"], "caption")
+        self.assertEqual(frames, {})
+
+    def test_apify_provider_rejects_actor_id_injection(self):
+        with self.assertRaises(ValueError):
+            ApifyReelAcquisitionProvider("secret", actor_id="actor?token=leak")
+
+    def test_direct_cdn_download_never_receives_apify_credentials(self):
+        class Headers:
+            def get_content_type(self): return "video/mp4"
+
+        class Response:
+            headers = Headers()
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self, _size): return b""
+
+        class Opener:
+            request = None
+            def open(self, request, timeout):
+                self.request = request
+                return Response()
+
+        provider = ApifyReelAcquisitionProvider("server-secret")
+        opener = Opener()
+        provider._opener = opener
+        with TemporaryDirectory() as raw:
+            provider.download_video(
+                "https://instagram.fper9-1.fna.fbcdn.net/reel.mp4",
+                Path(raw) / "reel.mp4",
+            )
+        self.assertIsNone(opener.request.get_header("Authorization"))
+
+    def test_cloud_pipeline_selects_apify_from_server_environment(self):
+        with patch.dict(os.environ, {
+            "REEL_ACQUISITION_PROVIDER": "apify",
+            "APIFY_API_TOKEN": "server-secret",
+            "OPENAI_API_KEY": "openai-secret",
+        }, clear=True):
+            pipeline = InstagramReelCloudPipeline.from_environment()
+        self.assertIsInstance(pipeline.provider, ApifyReelAcquisitionProvider)
 
     def test_bundled_ffmpeg_extracts_audio_and_keyframe(self):
         with TemporaryDirectory() as raw:
@@ -156,6 +370,17 @@ class InstagramReelCloudTests(unittest.TestCase):
         self.assertEqual([content_type for _, content_type in gateway.uploads], ["application/json", "image/jpeg"])
         self.assertEqual(len(gateway.publications), 1)
         self.assertEqual(gateway.failures, [])
+        self.assertEqual(
+            gateway.progress_events,
+            [
+                (2, "starting"),
+                (40, "transcribing_audio"),
+                (92, "assembling_contract"),
+                (94, "validating_contract"),
+                (96, "uploading_artifacts"),
+                (99, "publishing_source"),
+            ],
+        )
 
     def test_cloud_job_fails_closed_when_provider_is_not_configured(self):
         gateway = Gateway()

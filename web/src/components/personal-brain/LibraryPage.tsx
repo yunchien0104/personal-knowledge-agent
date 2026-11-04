@@ -47,6 +47,33 @@ function deletionItem(asset: Asset): KnowledgeItem {
   };
 }
 
+function WorkflowProgressBar({ asset }: { asset: Asset }) {
+  const progress = asset.workflow_progress;
+  if (!progress || progress.state !== "active") {
+    return <StatusBadge status={progress?.state === "failed" ? "失敗" : readableStatus(asset)} />;
+  }
+  return <div className="min-w-[150px]" aria-live="polite">
+    <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-medium text-muted">
+      <span className="truncate">{progress.stage}</span>
+      <span className="shrink-0 tabular-nums">{progress.percent}%</span>
+    </div>
+    <div
+      role="progressbar"
+      aria-label={`${assetTitle(asset)} 處理進度`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={progress.percent}
+      aria-valuetext={`${progress.stage}，${progress.percent}%`}
+      className="h-2 overflow-hidden rounded-full bg-indigo-100"
+    >
+      <div
+        className="h-full rounded-full bg-indigo-600 transition-[width] duration-500 ease-out"
+        style={{ width: `${progress.percent}%` }}
+      />
+    </div>
+  </div>;
+}
+
 export function LibraryPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [deletions, setDeletions] = useState<AssetDeletion[]>([]);
@@ -83,7 +110,8 @@ export function LibraryPage() {
     return () => { active = false; };
   }, [loadData]);
 
-  const activeWork = assets.some((asset) => ["pending", "processing", "deleting"].includes(asset.status))
+  const activeWork = assets.some((asset) => asset.workflow_progress?.state === "active"
+    || ["pending", "processing", "deleting"].includes(asset.status))
     || deletions.some((row) => ["pending", "deleting"].includes(row.status));
   useEffect(() => {
     if (!activeWork) return;
@@ -147,13 +175,13 @@ export function LibraryPage() {
     {error ? <p role="alert" className="mt-4 text-sm text-rose-700">{error}</p> : null}
     {loading ? <p className="py-10 text-sm text-muted">正在讀取 Library…</p> : null}
     {!loading && filtered.length ? <div role="table" aria-label="原始資料列表" className="mt-4 overflow-x-auto rounded-lg border border-line bg-surface">
-      <div role="row" className="grid min-w-[760px] grid-cols-[minmax(220px,1fr)_120px_120px_110px_minmax(250px,auto)] gap-3 border-b border-line bg-subtle px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-faint"><span>名稱</span><span>來源類型</span><span>加入日期</span><span>處理狀態</span><span>操作</span></div>
+      <div role="row" className="grid min-w-[850px] grid-cols-[minmax(220px,1fr)_120px_120px_180px_minmax(250px,auto)] gap-3 border-b border-line bg-subtle px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-faint"><span>名稱</span><span>來源類型</span><span>加入日期</span><span>處理進度</span><span>操作</span></div>
       {filtered.map((asset) => {
         const kind = sourceKind(asset.source_type);
         const workspace = workspaces[asset.id];
         const noteState = sourceNoteDisplayState(workspace ?? null);
         const deletion = deletions.find((row) => row.asset_id_snapshot === asset.id && ["pending", "deleting", "failed"].includes(row.status));
-        return <div role="row" key={asset.id} className="grid min-w-[760px] grid-cols-[minmax(220px,1fr)_120px_120px_110px_minmax(250px,auto)] items-center gap-3 border-b border-line px-4 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-3"><SourceIcon kind={kind} size="sm" /><span className="truncate text-xs font-semibold">{assetTitle(asset)}</span></div><span className="text-xs text-muted">{kindLabel[kind]}</span><span className="text-xs text-muted">{new Date(asset.created_at).toLocaleDateString("zh-TW")}</span><StatusBadge status={deletion?.status === "failed" ? "刪除失敗" : readableStatus(asset)} /><div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => openOriginal(asset)} disabled={busyId === asset.id || asset.status === "deleting"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 disabled:opacity-40"><ExternalLink className="h-3 w-3" />查看原檔／來源</button>{workspace?.note ? <Link href={`/assets/${asset.id}/source-note`} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700"><FileText className="h-3 w-3" />查看筆記</Link> : supportsSourceNote(asset.source_type) ? <button type="button" onClick={() => generateNote(asset)} disabled={busyId === asset.id || asset.status !== "ready" || noteState === "generating"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 disabled:opacity-40"><Sparkles className="h-3 w-3" />{noteState === "generating" ? "生成中" : noteState === "failed" ? "重試筆記" : "生成筆記"}</button> : null}{asset.source_type === "pdf" ? <button type="button" aria-label={`移除 ${assetTitle(asset)}`} onClick={() => setDeleteTarget(asset)} disabled={deletion?.status === "pending" || deletion?.status === "deleting"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 disabled:opacity-40"><Trash2 className="h-3 w-3" />移除</button> : null}</div></div>;
+        return <div role="row" key={asset.id} className="grid min-w-[850px] grid-cols-[minmax(220px,1fr)_120px_120px_180px_minmax(250px,auto)] items-center gap-3 border-b border-line px-4 py-3 last:border-b-0"><div className="flex min-w-0 items-center gap-3"><SourceIcon kind={kind} size="sm" /><span className="truncate text-xs font-semibold">{assetTitle(asset)}</span></div><span className="text-xs text-muted">{kindLabel[kind]}</span><span className="text-xs text-muted">{new Date(asset.created_at).toLocaleDateString("zh-TW")}</span>{deletion?.status === "failed" ? <StatusBadge status="刪除失敗" /> : deletion && ["pending", "deleting"].includes(deletion.status) ? <StatusBadge status="刪除中" /> : <WorkflowProgressBar asset={asset} />}<div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => openOriginal(asset)} disabled={busyId === asset.id || asset.status === "deleting"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 disabled:opacity-40"><ExternalLink className="h-3 w-3" />查看原檔／來源</button>{workspace?.note ? <Link href={`/assets/${asset.id}/source-note`} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700"><FileText className="h-3 w-3" />查看筆記</Link> : supportsSourceNote(asset.source_type) ? <button type="button" onClick={() => generateNote(asset)} disabled={busyId === asset.id || asset.status !== "ready" || noteState === "generating"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 disabled:opacity-40"><Sparkles className="h-3 w-3" />{noteState === "generating" ? "生成中" : noteState === "failed" ? "重試筆記" : "生成筆記"}</button> : null}{asset.source_type === "pdf" ? <button type="button" aria-label={`移除 ${assetTitle(asset)}`} onClick={() => setDeleteTarget(asset)} disabled={deletion?.status === "pending" || deletion?.status === "deleting"} className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 disabled:opacity-40"><Trash2 className="h-3 w-3" />移除</button> : null}</div></div>;
       })}
     </div> : null}
     {!loading && !filtered.length ? <PendingState title="Library 沒有來源" description="新增 PDF 或網址後，來源會在這裡顯示；已移除來源預設不顯示。" /> : null}

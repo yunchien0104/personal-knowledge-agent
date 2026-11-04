@@ -4,15 +4,11 @@ import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Filter, Plus, Save, Tag
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getApi, getApiEnvelope } from "./api";
+import { knowledgeNoteLabel } from "@/lib/knowledge-labels";
 import type { KnowledgeNote, Note, Topic } from "./types";
 import { PageTitle, PendingState } from "./ui";
 
 const PAGE_SIZE = 12;
-const typeLabel: Record<KnowledgeNote["note_type"], string> = {
-  source_note: "來源筆記",
-  research_note: "研究筆記",
-  manual_note: "手寫筆記",
-};
 
 function TopicPill({ name }: { name: string }) {
   return <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700">{name}</span>;
@@ -191,14 +187,15 @@ export function KnowledgePage() {
 
   if (detailOpen && selected) {
     const sections = noteSections(detailBody ?? selected.summary);
+    const selectedLabel = knowledgeNoteLabel(selected.note_type, selected.source_type);
     return <article aria-labelledby="knowledge-note-title" className="animate-page pb-10">
       <div className="flex items-center justify-between gap-4 border-b border-line pb-4">
         <button type="button" onClick={closeNote} className="inline-flex items-center gap-2 rounded-md px-2 py-2 text-xs font-semibold text-muted transition hover:bg-subtle hover:text-ink"><ArrowLeft className="h-4 w-4" />返回全部知識</button>
-        <p className="text-[11px] text-faint">{typeLabel[selected.note_type]}{selected.note_type === "research_note" && selected.publication_state === "draft" ? "／待檢視" : ""} · {new Date(selected.updated_at).toLocaleDateString("zh-TW")}</p>
+        <p className="text-[11px] text-faint">{selectedLabel}{selected.note_type === "research_note" && selected.publication_state === "draft" ? "／待檢視" : ""} · {new Date(selected.updated_at).toLocaleDateString("zh-TW")}</p>
       </div>
 
       <header className="border-b border-line py-8 sm:py-10">
-        <div className="flex items-center gap-2 text-indigo-600"><BookOpen className="h-5 w-5" /><span className="text-xs font-semibold">{typeLabel[selected.note_type]}</span></div>
+        <div className="flex items-center gap-2 text-indigo-600"><BookOpen className="h-5 w-5" /><span className="text-xs font-semibold">{selectedLabel}</span></div>
         <h1 id="knowledge-note-title" className="mt-4 max-w-4xl text-3xl font-semibold leading-tight tracking-[-0.025em] sm:text-4xl">{selected.title}</h1>
       </header>
 
@@ -245,7 +242,7 @@ export function KnowledgePage() {
         {loading ? <p className="py-10 text-sm text-muted">正在讀取筆記…</p> : null}
         {!loading && notes.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {notes.map((note) => <button type="button" key={note.id} onClick={() => void openNote(note)} className="rounded-lg border border-line bg-surface p-4 text-left transition hover:border-indigo-200 hover:shadow-sm">
-            <div className="flex items-center justify-between gap-3"><span className="text-[11px] font-medium text-muted">{typeLabel[note.note_type]}{note.note_type === "research_note" && note.publication_state === "draft" ? "／待檢視" : ""}</span><span className="text-[10px] text-faint">{new Date(note.updated_at).toLocaleDateString("zh-TW")}</span></div>
+            <div className="flex items-center justify-between gap-3"><span className="text-[11px] font-medium text-muted">{knowledgeNoteLabel(note.note_type, note.source_type)}{note.note_type === "research_note" && note.publication_state === "draft" ? "／待檢視" : ""}</span><span className="text-[10px] text-faint">{new Date(note.updated_at).toLocaleDateString("zh-TW")}</span></div>
             <h2 className="mt-3 line-clamp-2 text-sm font-semibold leading-6">{note.title}</h2>
             <p className="mt-2 line-clamp-3 text-xs leading-5 text-muted">{note.summary || "這則筆記目前沒有摘要。"}</p>
             <div className="mt-4 flex flex-wrap gap-1.5">{note.topics.length ? note.topics.map((topic) => <TopicPill key={topic.id} name={topic.name} />) : <span className="text-[11px] text-amber-700">未分類</span>}</div>

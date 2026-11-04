@@ -26,8 +26,24 @@ export async function GET(request: Request) {
   if (error) return jsonError(500, "DATABASE_ERROR", "Knowledge notes could not be loaded.");
   const rows = (data ?? []) as Array<Record<string, unknown> & { total_count: number | string }>;
   const total = rows.length ? Number(rows[0].total_count) : 0;
+  const sourceAssetIds = [...new Set(rows.flatMap((row) => (
+    typeof row.source_asset_id === "string" ? [row.source_asset_id] : []
+  )))];
+  const sourceTypes = new Map<string, string>();
+  if (sourceAssetIds.length) {
+    const { data: assets, error: assetsError } = await auth.supabase
+      .from("assets")
+      .select("id,source_type")
+      .in("id", sourceAssetIds);
+    if (assetsError) return jsonError(500, "DATABASE_ERROR", "Knowledge note sources could not be loaded.");
+    for (const asset of assets ?? []) sourceTypes.set(asset.id, asset.source_type);
+  }
   return jsonSuccess(rows.map((row) => {
-    const result: Record<string, unknown> = { ...row };
+    const sourceAssetId = typeof row.source_asset_id === "string" ? row.source_asset_id : null;
+    const result: Record<string, unknown> = {
+      ...row,
+      source_type: sourceAssetId ? sourceTypes.get(sourceAssetId) ?? null : null,
+    };
     delete result.total_count;
     return result;
   }), 200, {

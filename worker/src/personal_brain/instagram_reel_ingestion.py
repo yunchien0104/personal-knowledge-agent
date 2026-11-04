@@ -15,6 +15,7 @@ from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 class ReelGateway(Protocol):
     def claim(self, worker_id: str, lease_seconds: int, resource_class: str) -> ClaimedJob | None: ...
     def heartbeat(self, job: ClaimedJob, worker_id: str, lease_seconds: int) -> bool: ...
+    def progress(self, job: ClaimedJob, worker_id: str, percent: int, stage: str) -> bool: ...
     def download_instagram_reel_contract(self, job: ClaimedJob) -> bytes: ...
     def download_instagram_reel_keyframe(self, job: ClaimedJob, media_id: str) -> bytes: ...
     def upload_immutable(self, object_path: str, content: bytes, content_hash: str, content_type: str = "application/json") -> None: ...
@@ -48,6 +49,12 @@ class InstagramReelIngestionWorker:
             return self._failure(job, GatewayError("invalid_claim", "Worker received an unsupported Job", retryable=False))
         try:
             with LeaseGuard(self.gateway, job, self.worker_id, self.lease_seconds) as lease:
+                def report_progress(percent: int, stage: str) -> None:
+                    if not self.gateway.progress(job, self.worker_id, percent, stage):
+                        raise LeaseLostError("Worker lease expired before progress update")
+                    lease.pulse()
+
+                report_progress(2, "starting")
                 cloud_mode = job.payload.input.get("acquisitionMode") == "cloud"
                 frame_contents: dict[str, bytes] = {}
                 if cloud_mode:
@@ -57,13 +64,17 @@ class InstagramReelIngestionWorker:
                     external_id = job.payload.input.get("sourceExternalId")
                     if not isinstance(source_url, str) or not isinstance(external_id, str):
                         raise InstagramContractError("Instagram Reel Job identity is invalid")
-                    generated, frame_contents = self.cloud_pipeline.process(source_url, external_id, lease.pulse)
+                    generated, frame_contents = self.cloud_pipeline.process(
+                        source_url, external_id, lease.pulse, report_progress
+                    )
                     contract = validate_instagram_reel_contract(generated)
                 else:
+                    report_progress(35, "loading_contract")
                     raw = self.gateway.download_instagram_reel_contract(job)
                     if len(raw) > 2 * 1024 * 1024:
                         raise InstagramContractError("Instagram Reel contract is too large")
                     contract = validate_instagram_reel_contract(json.loads(raw))
+                report_progress(94, "validating_contract")
                 if contract["source_url"] != job.payload.input.get("sourceUrl") or contract["source_external_id"] != job.payload.input.get("sourceExternalId"):
                     raise InstagramContractError("Instagram Reel Job identity does not match contract")
                 source_hash = contract["source_hash"]
@@ -86,6 +97,7 @@ class InstagramReelIngestionWorker:
                                    "sha256": digest, "mime": media["mime"], "size_bytes": len(content), "content": content})
                     lease.pulse()
                 lease.ensure()
+                report_progress(96, "uploading_artifacts")
                 self.gateway.upload_immutable(artifact_path, artifact, artifact_hash)
                 publications = []
                 for frame in frames:
@@ -94,6 +106,7 @@ class InstagramReelIngestionWorker:
                     publications.append(frame)
                     lease.pulse()
                 lease.ensure()
+                report_progress(99, "publishing_source")
             publication = self.gateway.publish_instagram_reel(job, self.worker_id, source_hash=source_hash,
                 processor_version=processor, object_path=artifact_path, artifact_hash=artifact_hash,
                 artifact_size=len(artifact), media=publications, segments=contract["segments"])

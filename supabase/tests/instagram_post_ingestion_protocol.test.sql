@@ -2,7 +2,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(39);
+select plan(40);
 
 select ok(
   not has_function_privilege(
@@ -389,6 +389,13 @@ select is(
    where asset_id = (select asset_id from instagram_post_state)),
   1::bigint,
   'publication replay creates no duplicate Revision'
+);
+select is(
+  (select count(*) from public.jobs
+   where asset_id = (select asset_id from instagram_post_state)
+     and job_type = 'generate_source_note'),
+  1::bigint,
+  'ready Instagram Post automatically enters Source Note queue'
 );
 
 reset role;

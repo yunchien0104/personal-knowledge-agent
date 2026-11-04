@@ -68,6 +68,38 @@ class SupabaseGatewayAuthenticationTests(unittest.TestCase):
 
         self.assertEqual(gateway._service_key, service_key)
 
+    def test_progress_uses_fenced_worker_rpc(self):
+        gateway = SupabaseGateway(
+            "https://example.supabase.co", "sb_secret_" + "a" * 32
+        )
+        calls = []
+        gateway._rpc = lambda name, arguments: calls.append((name, arguments)) or True
+        payload = JobPayloadV1.from_dict({
+            "schemaVersion": 1,
+            "jobId": "66000000-0000-4000-8000-000000000001",
+            "userId": "66000000-0000-4000-8000-000000000002",
+            "jobType": "ingest_instagram_reel",
+            "idempotencyKey": "reel-progress",
+            "input": {
+                "assetId": "66000000-0000-4000-8000-000000000003",
+                "sourceUrl": "https://www.instagram.com/reel/TestReel1/",
+                "sourceExternalId": "TestReel1",
+                "acquisitionMode": "cloud",
+            },
+        })
+        job = ClaimedJob(
+            payload.job_id, payload.user_id, payload.input["assetId"], 7, payload
+        )
+
+        self.assertTrue(gateway.progress(job, "reel-worker", 40, "transcribing_audio"))
+        self.assertEqual(calls, [("report_job_progress", {
+            "p_job_id": job.id,
+            "p_worker_id": "reel-worker",
+            "p_lease_generation": 7,
+            "p_progress_percent": 40,
+            "p_progress_stage": "transcribing_audio",
+        })])
+
     def test_deletion_claim_requires_null_asset_and_valid_mode(self):
         row = {
             "id": "63000000-0000-4000-8000-000000000001",

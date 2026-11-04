@@ -82,10 +82,55 @@ export type ResearchRun = {
   createdAt: string;
   updatedAt: string;
   errorCode: string | null;
-  note: { id: string; title: string; body: string; publicationState: string } | null;
+  jobProgress: { percent: number; stage: string } | null;
+  note: {
+    id: string;
+    title: string;
+    body: string;
+    publicationState: string;
+    topics: Array<{ id: string; name: string }>;
+  } | null;
   citations: ResearchCitation[];
   deepResult: DeepResearchResult | null;
 };
+
+export type ResearchWorkflowProgress = {
+  percent: number;
+  label: string;
+  state: "active" | "completed" | "failed";
+};
+
+const researchStageLabels: Record<string, string> = {
+  queued: "等待開始",
+  starting: "準備研究資料",
+  planning_research: "規劃研究方向",
+  retrieving: "搜尋知識庫來源",
+  searching_sources: "搜尋知識庫來源",
+  generating: "整理研究證據",
+  drafting_findings: "撰寫研究內容",
+  verifying_claims: "核對主張與引用",
+  publishing_research: "建立研究筆記",
+  retry_wait: "等待重新處理",
+};
+
+export function researchWorkflowProgress(run: Pick<ResearchRun, "status" | "progress" | "jobProgress">): ResearchWorkflowProgress {
+  if (isResearchReady(run.status)) return { percent: 100, label: "研究完成", state: "completed" };
+  if (["failed", "unsupported", "cancelled"].includes(run.status)) {
+    return {
+      percent: Math.max(0, Math.min(99, run.jobProgress?.percent ?? 0)),
+      label: run.status === "cancelled" ? "研究已取消" : "研究未完成",
+      state: "failed",
+    };
+  }
+  const legacyStage = typeof run.progress.stage === "string" ? run.progress.stage : null;
+  const stage = run.jobProgress?.stage ?? legacyStage ?? run.status;
+  const fallbackPercent = stage === "generating" ? 60 : stage === "retrieving" ? 30 : run.status === "running" ? 5 : 2;
+  return {
+    percent: Math.max(1, Math.min(99, run.jobProgress?.percent ?? fallbackPercent)),
+    label: researchStageLabels[stage] ?? "處理研究資料",
+    state: "active",
+  };
+}
 
 export async function startResearch(
   supabase: SupabaseClient,
@@ -136,13 +181,16 @@ export async function getResearchRun(
   if (!run) return null;
 
   const deep = run.research_mode === "deep";
-  const [jobResult, noteResult, citationResult, deepResult, webCitationResult] = await Promise.all([
+  const [jobResult, noteResult, topicResult, citationResult, deepResult, webCitationResult] = await Promise.all([
     run.job_id
-      ? supabase.from("jobs").select("last_error_code").eq("id", run.job_id).maybeSingle()
+      ? supabase.from("jobs").select("last_error_code,progress_percent,progress_stage").eq("id", run.job_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     run.output_note_id
       ? supabase.from("notes").select("id,title,body,publication_state").eq("id", run.output_note_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    run.output_note_id
+      ? supabase.from("note_topics").select("topic_id,topics!inner(id,name)").eq("note_id", run.output_note_id)
+      : Promise.resolve({ data: [], error: null }),
     supabase
       .from("research_citations")
       .select("id,finding_index,citation_index,relation_type,evidence_id,evidence_id_snapshot,asset_id,asset_id_snapshot,source_revision_id,source_revision_id_snapshot,locator_json,supporting_quote")
@@ -166,7 +214,7 @@ export async function getResearchRun(
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (
-    jobResult.error || noteResult.error || citationResult.error
+    jobResult.error || noteResult.error || topicResult.error || citationResult.error
     || deepResult.error || webCitationResult.error
   ) {
     throw new Error("Research draft could not be loaded.");
@@ -235,11 +283,21 @@ export async function getResearchRun(
     createdAt: run.created_at,
     updatedAt: run.updated_at,
     errorCode: jobResult.data?.last_error_code ?? null,
+    jobProgress: jobResult.data ? {
+      percent: jobResult.data.progress_percent,
+      stage: jobResult.data.progress_stage,
+    } : null,
     note: noteResult.data ? {
       id: noteResult.data.id,
       title: noteResult.data.title,
       body: noteResult.data.body,
       publicationState: noteResult.data.publication_state,
+      topics: (topicResult.data ?? []).flatMap((row) => {
+        const topic = Array.isArray(row.topics) ? row.topics[0] : row.topics;
+        return topic && typeof topic.id === "string" && typeof topic.name === "string"
+          ? [{ id: topic.id, name: topic.name }]
+          : [];
+      }),
     } : null,
     citations: [...internalCitations, ...webCitations].sort(
       (left, right) => left.findingIndex - right.findingIndex
@@ -272,4 +330,33 @@ export function safeResearchError(code: string | null) {
     invalid_research_plan: "研究計畫無效，未執行研究。",
   };
   return code ? messages[code] ?? "Research Agent 執行失敗，請稍後重試。" : null;
+}
+
+const terminalResearchStatuses = new Set([
+  "draft_ready", "completed", "failed", "unsupported", "cancelled",
+]);
+
+export function isResearchReady(status: string) {
+  return status === "draft_ready" || status === "completed";
+}
+
+export function isResearchTerminal(status: string) {
+  return terminalResearchStatuses.has(status);
+}
+
+export async function waitForResearchRun<T extends { status: string }>(
+  runId: string,
+  load: (id: string) => Promise<T>,
+  options: { intervalMs?: number; maxAttempts?: number } = {},
+): Promise<T> {
+  const intervalMs = options.intervalMs ?? 2_000;
+  const maxAttempts = options.maxAttempts ?? 60;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const run = await load(runId);
+    if (isResearchTerminal(run.status)) return run;
+    if (attempt < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  throw new Error("Research answer timed out.");
 }
