@@ -8,18 +8,19 @@ Baseline: `00d3c15`
 
 ## Result
 
-Status: **PARTIAL — implementation, offline verification, and Local DB verification pass; the first bounded REAL_PROVIDER verification exposed strict-schema defects and remains BLOCKED.**
+Status: **PARTIAL — schema/error handling and Local DB budget verification pass; repaired REAL_PROVIDER verification is BLOCKED pending a new explicit paid-test authorization.**
 
-R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. No paid call, hosted Supabase access, deployment, push, or merge occurred.
+R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. The repair verification below made no paid call and did not access hosted Supabase, deploy, push, or merge.
 
 The initial missing model and pricing configuration was supplied on 2026-11-04. The bounded live verification below used `gpt-6.1-sol` with Standard service tier, low reasoning effort, and explicit $2/M input and $10/M output pricing. The configured API key was neither printed nor overwritten.
 
 ## Implementation
 
-- `worker/src/personal_brain/llm_client.py`: additive `generate_with_metadata()` returning validated structured output, provider/model, authoritative usage, latency, and request ID. Existing `generate()` delegates to it and preserves its return contract.
-- `worker/src/personal_brain/research/deep_llm.py`: separately configured R2B and R2C adapters, provider-compatible strict schemas, Pydantic validation, one bounded repair, verified pricing, conservative input/output upper-bound reservations, and explicit unknown-outcome errors.
+- `worker/src/personal_brain/llm_client.py`: additive `generate_with_metadata()` returning validated structured output, provider/model, authoritative usage, latency, and request ID. Existing `generate()` delegates to it and preserves its return contract. Provider rejection, timeout, transport failure, and invalid structured response now have distinct error kinds while retaining any available usage/request metadata.
+- `worker/src/personal_brain/research/deep_llm.py`: separately configured R2B and R2C adapters, provider-compatible strict schemas, Pydantic validation, one bounded repair, verified pricing, conservative input/output upper-bound reservations, and explicit unknown-outcome errors. Unexpected service tier, cache use, or missing usage fail closed because configured Standard pricing would no longer be authoritative.
 - `worker/src/personal_brain/research/deep_planning.py`: aggregates initial/repair usage and cost; marks fallback distinctly and propagates provider failures.
 - `worker/src/personal_brain/research/deep_evaluation.py`: model output excludes backend-owned identity and telemetry fields; the backend adds them after validation. Success and fallback are persisted distinctly.
+- `worker/src/personal_brain/research/schema_utils.py`: Deep schemas preserve provider-supported numeric bounds while the default mode retains Legacy compatibility. R2C scores remain independently enforced by Pydantic and are never coerced.
 - `worker/src/personal_brain/research/deep_coordinator.py`: reserves before every R2B/R2C operation, settles actual priced usage, preserves the entire reservation as uncertain when the provider outcome/usage is unknown, records request IDs, and rechecks lease/deadline after calls before persistence.
 - `worker/src/personal_brain/runner.py`: injects both production adapters only into the Deep coordinator. Missing model/pricing configuration fails closed. Legacy injection is unchanged.
 - `supabase/migrations/20261104002931_enforce_deep_research_daily_budget.sql`: additive daily aggregate budget with Asia/Taipei date boundary; atomic run/daily/monthly reservation and settlement locks. Limits remain $0.50/run, $2/day, $10/month, with $0.10 protected final-stage reserve.
@@ -45,39 +46,51 @@ PYTHONPATH=worker/src:. worker/.venv/bin/pytest worker/tests -q \
   --ignore=worker/tests/research/test_research_pipeline_live.py
 ```
 
-Latest result: **183 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes, strict schemas, bounded repair, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation.
+Latest result: **189 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes/service tiers, strict schemas, bounded repair diagnostics, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation. Focused regressions reproduce the prior untyped R2B object and out-of-range R2C scores; the latter proves the invalid first response is not coerced and its usage/request ID/cost survive the single bounded repair.
 
 ### LOCAL_DB — PASS
 
-An isolated disposable project `personal-brain-deep-llm-20261104` used PostgreSQL 15.19 on port 58322 with a unique Docker network and volume. Existing local projects on ports 5432x and 5532x were inventoried and untouched. Only the isolated database service was started. It was stopped with `--no-backup`, and its container and volume were removed after verification.
+The repair verification used a newly created disposable project `pb-r2bc-verify-ptq3of` on port 57322 with a unique Docker volume created at 2026-11-04T01:30:27Z. Existing local projects on ports 5432x and 5532x were inventoried and untouched. Only the isolated database service was started. It was stopped with `--no-backup`; its container and volume were confirmed absent afterward.
 
 ```sh
-supabase start --workdir work/deep-llm-db.UO3lv4 \
+supabase start --workdir /tmp/pb-r2bc-verify-ptQ3Of \
   -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
-supabase migration list --local --workdir work/deep-llm-db.UO3lv4
-supabase test db --workdir work/deep-llm-db.UO3lv4
-supabase db lint --local --schema public --level warning --fail-on error \
-  --workdir work/deep-llm-db.UO3lv4
+supabase test db --workdir /tmp/pb-r2bc-verify-ptQ3Of
+supabase test db --workdir /tmp/pb-r2bc-verify-ptQ3Of \
+  /tmp/pb-r2bc-verify-ptQ3Of/supabase/tests/deep_research_llm_budget.test.sql \
+  /tmp/pb-r2bc-verify-ptQ3Of/supabase/tests/deep_research_budget_concurrency.test.sql \
+  /tmp/pb-r2bc-verify-ptQ3Of/supabase/tests/deep_research_durability.test.sql
+supabase db lint --workdir /tmp/pb-r2bc-verify-ptQ3Of --level error
 ```
 
 Results:
 
 - Clean migration replay: **33/33 migrations**.
-- pgTAP: **19 files, 507/507 assertions PASS**.
-- Dedicated R2B/R2C real PostgreSQL budget test: **14/14 PASS**, including separate reservations, starts, settlements, releases, ledger events, exact run/daily/monthly balances, and hard daily/monthly caps.
-- DB lint: **0 errors**; five pre-existing warnings across four functions.
+- pgTAP: **19 files, 508/508 assertions PASS**.
+- Focused real-PostgreSQL budget/durability/concurrency run: **3 files, 54/54 assertions PASS**. The R2B/R2C file is **15/15 PASS** and now uses the proposed $0.0422/$0.0565 reservations. It covers reserve-before-start, settlement, unused-reservation release, ledger events, and run/daily/monthly balances. The other files verify two actual PostgreSQL sessions, duplicate settlement fencing, lease takeover, and conservative `outcome_unknown` accounting.
+- DB lint: **0 errors**.
 
 ### REAL_PROVIDER — BLOCKED after one R2B and one R2C request
 
-At execution time, the deterministic fixtures produced reservations of $0.0420 for R2B and $0.0573 for R2C, including one possible bounded repair per operation. The combined $0.0993 stayed below the approved $0.10 cap under the supplied $2/M input and $10/M output rates. Subsequent official-document review found that GPT-6.1 Sol implicit 30-minute cache writes have a distinct $2.50/M rate. Because both live responses lost authoritative usage, their true cache-write component is unknown; the recorded $0.0993 must not be presented as actual spend. The adapter now disables implicit caching and rejects unexpected cache usage. After the strict-schema fixes and a 950-token output limit, the current worst-case reservations are R2B $0.0423 plus R2C $0.0563 = **$0.0986**.
+At execution time, the old deterministic fixtures produced reservations of $0.0420 for R2B and $0.0573 for R2C, including one possible bounded repair per operation. The combined $0.0993 stayed below the then-approved $0.10 cap. Because both old live outcomes lost authoritative usage, that full amount remains uncertain and is never reinterpreted as zero. The adapter now uses explicit-only caching with no breakpoints and rejects unexpected cache usage.
 
 - R2B: OpenAI returned HTTP 400 before model output because `inferredAssumptions` used an untyped object map that was incompatible with strict Structured Outputs. No token usage was returned. The operation was conservatively settled as `outcome_unknown`, retaining the full $0.0420 reservation as uncertain. The schema now uses a typed `ProposedAssumption`; offline strict-schema validation passes. R2B was not retried.
-- R2C: OpenAI returned a schema-shaped response, but Pydantic rejected `expectedInformationGain=10` and `dependencyImpact=10` because the contract maximum is 5. The provider-compatible schema had removed unsupported JSON Schema numeric bounds. The test process did not persist the `DeepModelValidationError.call` metadata before exiting, so token usage and actual cost cannot be reconstructed safely. The operation was conservatively settled as `outcome_unknown`, retaining $0.0573 as uncertain. Numeric bounds are now preserved as schema descriptions while Pydantic remains authoritative. R2C was not retried.
+- R2C: OpenAI returned a schema-shaped response, but Pydantic rejected `expectedInformationGain=10` and `dependencyImpact=10` because the contract maximum is 5. The old test process did not persist the `DeepModelValidationError.call` metadata before exiting, so token usage and actual cost cannot be reconstructed safely. The operation was conservatively settled as `outcome_unknown`, retaining $0.0573 as uncertain. Current official Structured Outputs documentation permits numeric `minimum`/`maximum` for this non-fine-tuned model; the Deep schema now emits both bounds, the prompt explicitly requires integer 1–5 scores, and Pydantic remains authoritative. R2C was not retried.
 - Ledger before fixture cleanup: R2B `reserved 0.0420`, `uncertain 0.0420`; R2C `reserved 0.0573`, `uncertain 0.0573`; run/daily/monthly balances each `reserved 0`, `actual 0`, `uncertain 0.0993`.
 - The live fixture was then removed precisely. The isolated database regression returned to **19 files, 507/507 assertions PASS**. No complete Deep Research workflow ran.
 
+### Current official configuration and proposed new authorization
+
+Official documentation checked on 2026-11-04 confirms `gpt-6.1-sol` supports Chat Completions, Structured Outputs, `low` reasoning effort, and 128K maximum output. `service_tier=default` is Standard. Standard prices are $2/M ordinary input, $0.10/M cached input, $2.50/M 30-minute cache writes, and $10/M output; reasoning tokens are included in output usage. Explicit cache mode without a breakpoint performs no cache write. Sources: [model](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), and [pricing](https://developers.openai.com/api/docs/pricing).
+
+With 950 maximum completion tokens, low reasoning, Standard tier, explicit-only/no-breakpoint caching, and one possible repair per adapter, the current deterministic fixtures calculate conservative maximum reservations of **R2B $0.0422** and **R2C $0.0565**, combined **$0.0987**. This remains below the scoped $0.10 cap and is also subject to the unchanged $0.50 run, $2 daily, $10 monthly, and protected final-stage reserve controls. No new paid operation has been attempted. The two tests are prepared as separate reservations/calls and require a fresh explicit authorization for this maximum before execution.
+
+## Repair commit
+
+- `e606109` — `fix(research): harden real provider verification`
+
 ## Remaining blockers
 
-1. Do not retry under the same $0.10 test budget: its full $0.0993 is conservatively accounted as uncertain. A future explicitly approved test budget must catch and durably record validation-error call metadata before process exit, then verify the repaired strict schemas with fresh reservations.
+1. Do not retry under the old $0.10 test budget: its full $0.0993 is conservatively accounted as uncertain. The repaired R2B/R2C tests remain blocked until the user explicitly approves a new combined maximum of $0.0987 ($0.0422 + $0.0565).
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
 3. Provider/staging credentials and adapter behavior remain unverified; Web provider and frontend work were intentionally out of scope.
