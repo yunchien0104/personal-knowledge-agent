@@ -39,7 +39,7 @@ insert into auth.users (
 
 insert into public.deep_research_account_settings (
   user_id,max_cost_usd,daily_research_limit_usd,monthly_research_limit_usd
-) values ('fa000000-0000-4000-8000-000000000001',0.5000,2.0000,10.0000);
+) values ('fa000000-0000-4000-8000-000000000001',1.0000,2.0000,10.0000);
 
 create temporary table final_state (run_id uuid, job_id uuid);
 grant select,insert,update on final_state to authenticated,service_role;
@@ -49,7 +49,7 @@ insert into final_state
 select (value->>'id')::uuid,(value->>'jobId')::uuid
 from (select public.start_deep_research(
   'Finalization ledger test','fa000000-0000-4000-8000-000000000002',
-  null,'disabled','{"maxRounds":2,"maxQueries":2,"maxCostUsd":0.5,"maxDurationSeconds":300}'::jsonb,
+  null,'disabled','{"maxRounds":2,"maxQueries":2,"maxCostUsd":1.0,"maxDurationSeconds":300}'::jsonb,
   null
 ) value) started;
 reset role;
@@ -206,7 +206,7 @@ select throws_ok($sql$select public.reserve_deep_research_finalization(
     'operationId','fa000000-0000-4000-8000-000000000020',
     'idempotencyKey','final:exhaustion:test','actionType','synthesize',
     'costCategory','r2a','parametersHash',repeat('e',64),
-    'estimatedCostUsd',0.4500
+    'estimatedCostUsd',0.9500
   ))
 )$sql$,'23514','deep finalization budget is exhausted',
   'final-stage worst-case reservation fails closed at the run cap');

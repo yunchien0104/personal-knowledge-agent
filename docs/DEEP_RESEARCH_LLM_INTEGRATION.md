@@ -37,7 +37,7 @@ P0 replay safety is **PASS (offline + Local DB)**. A `reserved` operation is rec
 - `worker/src/personal_brain/research/schema_utils.py`: Deep schemas preserve provider-supported string, numeric, and array constraints while the default mode retains Legacy compatibility. R2C scores remain independently enforced by Pydantic and are never coerced.
 - `worker/src/personal_brain/research/deep_coordinator.py`: reserves before every R2B/R2C operation, settles actual priced usage, preserves the entire reservation as uncertain when the provider outcome/usage is unknown, records request IDs, and rechecks lease/deadline after calls before persistence.
 - `worker/src/personal_brain/runner.py`: injects both production adapters only into the Deep coordinator. Missing model/pricing configuration fails closed. Legacy injection is unchanged.
-- `supabase/migrations/20261104002931_enforce_deep_research_daily_budget.sql`: additive daily aggregate budget with Asia/Taipei date boundary; atomic run/daily/monthly reservation and settlement locks. Limits remain $0.50/run, $2/day, $10/month, with $0.10 protected final-stage reserve.
+- `supabase/migrations/20261104002931_enforce_deep_research_daily_budget.sql` and additive cap migration `20261104171531_increase_deep_research_run_budget_cap.sql`: Asia/Taipei daily boundary with atomic run/daily/monthly reservation and settlement locks. Current limits are $1.00/run, $2/day, and $10/month, with dynamic final-stage protection.
 - `.env.example` and `render.yaml`: server-only configuration names; no secret values.
 
 ## Configuration
@@ -52,7 +52,7 @@ Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PRO
 
 - R2B: 2 calls × 2560 output tokens, 12,346 total input-token upper bound, **$0.0759** maximum reservation.
 - R2C: 2 calls × 3584 output tokens, 18,998 total input-token upper bound, **$0.1097** maximum reservation.
-- Combined: **$0.1856**, within the non-final portion of the $0.50 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
+- Combined: **$0.1856**, within the non-final portion of the $1.00 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
 
 ## Verification
 

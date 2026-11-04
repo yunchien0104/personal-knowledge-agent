@@ -14,7 +14,7 @@ export const researchRequestSchema = z.object({
   requested_limits: z.object({
     maxRounds: z.number().int().min(1).max(10).optional(),
     maxQueries: z.number().int().min(1).max(50).optional(),
-    maxCostUsd: z.number().min(0).max(0.5).optional(),
+    maxCostUsd: z.number().min(0).max(1).optional(),
     maxDurationSeconds: z.number().int().min(30).max(14_400).optional(),
   }).strict().optional(),
   analysis_spec: z.object({

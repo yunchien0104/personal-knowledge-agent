@@ -49,8 +49,9 @@ repair session was completed on 2026-11-04. See
   unused release separately, and returns stable terminal results on replay.
 - Added deterministic pgTAP fixtures and a real two-connection `dblink` contention
   test. The latter holds the first transaction open while the second reservation
-  waits, then proves only one 0.3000 reservation fits behind the protected 0.1000
-  final reserve of a 0.5000 run.
+  waits, then proves only one 0.3000 reservation fits the fixture's 0.3000 daily
+  aggregate cap. The per-run limit is 1.0000 and its protected final reserve is
+  0.1000.
 
 ### Phase 4 — limits, terminal state, and publication replay
 

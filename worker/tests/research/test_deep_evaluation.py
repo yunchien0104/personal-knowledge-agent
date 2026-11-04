@@ -32,7 +32,7 @@ def plan():
         "internalKnowledgeScope": {"selectedAssetIds": None},
         "webPolicy": "disabled",
         "permissions": {"internalKnowledge": True, "webDiscovery": False, "webFetch": False},
-        "effectiveLimits": {"maxRounds": 3, "maxQueries": 8, "maxCostUsd": "0.5", "maxDurationSeconds": 1800},
+        "effectiveLimits": {"maxRounds": 3, "maxQueries": 8, "maxCostUsd": "1.0", "maxDurationSeconds": 1800},
         "analysisSpec": None,
     })
     return DeepResearchPlanner().plan(request, build_planning_context_pack([], request)).plan

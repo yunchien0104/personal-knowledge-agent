@@ -28,7 +28,7 @@ insert into auth.users (
 );
 insert into public.deep_research_account_settings (
   user_id, web_auto_authorized, max_cost_usd, monthly_research_limit_usd
-) values ('e1000000-0000-4000-8000-000000000001', true, 0.5000, 10.0000);
+) values ('e1000000-0000-4000-8000-000000000001', true, 1.0000, 10.0000);
 
 create temporary table web_state (run_id uuid, job_id uuid, note_id uuid);
 grant select, update, insert on web_state to authenticated, service_role;
@@ -38,7 +38,7 @@ insert into web_state
 select (result ->> 'id')::uuid, (result ->> 'jobId')::uuid
 from (select public.start_deep_research(
   'Verify current public sources', 'e2000000-0000-4000-8000-000000000001',
-  null, 'auto', '{"maxCostUsd":0.5}'::jsonb, null
+  null, 'auto', '{"maxCostUsd":1.0}'::jsonb, null
 ) result) started;
 reset role;
 set local role service_role;

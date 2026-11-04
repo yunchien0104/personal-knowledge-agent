@@ -21,7 +21,7 @@ def request(policy: str = "auto") -> ResearchRequestV1:
         "executionMode": "deep", "internalKnowledgeScope": {"selectedAssetIds": None},
         "webPolicy": policy,
         "permissions": {"internalKnowledge": True, "webDiscovery": policy != "disabled", "webFetch": auto},
-        "effectiveLimits": {"maxRounds": 3, "maxQueries": 4, "maxCostUsd": "0.5", "maxDurationSeconds": 300},
+        "effectiveLimits": {"maxRounds": 3, "maxQueries": 4, "maxCostUsd": "1.0", "maxDurationSeconds": 300},
         "analysisSpec": None,
     })
 

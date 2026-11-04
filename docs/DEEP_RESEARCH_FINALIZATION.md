@@ -42,7 +42,7 @@ reconciliation-required and is never replayed automatically.
   `publishing`. A restart reuses only a completed operation with a matching durable
   artifact. A running call taken over by a new lease is uncertain and blocks.
 - Unused worst-case R2E/R2F slots are explicitly cancelled and released. The
-  existing $0.50 run, $2 daily, $10 monthly, and protected final reserve rules are
+  existing $1.00 run, $2 daily, $10 monthly, and protected final reserve rules are
   enforced by the existing budget RPCs.
 
 ## Root cause to fix to regression mapping
@@ -73,10 +73,10 @@ At $2/M input and $10/M output with the documented defaults and six claims:
 
 The Coordinator now writes the configured finalizer envelope as the protected
 run reserve before R2B/R2C. Earlier actual, uncertain, reserved, and protected
-spend must fit the $0.50 run cap or execution fails before the next Provider
+spend must fit the $1.00 run cap or execution fails before the next Provider
 boundary. This is a hard upper-bound candidate, not a Real Provider sufficiency
-claim. The unrestricted six-claim, one-round full pipeline is still not feasible:
-the combined worst case is $0.5016. See `DEEP_RESEARCH_E2E_READINESS.md`.
+claim. The unrestricted six-claim, one-round combined worst case is $0.5016 and
+now fits the per-run cap. See `DEEP_RESEARCH_E2E_READINESS.md`.
 
 ## Verification results
 
@@ -99,7 +99,7 @@ the combined worst case is $0.5016. See `DEEP_RESEARCH_E2E_READINESS.md`.
 - A controlled Full Deep E2E needs explicit new paid authorization, a fresh
   isolated Local PostgreSQL stack, verified final-stage model/pricing/tier/cache
   configuration, representative non-sensitive evidence, and a preflight that fits
-  both the $0.3036 final envelope and the $0.50 total run cap after all prior spend.
+  both the $0.3036 final envelope and the $1.00 total run cap after all prior spend.
 - Acceptance requires real R2A output, every R2E/R2F usage/request ID, exact Ledger
   reconciliation, strict gate success or truthful insufficient result, and no
   fallback represented as Provider success. No automatic replay is permitted for

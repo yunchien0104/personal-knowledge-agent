@@ -32,7 +32,7 @@ def request_json(run_id: UUID, user_id: UUID) -> dict:
         "executionMode": "deep", "internalKnowledgeScope": {"selectedAssetIds": None},
         "webPolicy": "disabled",
         "permissions": {"internalKnowledge": True, "webDiscovery": False, "webFetch": False},
-        "effectiveLimits": {"maxRounds": 3, "maxQueries": 3, "maxCostUsd": "0.5", "maxDurationSeconds": 300},
+        "effectiveLimits": {"maxRounds": 3, "maxQueries": 3, "maxCostUsd": "1.0", "maxDurationSeconds": 300},
         "analysisSpec": None,
     }
 
@@ -246,7 +246,7 @@ def assessing_state(run_id: UUID, plan: dict) -> dict:
         proposedActions=[],
         approvedActionIds=[],
         budget=ResearchBudgetStateV1(
-            limitUsd=Decimal("0.5"), protectedFinalReportReserveUsd=Decimal("0.1"),
+            limitUsd=Decimal("1.0"), protectedFinalReportReserveUsd=Decimal("0.1"),
             reservedUsd=Decimal("0"), actualUsd=Decimal("0"),
             uncertainUsd=Decimal("0"),
         ),

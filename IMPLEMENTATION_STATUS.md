@@ -1,5 +1,26 @@
 # Personal Brain Implementation Status
 
+## Deep Research per-run budget cap (2026-11-05)
+
+- Raised only the Deep Research per-run hard cap from US$0.50 to US$1.00.
+  Daily US$2, monthly US$10, the US$0.50/day automatic-opportunity budget,
+  final-stage protection, atomic reservations, lease fencing, and publication
+  safety are unchanged.
+- Additive migration `20261104171531_increase_deep_research_run_budget_cap.sql`
+  updates the account-setting default/constraint, upgrades rows still using the
+  former product default, and replaces the current start, reservation, and
+  final-reserve RPC definitions. Explicit lower account limits remain lower.
+- Web and Worker request contracts now reject `maxCostUsd > 1.00`; no per-run
+  environment override exists, so the database setting/RPC remains the
+  authoritative runtime policy.
+- PASS: 262 non-paid Worker tests, 1 skipped, and 9 subtests; focused Web 7/7,
+  TypeScript, and ESLint.
+- PASS: disposable Supabase Local stacks. Clean 38/38 migration replay,
+  23 pgTAP files / 632 assertions, public-schema lint with zero errors, and a
+  separate upgrade-path check proving `0.5000 -> 1.0000` while an explicit
+  `0.4000` account limit remains unchanged. No hosted/production access or paid
+  Provider call occurred.
+
 ## Full Deep Research Real Provider E2E (2026-11-04)
 
 - PASS on `feat/deep-research-llm-integration`: Internal-only GPT-6.1 Sol
@@ -44,7 +65,7 @@
   Legacy Planner/R1/R2A/R2E/R2F behavior.
 - R2B/R2C reserve worst-case cost atomically before provider calls and settle
   actual usage afterward. Unknown provider outcomes retain the full reservation
-  as uncertain. Additive database enforcement covers $0.50/run, $2/day, and
+  as uncertain. Additive database enforcement covers $1.00/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
 - PASS (MOCK): 70 focused execution-layer tests; 211 broad Worker tests and 9
   subtests with sandbox-blocked HTTP/provider script modules excluded.
@@ -1054,7 +1075,7 @@
   disposable stack, including 40 dedicated finalization assertions.
 - BLOCKED (REAL_PROVIDER): no paid R2A/E/F call was authorized or run. A controlled
   Full Deep E2E requires fresh authorization and sufficient capacity for the
-  $0.3036 default worst-case final envelope within the unchanged $0.50 run cap.
+  $0.3036 default worst-case final envelope within the current $1.00 run cap.
 - Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.
 
 ### Full Deep E2E readiness (local, 2026-11-04)
@@ -1065,7 +1086,7 @@
   before non-final paid calls; crash/replay/publication safety regressions pass.
 - PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
   files / 628 assertions; public-schema lint has zero errors.
-- FAIL: unrestricted budget feasibility. One round plus six claims is $0.5016,
-  above the unchanged $0.50 run cap; cross-run daily/monthly aggregate holds are
-  also not yet durable. Real Provider Full E2E remains blocked.
+- PASS: configured budget feasibility. One round plus six claims is $0.5016 and
+  fits the current $1.00 run cap; cross-run daily/monthly aggregate holds remain
+  a separate durability limitation.
 - Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.

@@ -62,7 +62,9 @@ class ResearchPermissionsV1(DeepStrictModel):
 class ResearchLimitsV1(DeepStrictModel):
     maxRounds: int = Field(ge=1, le=10)
     maxQueries: int = Field(ge=1, le=50)
-    maxCostUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)
+    maxCostUsd: Decimal = Field(
+        ge=0, le=Decimal("1.0000"), max_digits=8, decimal_places=4
+    )
     maxDurationSeconds: int = Field(ge=30, le=14_400)
 
 
@@ -386,7 +388,9 @@ class ResearchActionV1(DeepStrictModel):
 
 
 class ResearchBudgetStateV1(DeepStrictModel):
-    limitUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)
+    limitUsd: Decimal = Field(
+        ge=0, le=Decimal("1.0000"), max_digits=8, decimal_places=4
+    )
     protectedFinalReportReserveUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)
     reservedUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)
     actualUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)

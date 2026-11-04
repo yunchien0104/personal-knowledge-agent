@@ -116,7 +116,7 @@ class FinalizationGateway(FakeGateway):
         self.final_reserve_requests.append(required_reserve_usd)
         budget = {
             "status": "protected",
-            "limitUsd": "0.5000",
+            "limitUsd": "1.0000",
             "protectedFinalReportReserveUsd": required_reserve_usd,
             "reservedUsd": "0",
             "actualUsd": "0",

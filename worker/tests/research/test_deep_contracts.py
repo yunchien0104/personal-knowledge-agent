@@ -51,7 +51,7 @@ def request_data(**changes):
         "effectiveLimits": {
             "maxRounds": 3,
             "maxQueries": 8,
-            "maxCostUsd": "0.5000",
+            "maxCostUsd": "1.0000",
             "maxDurationSeconds": 1800,
         },
         "analysisSpec": None,
@@ -197,7 +197,7 @@ def iteration_data(**changes):
         "proposedActions": [],
         "approvedActionIds": [],
         "budget": {
-            "limitUsd": "0.5000",
+            "limitUsd": "1.0000",
             "protectedFinalReportReserveUsd": "0.1000",
             "reservedUsd": "0",
             "actualUsd": "0",
@@ -217,6 +217,16 @@ def test_request_permissions_fail_closed():
             webPolicy="auto",
             permissions={"internalKnowledge": True, "webDiscovery": True, "webFetch": False},
         ))
+
+
+def test_request_enforces_one_dollar_per_run_hard_cap():
+    request = ResearchRequestV1.model_validate(request_data())
+    assert request.effectiveLimits.maxCostUsd == Decimal("1.0000")
+
+    limits = deepcopy(request_data()["effectiveLimits"])
+    limits["maxCostUsd"] = "1.0001"
+    with pytest.raises(ValidationError):
+        ResearchRequestV1.model_validate(request_data(effectiveLimits=limits))
 
 
 def test_plan_validates_references_cycles_objective_and_permissions():

@@ -26,8 +26,10 @@ limit and retain their prior prompt and payload.
 
 The successful run used Local Supabase project
 `personal-brain-full-real-e2e-20261104` on loopback ports 56421/56422 with an
-isolated account policy: one search round, three queries, `$0.50` run, `$2`
-daily, and `$10` monthly. All 37 migrations replayed; 23 pgTAP files and
+isolated account policy that was then configured as one search round, three
+queries, a `$0.50` run, `$2` daily, and `$10` monthly. That historical run limit
+is superseded by migration `20261104171531_increase_deep_research_run_budget_cap.sql`;
+the current per-run hard cap is `$1.00`. All 37 migrations replayed; 23 pgTAP files and
 628/628 assertions passed; DB lint had zero errors. The Worker regression was
 261 passed, 1 skipped, and 9 subtests passed. Three legacy manual scripts that
 make Provider calls at module import were intentionally excluded from the
@@ -98,9 +100,9 @@ R1 and R2D `$0`; finalization is `$0.1152 + $0.0314 × claims`.
 
 | Search rounds | 1 claim | 3 claims | 6 claims |
 |---:|---:|---:|---:|
-| 1 | $0.3446 | $0.4074 | **$0.5016** |
-| 2 | $0.4667 | **$0.5295** | **$0.6237** |
-| 3 | **$0.5888** | **$0.6516** | **$0.7458** |
+| 1 | $0.3446 | $0.4074 | $0.5016 |
+| 2 | $0.4667 | $0.5295 | $0.6237 |
+| 3 | $0.5888 | $0.6516 | $0.7458 |
 
 For Web-enabled runs add the configured `$0.0100` envelope per Web round, so
 the three rows add `$0.0100`, `$0.0200`, and `$0.0300` respectively. Repairs and
@@ -109,12 +111,13 @@ reverification are already included. Unknown outcomes remain fully charged.
 The old `$0.10` final reserve is not sufficient for any configured finalization
 envelope above one claim: the verified final costs are `$0.1466`, `$0.2094`, and
 `$0.3036` for 1/3/6 claims. The new dynamic reserve fixes that unsafe assumption
-without changing the `$0.50` hard cap. Staged settlement/release improves typical
-capacity, but it cannot make an infeasible worst-case combination feasible.
+within the current `$1.00` hard cap. Staged settlement/release still improves
+typical capacity while every worst-case reservation remains fail-closed.
 
-`BUDGET_FEASIBILITY` is therefore **FAIL** for the unrestricted default (six
-claims, even one search round, is `$0.0016` over the run cap). The system now
-fails before R2B when its configured final envelope cannot be protected, and
+`BUDGET_FEASIBILITY` is **PASS** for every configured combination in the table;
+the largest listed Internal-only combination is `$0.7458`, or `$0.7758` with the
+documented three Web-round envelopes. The system still fails before R2B when its
+configured final envelope cannot be protected, and
 before any later paid operation that would consume protected run funds. A
 separate aggregate hold across concurrent runs is not yet represented in the
 daily/monthly budget rows; controlled Real E2E must use an isolated test account
@@ -142,15 +145,15 @@ with no concurrent paid run until that P1 gap is closed.
 ## Readiness verdict
 
 - `FULL_PIPELINE_OFFLINE_E2E`: **PASS**
-- `BUDGET_FEASIBILITY`: **FAIL** for unrestricted default maxima
+- `BUDGET_FEASIBILITY`: **PASS** for the configured maxima above
 - `REPLAY_AND_PUBLICATION_SAFETY`: **PASS**
 - `LEGACY_COMPATIBILITY`: **PASS** (unchanged Legacy path; full non-paid regression)
-- `REAL_PROVIDER_FULL_E2E`: **BLOCKED** (not authorized and budget conditions below)
+- `REAL_PROVIDER_FULL_E2E`: **PASS** for the controlled Internal-only run documented above
 
-Recommended first controlled Real Provider E2E: Internal-only, one retrieval
-round, at most three claims, no concurrent run on the test account, at least
-`$0.50` daily/monthly headroom, verified model/pricing/tier/cache configuration,
-and a scoped authorization of **$0.42**. Its conservative worst case is `$0.4074`;
-the unchanged `$0.50` run cap leaves `$0.0926` headroom. Acceptance requires all
+Any subsequent controlled Real Provider E2E should remain Internal-only unless
+Web is separately authorized, use no concurrent paid run on the test account,
+retain sufficient daily/monthly headroom, and verify model/pricing/tier/cache
+configuration. The current `$1.00` run cap does not replace explicit paid-test
+authorization. Acceptance requires all
 request IDs and usage, exact Ledger reconciliation, strict R2E/R2F gate outcome,
 one publication, and zero automatic replay of an uncertain operation.

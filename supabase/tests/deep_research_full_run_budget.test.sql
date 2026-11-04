@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(20);
+select plan(24);
 
 select has_function('public','ensure_deep_research_final_reserve',
   array['uuid','text','bigint','numeric'],
@@ -26,7 +26,17 @@ insert into auth.users (
 
 insert into public.deep_research_account_settings (
   user_id,max_cost_usd,daily_research_limit_usd,monthly_research_limit_usd
-) values ('fc000000-0000-4000-8000-000000000001',0.5000,2.0000,10.0000);
+) values ('fc000000-0000-4000-8000-000000000001',1.0000,2.0000,10.0000);
+
+select is((select column_default from information_schema.columns
+  where table_schema='public' and table_name='deep_research_account_settings'
+    and column_name='max_cost_usd'),'1.0000',
+  'Deep Research account settings default to the one-dollar run cap');
+select throws_ok($$update public.deep_research_account_settings
+  set max_cost_usd=1.0001
+  where user_id='fc000000-0000-4000-8000-000000000001'$$,
+  '23514','new row for relation "deep_research_account_settings" violates check constraint "deep_research_account_settings_max_cost_usd_check"',
+  'database rejects an account run cap above one dollar');
 
 create temporary table full_budget_state (run_id uuid, job_id uuid);
 grant select,insert on full_budget_state to authenticated,service_role;
@@ -37,7 +47,7 @@ select (value->>'id')::uuid,(value->>'jobId')::uuid
 from (select public.start_deep_research(
   'Full run budget protection','fc000000-0000-4000-8000-000000000002',
   null,'disabled',
-  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":0.5,"maxDurationSeconds":300}'::jsonb,
+  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":1.0,"maxDurationSeconds":300}'::jsonb,
   null
 ) value) started;
 reset role;
@@ -87,16 +97,25 @@ select is((select uncertain_usd from public.research_run_budgets
 select is(public.reserve_deep_research_operation(
   (select job_id from full_budget_state),'full-budget-worker',1,
   'fc000000-0000-4000-8000-000000000012','full:r2c:2','evaluate_evidence','r2c',
-  repeat('c',64),0.1221
+  repeat('c',64),0.5000
+)->>'status','reserved',
+  'the raised run cap admits work that remains below one dollar');
+select is(public.reserve_deep_research_operation(
+  (select job_id from full_budget_state),'full-budget-worker',1,
+  'fc000000-0000-4000-8000-000000000013','full:r2c:3','evaluate_evidence','r2c',
+  repeat('d',64),0.0644
 )->>'status','budget_exhausted',
-  'another R2C round stops before payment when it would consume final funds');
+  'the one-dollar run cap still fails closed before payment');
 select is((select count(*) from public.research_operations
-  where id='fc000000-0000-4000-8000-000000000012'),0::bigint,
+  where id='fc000000-0000-4000-8000-000000000013'),0::bigint,
   'rejected R2C does not create an unreserved provider operation');
-select is((select actual_usd+uncertain_usd+protected_final_reserve_usd
+select is((select reserved_usd+actual_usd+uncertain_usd+protected_final_reserve_usd
   from public.research_run_budgets
-  where research_run_id=(select run_id from full_budget_state)),0.4357::numeric,
+  where research_run_id=(select run_id from full_budget_state)),0.9357::numeric,
   'actual, uncertain, and protected amounts reconcile below the hard run cap');
+select is((select limit_usd from public.research_run_budgets
+  where research_run_id=(select run_id from full_budget_state)),1.0000::numeric,
+  'the effective per-run hard cap is one dollar');
 
 reset role;
 set local role authenticated;
@@ -117,7 +136,7 @@ select is(public.ensure_deep_research_final_reserve(
 ),null::jsonb,'stale lease cannot change finalization protection');
 select is((select count(*) from public.research_budget_ledger
   where research_run_id=(select run_id from full_budget_state)
-    and event_type in ('reserved','settled','released','uncertain')),5::bigint,
+    and event_type in ('reserved','settled','released','uncertain')),6::bigint,
   'paid-stage ledger records reservation, settlement, release, and uncertainty exactly once');
 
 select * from finish();

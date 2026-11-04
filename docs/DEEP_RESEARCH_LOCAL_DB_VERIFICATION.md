@@ -90,11 +90,12 @@ accidentally target another host-published Supabase stack.
 
 Verified sequence:
 
-1. Session one reserved `0.3000` of a `0.5000` run while its transaction remained
+1. Session one reserved `0.3000` of a `1.0000` run while its transaction remained
    uncommitted.
 2. Session two overlapped and blocked on the locked budget row.
 3. After session one committed, session two returned `budget_exhausted` because the
-   protected final reserve was `0.1000`.
+   isolated fixture's daily aggregate cap was `0.3000`; the per-run cap remained
+   `1.0000` with a protected final reserve of `0.1000`.
 4. Exactly one operation and one reservation ledger event existed.
 5. Two sessions then settled the winning operation concurrently at `0.2000`.
 6. The first settlement mutated accounting; the second returned an idempotent replay.

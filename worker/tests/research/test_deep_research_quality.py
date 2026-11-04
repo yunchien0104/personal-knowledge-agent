@@ -32,7 +32,7 @@ def quality_contracts():
         "internalKnowledgeScope": {"selectedAssetIds": None},
         "webPolicy": "disabled",
         "permissions": {"internalKnowledge": True, "webDiscovery": False, "webFetch": False},
-        "effectiveLimits": {"maxRounds": 3, "maxQueries": 8, "maxCostUsd": "0.5", "maxDurationSeconds": 1800},
+        "effectiveLimits": {"maxRounds": 3, "maxQueries": 8, "maxCostUsd": "1.0", "maxDurationSeconds": 1800},
         "analysisSpec": None,
     })
     plan = DeepResearchPlanner().plan(
@@ -54,7 +54,7 @@ def quality_contracts():
         proposedActions=[],
         approvedActionIds=[],
         budget=ResearchBudgetStateV1(
-            limitUsd=Decimal("0.5"), protectedFinalReportReserveUsd=Decimal("0.1"),
+            limitUsd=Decimal("1.0"), protectedFinalReportReserveUsd=Decimal("0.1"),
             reservedUsd=Decimal("0"), actualUsd=Decimal("0"), uncertainUsd=Decimal("0"),
         ),
         consecutiveNoInformationGainRounds=0,

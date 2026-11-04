@@ -47,7 +47,7 @@ def request():
         "internalKnowledgeScope": {"selectedAssetIds": None},
         "webPolicy": "disabled",
         "permissions": {"internalKnowledge": True, "webDiscovery": False, "webFetch": False},
-        "effectiveLimits": {"maxRounds": 2, "maxQueries": 2, "maxCostUsd": "0.5", "maxDurationSeconds": 300},
+        "effectiveLimits": {"maxRounds": 2, "maxQueries": 2, "maxCostUsd": "1.0", "maxDurationSeconds": 300},
         "analysisSpec": None,
     })
 

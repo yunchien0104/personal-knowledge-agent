@@ -45,7 +45,7 @@ test("deep request is bounded and routes to a separate RPC", async () => {
     request_key: "98000000-0000-4000-8000-000000000008",
     mode: "deep",
     web_policy: "disabled",
-    requested_limits: { maxRounds: 3, maxQueries: 12, maxCostUsd: 0.5 },
+    requested_limits: { maxRounds: 3, maxQueries: 12, maxCostUsd: 1 },
   });
   let rpcName = "";
   let rpcArguments: Record<string, unknown> = {};
@@ -63,6 +63,10 @@ test("deep request is bounded and routes to a separate RPC", async () => {
   assert.equal(researchRequestSchema.safeParse({
     ...parsed,
     requested_limits: { maxRounds: 11 },
+  }).success, false);
+  assert.equal(researchRequestSchema.safeParse({
+    ...parsed,
+    requested_limits: { maxCostUsd: 1.0001 },
   }).success, false);
 });
 

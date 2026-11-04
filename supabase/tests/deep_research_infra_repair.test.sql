@@ -21,7 +21,7 @@ select (result ->> 'id')::uuid, (result ->> 'jobId')::uuid
 from (select public.start_deep_research(
   'Repair abandoned operation reservation',
   'f2000000-0000-4000-8000-000000000001', null, 'disabled',
-  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":0.5,"maxDurationSeconds":300}'::jsonb,
+  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":1.0,"maxDurationSeconds":300}'::jsonb,
   null
 ) result) started;
 reset role;

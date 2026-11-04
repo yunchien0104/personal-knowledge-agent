@@ -22,14 +22,14 @@ insert into auth.users (
 );
 insert into public.deep_research_account_settings (
   user_id, max_cost_usd, daily_research_limit_usd, monthly_research_limit_usd
-) values ('f4000000-0000-4000-8000-000000000001', 0.5000, 0.3000, 10.0000);
+) values ('f4000000-0000-4000-8000-000000000001', 1.0000, 0.3000, 10.0000);
 
 set role authenticated;
 set request.jwt.claim.sub = 'f4000000-0000-4000-8000-000000000001';
 select public.start_deep_research(
   'Prove atomic Deep Research budget reservations',
   'f4000000-0000-4000-8000-000000000002', null, 'disabled',
-  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":0.5,"maxDurationSeconds":300}'::jsonb,
+  '{"maxRounds":3,"maxQueries":3,"maxCostUsd":1.0,"maxDurationSeconds":300}'::jsonb,
   null
 );
 reset role;
