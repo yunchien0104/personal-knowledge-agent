@@ -8,9 +8,9 @@ Baseline: `00d3c15`
 
 ## Result
 
-Status: **PARTIAL — schema/error handling and Local DB budget verification pass; repaired REAL_PROVIDER verification is BLOCKED pending a new explicit paid-test authorization.**
+Status: **PARTIAL — schema/error handling and Local DB budget verification pass; the authorized repaired R2B call exposed a second contract defect, so R2C was not run.**
 
-R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. The repair verification below made no paid call and did not access hosted Supabase, deploy, push, or merge.
+R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. The explicitly authorized verification below made one bounded R2B paid call. It did not call R2C, access hosted Supabase, deploy, push, or merge.
 
 The initial missing model and pricing configuration was supplied on 2026-11-04. The bounded live verification below used `gpt-6.1-sol` with Standard service tier, low reasoning effort, and explicit $2/M input and $10/M output pricing. The configured API key was neither printed nor overwritten.
 
@@ -70,7 +70,7 @@ Results:
 - Focused real-PostgreSQL budget/durability/concurrency run: **3 files, 54/54 assertions PASS**. The R2B/R2C file is **15/15 PASS** and now uses the proposed $0.0422/$0.0565 reservations. It covers reserve-before-start, settlement, unused-reservation release, ledger events, and run/daily/monthly balances. The other files verify two actual PostgreSQL sessions, duplicate settlement fencing, lease takeover, and conservative `outcome_unknown` accounting.
 - DB lint: **0 errors**.
 
-### REAL_PROVIDER — BLOCKED after one R2B and one R2C request
+### Initial REAL_PROVIDER verification — historical R2B/R2C failures
 
 At execution time, the old deterministic fixtures produced reservations of $0.0420 for R2B and $0.0573 for R2C, including one possible bounded repair per operation. The combined $0.0993 stayed below the then-approved $0.10 cap. Because both old live outcomes lost authoritative usage, that full amount remains uncertain and is never reinterpreted as zero. The adapter now uses explicit-only caching with no breakpoints and rejects unexpected cache usage.
 
@@ -83,7 +83,23 @@ At execution time, the old deterministic fixtures produced reservations of $0.04
 
 Official documentation checked on 2026-11-04 confirms `gpt-6.1-sol` supports Chat Completions, Structured Outputs, `low` reasoning effort, and 128K maximum output. `service_tier=default` is Standard. Standard prices are $2/M ordinary input, $0.10/M cached input, $2.50/M 30-minute cache writes, and $10/M output; reasoning tokens are included in output usage. Explicit cache mode without a breakpoint performs no cache write. Sources: [model](https://developers.openai.com/api/docs/models/gpt-6.1-sol), [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching), and [pricing](https://developers.openai.com/api/docs/pricing).
 
-With 950 maximum completion tokens, low reasoning, Standard tier, explicit-only/no-breakpoint caching, and one possible repair per adapter, the current deterministic fixtures calculate conservative maximum reservations of **R2B $0.0422** and **R2C $0.0565**, combined **$0.0987**. This remains below the scoped $0.10 cap and is also subject to the unchanged $0.50 run, $2 daily, $10 monthly, and protected final-stage reserve controls. No new paid operation has been attempted. The two tests are prepared as separate reservations/calls and require a fresh explicit authorization for this maximum before execution.
+With 950 maximum completion tokens, low reasoning, Standard tier, explicit-only/no-breakpoint caching, and one possible repair per adapter, the deterministic fixtures calculated conservative maximum reservations of **R2B $0.0422** and **R2C $0.0565**, combined **$0.0987**. The user explicitly authorized this new maximum. The controlled R2B process used a stricter 945-token ceiling to keep its current fixture at $0.0422; the prepared evidence-bearing R2C fixture would use 775 tokens and estimates $0.0557 inside its approved $0.0565 reservation.
+
+### Authorized REAL_PROVIDER verification — R2B FAIL, R2C BLOCKED
+
+A new disposable Local PostgreSQL project `pb-r2bc-live-0rfldo` ran on port 59322. The original prior live fixture had already been removed; therefore this isolated record first re-established the old $0.0420 and $0.0573 unknown outcomes as two explicit carry-forward Ledger operations. Before the new call, run/daily/monthly each showed `uncertain=0.0993`. Available capacity was $0.3007 non-final run budget, $1.9007 daily, and $9.9007 monthly, so the approved $0.0987 fit every limit without consuming the protected $0.10 final reserve.
+
+Exactly one new R2B request was made. The $0.0422 reservation was durable and `running` before the provider boundary. No automatic repair or retry was enabled. OpenAI returned a strict-schema-shaped proposal, but conversion into the authoritative `ResearchPlanV1` failed because the model emitted `evidenceType="Internal specifications and acceptance criteria"`; `EvidenceRequirementV1` permits only `fact`, `comparison`, `trend`, `counter_evidence`, `primary_source`, or `other`. Root cause: `ProposedRequirement.evidenceType` is still typed as unconstrained `str`, so the provider schema did not enforce the backend enum.
+
+- Provider/model/tier: `openai` / `gpt-6.1-sol` / `default`.
+- Request ID: `req_41b66c2c5a6447e4b05bb5ce32e0bac6`.
+- Usage: 878 input, 834 output, 1,712 total, 0 cached input, 0 cache-write, 0 reasoning tokens.
+- Priced cost: `(878 × $2 + 834 × $10) / 1M = $0.010096`, conservatively settled as **$0.0101**.
+- Ledger: operation `failed`; $0.0101 `settled`, $0.0321 `released`; run/daily/monthly each ended with `reserved=0`, `actual=0.0101`, `uncertain=0.0993`.
+- ResearchPlan: **not produced** because authoritative contract validation failed.
+- R2C: **not reserved and not called**. The database confirmed the R2C operation did not exist, per the stop-on-first-failure rule.
+
+The disposable stack was stopped with `--no-backup`; its container and volume were confirmed absent. Existing local projects on ports 5432x and 5532x remained running and untouched. No complete Deep Research workflow ran.
 
 ## Repair commit
 
@@ -91,6 +107,6 @@ With 950 maximum completion tokens, low reasoning, Standard tier, explicit-only/
 
 ## Remaining blockers
 
-1. Do not retry under the old $0.10 test budget: its full $0.0993 is conservatively accounted as uncertain. The repaired R2B/R2C tests remain blocked until the user explicitly approves a new combined maximum of $0.0987 ($0.0422 + $0.0565).
+1. Change `ProposedRequirement.evidenceType` to the same closed enum used by `EvidenceRequirementV1`, add a regression for the observed value, and re-run offline tests. Do not retry R2B or run R2C without another explicit paid-test authorization.
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
-3. Provider/staging credentials and adapter behavior remain unverified; Web provider and frontend work were intentionally out of scope.
+3. R2C remains real-provider unverified. Web provider and frontend work were intentionally out of scope.
