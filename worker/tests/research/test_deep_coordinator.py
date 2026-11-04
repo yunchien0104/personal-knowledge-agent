@@ -3,12 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from personal_brain.models import JobPayloadV1
 from personal_brain.research.deep_contracts import EvidenceAssessmentV1, ResearchPlanV1
 from personal_brain.research.deep_coordinator import DeepResearchCoordinator
 from personal_brain.research.deep_evaluation import EvaluationResult
+from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
 from personal_brain.supabase_gateway import ClaimedJob
 
 
@@ -69,6 +71,8 @@ class FakeGateway:
         self.completed: dict | None = None
         self.heartbeats = 0
         self.lease_valid = True
+        self.reservations: list[dict] = []
+        self.settlements: list[dict] = []
 
     def heartbeat(self, *_args) -> bool:
         self.heartbeats += 1
@@ -78,6 +82,7 @@ class FakeGateway:
         return deepcopy(self.bundle)
 
     def reserve_deep_research_operation(self, _job, _worker, **kwargs):
+        self.reservations.append(deepcopy(kwargs))
         operation_id = kwargs["operation_id"]
         status = self.operations.get(operation_id)
         if status is None:
@@ -92,8 +97,13 @@ class FakeGateway:
         return True
 
     def settle_deep_research_operation(self, _job, _worker, **kwargs):
+        self.settlements.append(deepcopy(kwargs))
         self.operations[kwargs["operation_id"]] = kwargs["status"]
         return {"operationId": kwargs["operation_id"], "status": kwargs["status"]}
+
+    def record_deep_research_plan(self, _job, _worker, **kwargs):
+        self.bundle["plan"] = deepcopy(kwargs["plan"])
+        return {"planId": kwargs["plan"]["planId"]}
 
     def append_deep_research_evidence(self, _job, _worker, **kwargs):
         self.appended_rounds.append(kwargs["round_number"])
@@ -339,3 +349,88 @@ def test_query_limit_stops_before_second_retrieval() -> None:
     assert result.status == "completed"
     assert retrieval.calls == ["first record"]
     assert gateway.checkpoints[-1]["stopReason"] == "max_queries_exhausted"
+
+
+def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    request["effectiveLimits"]["maxQueries"] = 1
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "direct source")
+    gateway = FakeGateway(request, None, {first["id"]: first})
+
+    class CostedPlanner:
+        def max_operation_cost(self, _request, _context):
+            return Decimal("0.0400")
+
+        def plan(self, parsed_request, context):
+            result = DeepResearchPlanner().plan(parsed_request, context)
+            return result.__class__(
+                plan=result.plan, quality=result.quality,
+                prompt_version=result.prompt_version,
+                model_provider="fixture:fallback", model_name="fixture",
+                repaired=True, fallback_used=True,
+                actual_cost_usd=Decimal("0.0200"),
+            )
+
+    class CostedEvaluator(ProgressiveEvaluator):
+        def max_operation_cost(self, _plan, _records, *, user_id):
+            del user_id
+            return Decimal("0.0500")
+
+        def assess(self, plan, records, *, user_id):
+            result = super().assess(plan, records, user_id=user_id)
+            return EvaluationResult(
+                result.assessment, repaired=False, fallback_used=False,
+                actual_cost_usd=Decimal("0.0300"),
+            )
+
+    result = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"Compare the records": [first]}),
+        planner=CostedPlanner(), evaluator=CostedEvaluator(),
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    paid_reservations = [row for row in gateway.reservations if row["cost_category"] in {"r2b", "r2c"}]
+    assert [(row["cost_category"], row["estimated_cost_usd"]) for row in paid_reservations] == [
+        ("r2b", "0.0400"), ("r2c", "0.0500"),
+    ]
+    paid_settlements = [row for row in gateway.settlements if row["actual_cost_usd"] != "0"]
+    assert [row["actual_cost_usd"] for row in paid_settlements] == ["0.0200", "0.0300"]
+    assert paid_settlements[0]["error_code"] == "r2b_fallback"
+
+
+def test_deadline_crossed_during_r2b_settles_cost_but_discards_output() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    gateway = FakeGateway(request, None, {})
+    gateway.bundle["deadlineAt"] = "2026-01-01T00:00:01+00:00"
+
+    class CostedPlanner:
+        def max_operation_cost(self, _request, _context):
+            return Decimal("0.0400")
+
+        def plan(self, parsed_request, context):
+            result = DeepResearchPlanner().plan(parsed_request, context)
+            return result.__class__(
+                plan=result.plan, quality=result.quality,
+                prompt_version=result.prompt_version,
+                model_provider="fixture", model_name="fixture",
+                repaired=False, fallback_used=False,
+                actual_cost_usd=Decimal("0.0200"),
+                request_ids=("req-r2b",),
+            )
+
+    moments = iter([
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+    ])
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}), planner=CostedPlanner(),
+        clock=lambda: next(moments),
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert gateway.bundle["plan"] is None
+    assert gateway.settlements[-1]["actual_cost_usd"] == "0.0200"
+    assert gateway.settlements[-1]["error_code"] == "duration_exhausted"

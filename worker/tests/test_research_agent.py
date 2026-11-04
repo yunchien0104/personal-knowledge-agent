@@ -270,6 +270,38 @@ class ResearchAgentWorkerTests(unittest.TestCase):
         self.assertIs(worker.gateway, worker.retrieval.gateway)
         self.assertEqual(worker.retrieval.provider.settings.model, "multilingual-test-model")
 
+    def test_runner_injects_real_r2b_and_r2c_adapters_only_for_deep(self):
+        with patch.dict("os.environ", {
+            "WORKER_ID": "research-worker",
+            "SUPABASE_SERVER_URL": "https://example.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "sb_secret_" + "a" * 32,
+            "EMBEDDING_API_BASE_URL": "https://api.example.test/v1",
+            "EMBEDDING_API_KEY": "embedding-secret",
+            "EMBEDDING_MODEL": "multilingual-test-model",
+            "EMBEDDING_MODEL_VERSION": "test-v1",
+            "EMBEDDING_DIMENSIONS": "1536",
+            "LLM_API_BASE_URL": "https://legacy-llm.example.test/v1",
+            "LLM_API_KEY": "legacy-secret",
+            "RESEARCH_MODEL": "legacy-research-model",
+            "DEEP_RESEARCH_ENABLED": "true",
+            "R2B_R2C_API_BASE_URL": "https://deep-llm.example.test/v1",
+            "R2B_R2C_API_KEY": "deep-test-secret",
+            "R2B_MODEL": "planner-model",
+            "R2C_MODEL": "evaluator-model",
+            "R2B_PRICING_VERIFIED": "true",
+            "R2C_PRICING_VERIFIED": "true",
+            "R2B_INPUT_COST_PER_MILLION_USD": "1",
+            "R2B_OUTPUT_COST_PER_MILLION_USD": "2",
+            "R2C_INPUT_COST_PER_MILLION_USD": "1",
+            "R2C_OUTPUT_COST_PER_MILLION_USD": "2",
+        }, clear=True):
+            worker = build_research_worker()
+
+        self.assertIsNotNone(worker.deep_processor)
+        self.assertEqual(worker.deep_processor.planner.model.model_name, "planner-model")
+        self.assertEqual(worker.deep_processor.evaluator.model.model_name, "evaluator-model")
+        self.assertEqual(worker.orchestrator.generator.model_name, "legacy-research-model")
+
     def test_research_claim_accepts_null_asset_and_typed_run_input(self):
         job = claimed_job()
         parsed = ClaimedJob.from_row({

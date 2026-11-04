@@ -31,3 +31,33 @@ services:
         sync: false
       - key: RESEARCH_MODEL
         sync: false
+      - key: R2B_R2C_API_BASE_URL
+        sync: false
+      - key: R2B_R2C_API_KEY
+        sync: false
+      - key: R2B_R2C_PROVIDER
+        sync: false
+      - key: R2B_MODEL
+        sync: false
+      - key: R2C_MODEL
+        sync: false
+      - key: R2B_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: R2C_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: R2B_TIMEOUT_SECONDS
+        sync: false
+      - key: R2C_TIMEOUT_SECONDS
+        sync: false
+      - key: R2B_PRICING_VERIFIED
+        sync: false
+      - key: R2C_PRICING_VERIFIED
+        sync: false
+      - key: R2B_INPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2B_OUTPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2C_INPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2C_OUTPUT_COST_PER_MILLION_USD
+        sync: false

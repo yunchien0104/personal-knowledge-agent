@@ -219,11 +219,13 @@ class DeepResearchCoordinator:
 
     def _settle(
         self, job: Any, worker_id: str, operation_id: UUID, *,
-        status: str = "completed", error_code: str | None = None,
+        status: str = "completed", actual_cost_usd: Decimal = ZERO,
+        error_code: str | None = None, result_ref: str | None = None,
     ) -> None:
         if self.gateway.settle_deep_research_operation(
             job, worker_id, operation_id=str(operation_id), status=status,
-            actual_cost_usd="0", error_code=error_code,
+            actual_cost_usd=format(actual_cost_usd, "f"), error_code=error_code,
+            result_ref=result_ref,
         ) is None:
             raise LeaseLostError("Worker lease is no longer valid")
 
@@ -339,14 +341,6 @@ class DeepResearchCoordinator:
                         if result is None:
                             raise LeaseLostError("Worker lease is no longer valid")
                         return ProcessResult("completed", job.id)
-                    operation_id, status = self._reserve_start(
-                        job, worker_id, request, "plan:v1", "plan_research", "r2b",
-                        {"objective": request.objective},
-                    )
-                    if status == "budget_exhausted":
-                        raise GatewayError("deep_budget_exhausted", "Deep Research budget is exhausted", retryable=False)
-                    if status == "outcome_unknown":
-                        raise GatewayError("deep_operation_uncertain", "Planning outcome is uncertain", retryable=False)
                     context = build_planning_context_pack(
                         [item.model_dump(mode="json") | {
                             "id": str(item.evidenceId), "content": item.excerpt,
@@ -355,7 +349,53 @@ class DeepResearchCoordinator:
                             "locator": item.citationLocator,
                         } for item in records], request
                     )
-                    planned = self.planner.plan(request, context)
+                    planning_estimate = self.planner.max_operation_cost(
+                        request, context
+                    ) if hasattr(self.planner, "max_operation_cost") else ZERO
+                    operation_id, status = self._reserve_start(
+                        job, worker_id, request, "plan:v1", "plan_research", "r2b",
+                        {"objective": request.objective},
+                        planning_estimate,
+                    )
+                    if status == "budget_exhausted":
+                        raise GatewayError("deep_budget_exhausted", "Deep Research budget is exhausted", retryable=False)
+                    if status == "outcome_unknown":
+                        raise GatewayError("deep_operation_uncertain", "Planning outcome is uncertain", retryable=False)
+                    try:
+                        planned = self.planner.plan(request, context)
+                    except Exception as error:
+                        from personal_brain.research.deep_llm import DeepProviderError
+                        if not isinstance(error, DeepProviderError):
+                            raise
+                        settlement = "outcome_unknown" if error.outcome_unknown else "failed"
+                        self._settle(
+                            job, worker_id, operation_id,
+                            status=settlement,
+                            actual_cost_usd=error.known_cost_usd,
+                            error_code="r2b_provider_outcome_unknown" if error.outcome_unknown
+                            else "r2b_provider_error",
+                        )
+                        raise GatewayError(
+                            "deep_provider_outcome_unknown" if error.outcome_unknown
+                            else "deep_provider_error",
+                            "R2B provider execution did not produce a usable result",
+                            retryable=False,
+                        ) from error
+                    lease.pulse()
+                    if self._deadline_exhausted(self._load(job, worker_id)):
+                        self._settle(
+                            job, worker_id, operation_id,
+                            actual_cost_usd=planned.actual_cost_usd,
+                            error_code="duration_exhausted",
+                            result_ref=",".join(planned.request_ids) or None,
+                        )
+                        result = self.gateway.complete_deep_research_without_publication(
+                            job, worker_id, outcome="insufficient",
+                            stop_reason="duration_exhausted",
+                        )
+                        if result is None:
+                            raise LeaseLostError("Worker lease is no longer valid")
+                        return ProcessResult("completed", job.id)
                     saved = self.gateway.record_deep_research_plan(
                         job, worker_id, plan=planned.plan.model_dump(mode="json"),
                         quality_gate=planned.quality.gate,
@@ -365,7 +405,12 @@ class DeepResearchCoordinator:
                     if saved is None:
                         raise LeaseLostError("Worker lease is no longer valid")
                     plan = planned.plan
-                    self._settle(job, worker_id, operation_id)
+                    self._settle(
+                        job, worker_id, operation_id,
+                        actual_cost_usd=planned.actual_cost_usd,
+                        error_code="r2b_fallback" if planned.fallback_used else None,
+                        result_ref=",".join(planned.request_ids) or None,
+                    )
                     state = ResearchIterationStateV1(
                         schemaVersion="research-iteration-state-v1", runId=request.runId,
                         planVersion=plan.planVersion, checkpointVersion=1, currentRound=0,
@@ -489,11 +534,15 @@ class DeepResearchCoordinator:
                         )
                         break
 
+                    evaluation_estimate = self.evaluator.max_operation_cost(
+                        plan, records, user_id=request.userId
+                    ) if hasattr(self.evaluator, "max_operation_cost") else ZERO
                     evaluation_id, evaluation_status = self._reserve_start(
                         job, worker_id, request, f"round:{state.currentRound}:evaluate",
                         "evaluate_evidence", "r2c",
                         {"planId": str(plan.planId), "round": state.currentRound,
                          "evidenceIds": sorted(str(item.evidenceId) for item in records)},
+                        evaluation_estimate,
                     )
                     if evaluation_status == "budget_exhausted":
                         state = state.model_copy(update={
@@ -512,14 +561,55 @@ class DeepResearchCoordinator:
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                         break
                     if evaluation_status != "completed":
-                        assessment = self.evaluator.assess(
-                            plan, records, user_id=request.userId
-                        ).assessment
+                        try:
+                            evaluated = self.evaluator.assess(
+                                plan, records, user_id=request.userId
+                            )
+                        except Exception as error:
+                            from personal_brain.research.deep_llm import DeepProviderError
+                            if not isinstance(error, DeepProviderError):
+                                raise
+                            settlement = "outcome_unknown" if error.outcome_unknown else "failed"
+                            self._settle(
+                                job, worker_id, evaluation_id,
+                                status=settlement,
+                                actual_cost_usd=error.known_cost_usd,
+                                error_code="r2c_provider_outcome_unknown" if error.outcome_unknown
+                                else "r2c_provider_error",
+                            )
+                            raise GatewayError(
+                                "deep_provider_outcome_unknown" if error.outcome_unknown
+                                else "deep_provider_error",
+                                "R2C provider execution did not produce a usable result",
+                                retryable=False,
+                            ) from error
+                        lease.pulse()
+                        if self._deadline_exhausted(self._load(job, worker_id)):
+                            self._settle(
+                                job, worker_id, evaluation_id,
+                                actual_cost_usd=evaluated.actual_cost_usd,
+                                error_code="duration_exhausted",
+                                result_ref=",".join(evaluated.request_ids) or None,
+                            )
+                            state = self._terminal_state(
+                                state, reason="duration_exhausted"
+                            )
+                            self._checkpoint(
+                                job, worker_id, state, plan_id=plan.planId,
+                                assessment_id=assessment.assessmentId if assessment else None,
+                            )
+                            break
+                        assessment = evaluated.assessment
                         if self.gateway.record_deep_research_assessment(
                             job, worker_id, assessment.model_dump(mode="json")
                         ) is None:
                             raise LeaseLostError("Worker lease is no longer valid")
-                        self._settle(job, worker_id, evaluation_id)
+                        self._settle(
+                            job, worker_id, evaluation_id,
+                            actual_cost_usd=evaluated.actual_cost_usd,
+                            error_code="r2c_fallback" if evaluated.fallback_used else None,
+                            result_ref=",".join(evaluated.request_ids) or None,
+                        )
                     elif assessment is None:
                         raise GatewayError(
                             "missing_completed_assessment",

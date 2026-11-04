@@ -8,7 +8,7 @@ select exists (select 1 from pg_extension where extname = 'dblink');
 create extension if not exists dblink with schema extensions;
 set search_path = public, extensions;
 
-select plan(13);
+select plan(16);
 
 delete from auth.users where id = 'f4000000-0000-4000-8000-000000000001';
 insert into auth.users (
@@ -21,8 +21,8 @@ insert into auth.users (
   '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb, now(), now()
 );
 insert into public.deep_research_account_settings (
-  user_id, max_cost_usd, monthly_research_limit_usd
-) values ('f4000000-0000-4000-8000-000000000001', 0.5000, 10.0000);
+  user_id, max_cost_usd, daily_research_limit_usd, monthly_research_limit_usd
+) values ('f4000000-0000-4000-8000-000000000001', 0.5000, 0.3000, 10.0000);
 
 set role authenticated;
 set request.jwt.claim.sub = 'f4000000-0000-4000-8000-000000000001';
@@ -139,6 +139,9 @@ select is((select count(*) from public.research_operations
 select is((select reserved_usd from public.research_run_budgets
   where user_id = 'f4000000-0000-4000-8000-000000000001'), 0.3000::numeric,
   'run budget contains exactly one reservation');
+select is((select reserved_usd from public.research_daily_budgets
+  where user_id = 'f4000000-0000-4000-8000-000000000001'), 0.3000::numeric,
+  'daily aggregate contains exactly one reservation');
 select is((select count(*) from public.research_budget_ledger
   where user_id = 'f4000000-0000-4000-8000-000000000001'
     and event_type = 'reserved'), 1::bigint,
@@ -216,6 +219,22 @@ select results_eq(
   $$values (0.0000::numeric, 0.2000::numeric, 0.0000::numeric)$$,
   'concurrent settlement leaves the exact final run balance'
 );
+select results_eq(
+  $$select reserved_usd, actual_usd, uncertain_usd
+    from public.research_daily_budgets
+    where user_id = 'f4000000-0000-4000-8000-000000000001'$$,
+  $$values (0.0000::numeric, 0.2000::numeric, 0.0000::numeric)$$,
+  'settlement leaves the exact final daily aggregate balance'
+);
+select is((public.reserve_deep_research_operation(
+  (select job_id from public.research_runs
+   where user_id = 'f4000000-0000-4000-8000-000000000001'
+     and request_key = 'f4000000-0000-4000-8000-000000000002'),
+  'deep-budget-owner', 1,
+  'f4000000-0000-4000-8000-000000000005', 'daily:exhausted',
+  'evaluate_evidence', 'r2c', repeat('c',64), 0.1100
+) ->> 'status'), 'budget_exhausted',
+  'daily aggregate rejects work that still fits the run and monthly budgets');
 select is((select count(*) from public.research_budget_ledger
   where user_id = 'f4000000-0000-4000-8000-000000000001'), 3::bigint,
   'duplicate settlement creates no additional ledger event');

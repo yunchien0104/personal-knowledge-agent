@@ -4,17 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Mapping, Protocol
+from typing import Any, Literal, Mapping, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
 from personal_brain.research.deep_contracts import (
     EvaluationTelemetryV1,
+    EvaluationLevel,
     EvidenceAssessmentV1,
+    EvidenceConflictV1,
+    EvidenceQualityV1,
     EvidenceRecordV1,
+    RequirementCoverageV1,
+    ResearchGapV1,
     ResearchPlanV1,
+    SubquestionAssessmentV1,
+    DeepStrictModel,
 )
+from personal_brain.llm_client import LLMUsage
 
 
 R2C_PROMPT_VERSION = "r2c-evidence-v1"
@@ -25,9 +33,25 @@ class EvidenceEvaluationModel(Protocol):
     provider: str
     model_name: str
 
-    def evaluate(self, prompt: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def evaluate(self, prompt: Mapping[str, Any]) -> Any: ...
 
-    def repair(self, prompt: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def repair(self, prompt: Mapping[str, Any]) -> Any: ...
+
+    def max_operation_cost(self, prompt: Mapping[str, Any]) -> Decimal: ...
+
+
+class ProposedEvidenceAssessment(DeepStrictModel):
+    """Only fields the R2C model is allowed to author."""
+
+    evidenceQuality: list[EvidenceQualityV1]
+    requirementCoverage: list[RequirementCoverageV1]
+    subquestionStatus: list[SubquestionAssessmentV1]
+    overallStatus: Literal["sufficient", "partial", "insufficient", "conflicted"]
+    contradiction: EvaluationLevel
+    independence: EvaluationLevel
+    conflicts: list[EvidenceConflictV1]
+    prioritizedGaps: list[ResearchGapV1]
+    explanation: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +67,10 @@ class EvaluationResult:
     assessment: EvidenceAssessmentV1
     repaired: bool
     fallback_used: bool
+    usage: LLMUsage = LLMUsage()
+    actual_cost_usd: Decimal = Decimal("0")
+    latency_ms: int = 0
+    request_ids: tuple[str, ...] = ()
 
 
 def _lineage_key(record: EvidenceRecordV1) -> str:
@@ -94,7 +122,7 @@ def evaluation_prompt(
         "researchPlan": plan.model_dump(mode="json"),
         "untrustedEvidence": [record.model_dump(mode="json") for record in records],
         "repairError": repair_error,
-        "outputSchema": EvidenceAssessmentV1.model_json_schema(),
+        "outputSchema": ProposedEvidenceAssessment.model_json_schema(),
     }
 
 
@@ -103,6 +131,7 @@ def _fallback_assessment(
     provider: str,
     model_name: str,
     usage: EvaluationUsage,
+    request_ids: tuple[str, ...] = (),
 ) -> EvidenceAssessmentV1:
     coverage = []
     gaps = []
@@ -154,6 +183,8 @@ def _fallback_assessment(
             "outputTokens": usage.output_tokens,
             "latencyMs": usage.latency_ms,
             "costUsd": usage.cost_usd,
+            "executionStatus": "fallback",
+            "providerRequestIds": list(request_ids),
         },
     })
 
@@ -215,22 +246,39 @@ class EvidenceEvaluator:
         selected, lineage = deterministic_precheck(records, user_id=user_id, run_id=plan.runId)
         provider = self.model.provider if self.model else "local"
         model_name = self.model.model_name if self.model else "conservative-r2c-v1"
-        telemetry = EvaluationTelemetryV1(
-            modelProvider=provider,
-            modelName=model_name,
-            promptVersion=R2C_PROMPT_VERSION,
-            inputTokens=usage.input_tokens,
-            outputTokens=usage.output_tokens,
-            latencyMs=usage.latency_ms,
-            costUsd=usage.cost_usd,
-        )
+        aggregate_usage = LLMUsage(usage.input_tokens, usage.output_tokens)
+        aggregate_cost = usage.cost_usd
+        aggregate_latency = usage.latency_ms
+        request_ids: tuple[str, ...] = ()
         repaired = False
         if self.model:
             error_text = None
             for attempt in range(2):
                 try:
-                    raw = self.model.evaluate(evaluation_prompt(plan, selected)) if attempt == 0 else self.model.repair(
+                    response = self.model.evaluate(evaluation_prompt(plan, selected)) if attempt == 0 else self.model.repair(
                         evaluation_prompt(plan, selected, repair_error=error_text)
+                    )
+                    if hasattr(response, "output"):
+                        raw = response.output
+                        provider = response.provider
+                        model_name = response.model_name
+                        aggregate_usage = aggregate_usage + response.usage
+                        aggregate_cost += response.cost_usd
+                        aggregate_latency += response.latency_ms
+                        if response.request_id:
+                            request_ids = (*request_ids, response.request_id)
+                    else:
+                        raw = response
+                    telemetry = EvaluationTelemetryV1(
+                        modelProvider=provider,
+                        modelName=model_name,
+                        promptVersion=R2C_PROMPT_VERSION,
+                        inputTokens=aggregate_usage.input_tokens,
+                        outputTokens=aggregate_usage.output_tokens,
+                        latencyMs=aggregate_latency,
+                        costUsd=aggregate_cost,
+                        executionStatus="provider_success",
+                        providerRequestIds=list(request_ids),
                     )
                     authoritative = dict(raw)
                     authoritative.update({
@@ -246,12 +294,64 @@ class EvidenceEvaluator:
                         _validate_references(assessment, plan, selected, lineage),
                         repaired=attempt == 1,
                         fallback_used=False,
+                        usage=aggregate_usage,
+                        actual_cost_usd=aggregate_cost,
+                        latency_ms=aggregate_latency,
+                        request_ids=request_ids,
                     )
-                except (ValidationError, ValueError, KeyError) as error:
+                except Exception as error:
+                    from personal_brain.research.deep_llm import (
+                        DeepModelValidationError,
+                        DeepProviderError,
+                    )
+                    if isinstance(error, DeepProviderError):
+                        raise error.with_previous(
+                            usage=aggregate_usage,
+                            cost_usd=aggregate_cost,
+                            latency_ms=aggregate_latency,
+                            request_ids=request_ids,
+                        ) from error
+                    if isinstance(error, DeepModelValidationError):
+                        provider = error.call.provider
+                        model_name = error.call.model_name
+                        aggregate_usage = aggregate_usage + error.call.usage
+                        aggregate_cost += error.call.cost_usd
+                        aggregate_latency += error.call.latency_ms
+                        if error.call.request_id:
+                            request_ids = (*request_ids, error.call.request_id)
+                        error_text = str(error)[:2000]
+                        repaired = True
+                        continue
+                    if not isinstance(error, (ValidationError, ValueError, KeyError)):
+                        raise
                     error_text = str(error)[:2000]
                     repaired = True
+        aggregate_evaluation_usage = EvaluationUsage(
+            aggregate_usage.input_tokens,
+            aggregate_usage.output_tokens,
+            aggregate_latency,
+            aggregate_cost,
+        )
         return EvaluationResult(
-            _fallback_assessment(plan, provider, model_name, usage),
+            _fallback_assessment(
+                plan, provider, model_name, aggregate_evaluation_usage, request_ids
+            ),
             repaired=repaired,
             fallback_used=True,
+            usage=aggregate_usage,
+            actual_cost_usd=aggregate_cost,
+            latency_ms=aggregate_latency,
+            request_ids=request_ids,
         )
+
+    def max_operation_cost(
+        self,
+        plan: ResearchPlanV1,
+        records: list[EvidenceRecordV1],
+        *,
+        user_id: UUID,
+    ) -> Decimal:
+        if self.model is None:
+            return Decimal("0")
+        selected, _ = deterministic_precheck(records, user_id=user_id, run_id=plan.runId)
+        return self.model.max_operation_cost(evaluation_prompt(plan, selected))

@@ -9,6 +9,9 @@ from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import Field, ValidationError
+from decimal import Decimal
+
+from personal_brain.llm_client import LLMUsage
 
 from personal_brain.research.deep_contracts import (
     CoverageCriterionV1,
@@ -73,9 +76,11 @@ class DeepPlanningModel(Protocol):
     provider: str
     model_name: str
 
-    def propose(self, prompt: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def propose(self, prompt: Mapping[str, Any]) -> Any: ...
 
-    def repair(self, prompt: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def repair(self, prompt: Mapping[str, Any]) -> Any: ...
+
+    def max_operation_cost(self, prompt: Mapping[str, Any]) -> Decimal: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +98,10 @@ class DeepPlanningResult:
     model_name: str
     repaired: bool
     fallback_used: bool
+    usage: LLMUsage = LLMUsage()
+    actual_cost_usd: Decimal = Decimal("0")
+    latency_ms: int = 0
+    request_ids: tuple[str, ...] = ()
 
 
 def build_planning_context_pack(
@@ -289,27 +298,95 @@ class DeepResearchPlanner:
         model_name = self.model.model_name if self.model else "deep-safe-planner-v1"
         proposal: ProposedResearchPlan | None = None
         error_text: str | None = None
+        usage = LLMUsage()
+        actual_cost = Decimal("0")
+        latency_ms = 0
+        request_ids: tuple[str, ...] = ()
         if self.model:
             try:
+                response = self.model.propose(planning_prompt(request, context))
+                if hasattr(response, "output"):
+                    raw = response.output
+                    provider = response.provider
+                    model_name = response.model_name
+                    usage = usage + response.usage
+                    actual_cost += response.cost_usd
+                    latency_ms += response.latency_ms
+                    if response.request_id:
+                        request_ids = (*request_ids, response.request_id)
+                else:
+                    raw = response
                 proposal = ProposedResearchPlan.model_validate(
-                    self.model.propose(planning_prompt(request, context))
+                    raw
                 )
                 plan = _proposal_to_plan(proposal, request)
                 quality = evaluate_plan_quality(plan)
                 if quality.gate == "needs_revision":
                     raise ValueError("; ".join(quality.reasons))
-            except (ValidationError, ValueError, KeyError) as error:
+            except Exception as error:
+                from personal_brain.research.deep_llm import (
+                    DeepModelValidationError,
+                    DeepProviderError,
+                )
+                if isinstance(error, DeepProviderError):
+                    raise error.with_previous(
+                        usage=usage,
+                        cost_usd=actual_cost,
+                        latency_ms=latency_ms,
+                        request_ids=request_ids,
+                    ) from error
+                if isinstance(error, DeepModelValidationError):
+                    provider = error.call.provider
+                    model_name = error.call.model_name
+                    usage = usage + error.call.usage
+                    actual_cost += error.call.cost_usd
+                    latency_ms += error.call.latency_ms
+                    if error.call.request_id:
+                        request_ids = (*request_ids, error.call.request_id)
+                elif not isinstance(error, (ValidationError, ValueError, KeyError)):
+                    raise
                 error_text = str(error)[:2000]
                 try:
                     repaired = True
+                    response = self.model.repair(
+                        planning_prompt(request, context, repair_error=error_text)
+                    )
+                    if hasattr(response, "output"):
+                        raw = response.output
+                        provider = response.provider
+                        model_name = response.model_name
+                        usage = usage + response.usage
+                        actual_cost += response.cost_usd
+                        latency_ms += response.latency_ms
+                        if response.request_id:
+                            request_ids = (*request_ids, response.request_id)
+                    else:
+                        raw = response
                     proposal = ProposedResearchPlan.model_validate(
-                        self.model.repair(planning_prompt(request, context, repair_error=error_text))
+                        raw
                     )
                     plan = _proposal_to_plan(proposal, request)
                     quality = evaluate_plan_quality(plan)
                     if quality.gate != "acceptable":
                         raise ValueError("repair did not pass the quality gate")
-                except (ValidationError, ValueError, KeyError):
+                except Exception as repair_error:
+                    if isinstance(repair_error, DeepProviderError):
+                        raise repair_error.with_previous(
+                            usage=usage,
+                            cost_usd=actual_cost,
+                            latency_ms=latency_ms,
+                            request_ids=request_ids,
+                        ) from repair_error
+                    if isinstance(repair_error, DeepModelValidationError):
+                        provider = repair_error.call.provider
+                        model_name = repair_error.call.model_name
+                        usage = usage + repair_error.call.usage
+                        actual_cost += repair_error.call.cost_usd
+                        latency_ms += repair_error.call.latency_ms
+                        if repair_error.call.request_id:
+                            request_ids = (*request_ids, repair_error.call.request_id)
+                    elif not isinstance(repair_error, (ValidationError, ValueError, KeyError)):
+                        raise
                     proposal = None
         if proposal is None:
             fallback = True
@@ -320,11 +397,22 @@ class DeepResearchPlanner:
             plan=plan,
             quality=quality,
             prompt_version=PLANNING_PROMPT_VERSION,
-            model_provider=provider,
+            model_provider=f"{provider}:fallback" if fallback and self.model else provider,
             model_name=model_name,
             repaired=repaired,
             fallback_used=fallback,
+            usage=usage,
+            actual_cost_usd=actual_cost,
+            latency_ms=latency_ms,
+            request_ids=request_ids,
         )
+
+    def max_operation_cost(
+        self, request: ResearchRequestV1, context: PlanningContextPackV1
+    ) -> Decimal:
+        if self.model is None:
+            return Decimal("0")
+        return self.model.max_operation_cost(planning_prompt(request, context))
 
 
 def plan_fingerprint(plan: ResearchPlanV1) -> str:

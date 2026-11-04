@@ -106,6 +106,7 @@ def test_missing_required_evidence_uses_insufficient_fallback():
     assert result.assessment.overallStatus == "insufficient"
     assert all(item.status == "missing" for item in result.assessment.requirementCoverage)
     assert result.assessment.prioritizedGaps[0].severity == "critical"
+    assert result.assessment.telemetry.executionStatus == "fallback"
 
 
 def test_unknown_evidence_id_never_enters_assessment():

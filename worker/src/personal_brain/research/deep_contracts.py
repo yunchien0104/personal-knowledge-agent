@@ -326,6 +326,8 @@ class EvaluationTelemetryV1(DeepStrictModel):
     outputTokens: int = Field(ge=0)
     latencyMs: int = Field(ge=0)
     costUsd: Decimal = Field(ge=0, max_digits=8, decimal_places=4)
+    executionStatus: Literal["provider_success", "fallback"] = "provider_success"
+    providerRequestIds: list[str] = Field(default_factory=list, max_length=2)
 
 
 class EvidenceAssessmentV1(DeepStrictModel):
