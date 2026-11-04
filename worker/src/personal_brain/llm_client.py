@@ -11,12 +11,18 @@ class LLMUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+    reasoning_tokens: int = 0
 
     def __add__(self, other: "LLMUsage") -> "LLMUsage":
         return LLMUsage(
             self.input_tokens + other.input_tokens,
             self.output_tokens + other.output_tokens,
             self.total_tokens + other.total_tokens,
+            self.cached_input_tokens + other.cached_input_tokens,
+            self.cache_write_input_tokens + other.cache_write_input_tokens,
+            self.reasoning_tokens + other.reasoning_tokens,
         )
 
 
@@ -28,6 +34,7 @@ class StructuredLLMResult:
     usage: LLMUsage
     latency_ms: int
     request_id: str | None
+    service_tier: str | None = None
 
 
 class StructuredLLMError(RuntimeError):
@@ -52,31 +59,60 @@ def _usage(raw: Any) -> LLMUsage:
     input_tokens = value.get("prompt_tokens", value.get("input_tokens", 0))
     output_tokens = value.get("completion_tokens", value.get("output_tokens", 0))
     total_tokens = value.get("total_tokens", 0)
+    input_details = value.get("prompt_tokens_details", value.get("input_tokens_details", {}))
+    output_details = value.get(
+        "completion_tokens_details", value.get("output_tokens_details", {})
+    )
+    input_details = input_details if isinstance(input_details, dict) else {}
+    output_details = output_details if isinstance(output_details, dict) else {}
+    cached_input_tokens = input_details.get("cached_tokens", 0)
+    cache_write_input_tokens = input_details.get("cache_write_tokens", 0)
+    reasoning_tokens = output_details.get("reasoning_tokens", 0)
     if not all(isinstance(item, int) and item >= 0 for item in (
-        input_tokens, output_tokens, total_tokens,
+        input_tokens, output_tokens, total_tokens, cached_input_tokens,
+        cache_write_input_tokens, reasoning_tokens,
     )):
         raise ValueError("LLM usage is invalid")
     if total_tokens == 0:
         total_tokens = input_tokens + output_tokens
     if total_tokens < input_tokens + output_tokens:
         raise ValueError("LLM total token usage is inconsistent")
-    return LLMUsage(input_tokens, output_tokens, total_tokens)
+    if cached_input_tokens + cache_write_input_tokens > input_tokens:
+        raise ValueError("LLM input token details are inconsistent")
+    if reasoning_tokens > output_tokens:
+        raise ValueError("LLM output token details are inconsistent")
+    return LLMUsage(
+        input_tokens, output_tokens, total_tokens,
+        cached_input_tokens, cache_write_input_tokens, reasoning_tokens,
+    )
 
 
 class StructuredLLMClient:
     def __init__(self, base_url: str, api_key: str, model: str,
                  *, max_output_tokens: int = 4096, timeout_seconds: int = 60,
-                 provider: str = "openai-compatible"):
+                 provider: str = "openai-compatible",
+                 reasoning_effort: str | None = None,
+                 service_tier: str | None = None,
+                 prompt_cache_mode: str | None = None):
         if not 256 <= max_output_tokens <= 8192:
             raise ValueError("max_output_tokens must be between 256 and 8192")
         if not 1 <= timeout_seconds <= 90:
             raise ValueError("timeout_seconds must be between 1 and 90")
+        if reasoning_effort not in {None, "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("reasoning_effort is unsupported")
+        if service_tier not in {None, "default"}:
+            raise ValueError("only the Standard service tier is supported")
+        if prompt_cache_mode not in {None, "explicit"}:
+            raise ValueError("prompt_cache_mode must be explicit when configured")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.max_output_tokens = max_output_tokens
         self.timeout_seconds = timeout_seconds
         self.provider = provider
+        self.reasoning_effort = reasoning_effort
+        self.service_tier = service_tier
+        self.prompt_cache_mode = prompt_cache_mode
 
     def generate(
         self,
@@ -116,6 +152,12 @@ class StructuredLLMClient:
                 },
             },
         }
+        if self.reasoning_effort is not None:
+            payload["reasoning_effort"] = self.reasoning_effort
+        if self.service_tier is not None:
+            payload["service_tier"] = self.service_tier
+        if self.prompt_cache_mode is not None:
+            payload["prompt_cache_options"] = {"mode": self.prompt_cache_mode}
 
         request = Request(
             f"{self.base_url}/chat/completions",
@@ -158,10 +200,13 @@ class StructuredLLMClient:
                 raise ValueError("structured LLM output must be an object")
             model = result.get("model") or self.model
             request_id = header_request_id or result.get("id")
+            service_tier = result.get("service_tier")
             if not isinstance(model, str) or not model:
                 raise ValueError("LLM model metadata is invalid")
             if request_id is not None and not isinstance(request_id, str):
                 raise ValueError("LLM request ID is invalid")
+            if service_tier is not None and not isinstance(service_tier, str):
+                raise ValueError("LLM service tier metadata is invalid")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             parsed_usage = usage if "usage" in locals() else LLMUsage()
             raise StructuredLLMError(
@@ -181,4 +226,5 @@ class StructuredLLMClient:
             usage=usage,
             latency_ms=latency_ms,
             request_id=request_id,
+            service_tier=service_tier,
         )

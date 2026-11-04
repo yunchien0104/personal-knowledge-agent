@@ -14,6 +14,7 @@ from personal_brain.research.deep_llm import (
 )
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
+    ProposedResearchPlan,
     build_planning_context_pack,
 )
 from personal_brain.research.schema_utils import to_openai_schema
@@ -91,6 +92,15 @@ class MissingUsageClient(FakeClient):
         )
 
 
+class UnexpectedCacheWriteClient(FakeClient):
+    def generate_with_metadata(self, **_kwargs):
+        return StructuredLLMResult(
+            output=proposal(), provider=self.provider, model=self.model,
+            usage=LLMUsage(100, 25, 125, 0, 100, 5),
+            latency_ms=4, request_id="req-cache-write", service_tier="default",
+        )
+
+
 def pricing():
     return VerifiedPricing(Decimal("1.0"), Decimal("2.0"))
 
@@ -115,6 +125,33 @@ def test_r2c_schema_excludes_backend_owned_identity_and_telemetry():
     assert "planId" not in properties
     assert "telemetry" not in properties
     assert "maxItems" not in str(schema)
+
+
+def test_r2b_schema_contains_no_untyped_object_maps():
+    schema = to_openai_schema(ProposedResearchPlan)
+
+    def assert_strict_objects(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert isinstance(node.get("properties"), dict)
+                assert node.get("required") == list(node["properties"])
+                assert node.get("additionalProperties") is False
+            for value in node.values():
+                assert_strict_objects(value)
+        elif isinstance(node, list):
+            for value in node:
+                assert_strict_objects(value)
+
+    assert_strict_objects(schema)
+
+
+def test_provider_schema_preserves_numeric_bounds_as_model_instructions():
+    schema = to_openai_schema(ProposedEvidenceAssessment)
+    gap = schema["$defs"]["ResearchGapV1"]["properties"]
+    assert "greater than or equal to 1" in gap["expectedInformationGain"]["description"]
+    assert "less than or equal to 5" in gap["expectedInformationGain"]["description"]
+    assert "minimum" not in gap["expectedInformationGain"]
+    assert "maximum" not in gap["expectedInformationGain"]
 
 
 def test_max_reservation_covers_initial_and_repair_calls():
@@ -174,6 +211,16 @@ def test_missing_authoritative_usage_is_uncertain_not_zero_cost_success():
     assert "usage" in str(caught.value)
 
 
+def test_unexpected_cache_write_is_uncertain_not_underpriced():
+    model = OpenAICompatibleDeepPlanningModel(UnexpectedCacheWriteClient([]), pricing())
+    with pytest.raises(DeepProviderError) as caught:
+        DeepResearchPlanner(model).plan(
+            request(), build_planning_context_pack([], request())
+        )
+    assert caught.value.outcome_unknown is True
+    assert "prompt caching" in str(caught.value)
+
+
 def test_environment_configuration_fails_closed_without_explicit_model_and_pricing():
     with patch.dict("os.environ", {
         "R2B_R2C_API_BASE_URL": "https://llm.example.test/v1",
@@ -181,3 +228,29 @@ def test_environment_configuration_fails_closed_without_explicit_model_and_prici
     }, clear=True):
         with pytest.raises(ValueError):
             OpenAICompatibleDeepPlanningModel.from_environment()
+
+
+def test_deep_environment_uses_bounded_standard_reasoning_configuration():
+    with patch.dict("os.environ", {
+        "R2B_R2C_API_BASE_URL": "https://api.openai.com/v1",
+        "R2B_R2C_API_KEY": "secret",
+        "R2B_R2C_PROVIDER": "openai",
+        "R2B_R2C_SERVICE_TIER": "default",
+        "R2B_R2C_PROMPT_CACHE_MODE": "explicit",
+        "R2B_MODEL": "gpt-6.1-sol",
+        "R2B_MAX_OUTPUT_TOKENS": "1024",
+        "R2B_TIMEOUT_SECONDS": "90",
+        "R2B_REASONING_EFFORT": "low",
+        "R2B_PRICING_VERIFIED": "true",
+        "R2B_INPUT_COST_PER_MILLION_USD": "2",
+        "R2B_OUTPUT_COST_PER_MILLION_USD": "10",
+    }, clear=True):
+        model = OpenAICompatibleDeepPlanningModel.from_environment()
+    assert model.client.base_url == "https://api.openai.com/v1"
+    assert model.client.provider == "openai"
+    assert model.client.model == "gpt-6.1-sol"
+    assert model.client.max_output_tokens == 1024
+    assert model.client.timeout_seconds == 90
+    assert model.client.reasoning_effort == "low"
+    assert model.client.service_tier == "default"
+    assert model.client.prompt_cache_mode == "explicit"

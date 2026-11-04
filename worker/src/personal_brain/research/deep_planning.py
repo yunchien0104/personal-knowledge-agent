@@ -63,11 +63,16 @@ class ProposedSubquestion(DeepStrictModel):
     webQueries: list[str] = Field(default_factory=list, max_length=4)
 
 
+class ProposedAssumption(DeepStrictModel):
+    description: str = Field(min_length=1, max_length=1000)
+    confidence: str = Field(min_length=1, max_length=32)
+
+
 class ProposedResearchPlan(DeepStrictModel):
     normalizedResearchIntent: str = Field(min_length=3, max_length=1000)
     objective: str = Field(min_length=3, max_length=1000)
     explicitConstraints: list[str] = Field(default_factory=list, max_length=20)
-    inferredAssumptions: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+    inferredAssumptions: list[ProposedAssumption] = Field(default_factory=list, max_length=20)
     essentialClarifications: list[str] = Field(default_factory=list, max_length=5)
     subquestions: list[ProposedSubquestion] = Field(min_length=1, max_length=8)
 
@@ -209,8 +214,8 @@ def _proposal_to_plan(proposal: ProposedResearchPlan, request: ResearchRequestV1
     assumptions = [
         {
             "id": f"assumption_{index:02d}",
-            "description": value.get("description", "Unspecified assumption"),
-            "confidence": value.get("confidence", "low"),
+            "description": value.description,
+            "confidence": value.confidence,
         }
         for index, value in enumerate(proposal.inferredAssumptions, 1)
     ]

@@ -68,6 +68,7 @@ class DeepModelCall:
     request_id: str | None
     provider: str
     model_name: str
+    service_tier: str | None = None
 
 
 class DeepModelValidationError(ValueError):
@@ -172,6 +173,16 @@ class _StructuredDeepModel:
                 latency_ms=result.latency_ms,
                 request_ids=request_ids,
             )
+        if result.usage.cached_input_tokens or result.usage.cache_write_input_tokens:
+            request_ids = (result.request_id,) if result.request_id else ()
+            raise DeepProviderError(
+                "LLM provider used prompt caching despite explicit-only mode",
+                outcome_unknown=True,
+                usage=result.usage,
+                known_cost_usd=Decimal("0"),
+                latency_ms=result.latency_ms,
+                request_ids=request_ids,
+            )
         call = DeepModelCall(
             output=result.output,
             usage=result.usage,
@@ -180,6 +191,7 @@ class _StructuredDeepModel:
             request_id=result.request_id,
             provider=result.provider,
             model_name=result.model,
+            service_tier=result.service_tier,
         )
         try:
             validated = self.output_model.model_validate(call.output)
@@ -193,6 +205,7 @@ class _StructuredDeepModel:
             request_id=call.request_id,
             provider=call.provider,
             model_name=call.model_name,
+            service_tier=call.service_tier,
         )
 
 
@@ -236,6 +249,11 @@ def _client_from_environment(prefix: str) -> StructuredLLMClient:
     api_key = os.environ.get("R2B_R2C_API_KEY", "").strip()
     model = os.environ.get(f"{prefix}_MODEL", "").strip()
     provider = os.environ.get("R2B_R2C_PROVIDER", "openai-compatible").strip()
+    reasoning_effort = os.environ.get(f"{prefix}_REASONING_EFFORT", "low").strip()
+    service_tier = os.environ.get("R2B_R2C_SERVICE_TIER", "default").strip()
+    prompt_cache_mode = os.environ.get(
+        "R2B_R2C_PROMPT_CACHE_MODE", "explicit"
+    ).strip()
     if not api_key or not model or not provider:
         raise ValueError(f"{prefix} provider configuration is incomplete")
     return StructuredLLMClient(
@@ -245,4 +263,7 @@ def _client_from_environment(prefix: str) -> StructuredLLMClient:
         max_output_tokens=int(os.environ.get(f"{prefix}_MAX_OUTPUT_TOKENS", "2048")),
         timeout_seconds=int(os.environ.get(f"{prefix}_TIMEOUT_SECONDS", "60")),
         provider=provider,
+        reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
+        prompt_cache_mode=prompt_cache_mode,
     )
