@@ -21,7 +21,11 @@ insert into public.personal_note_documents(note_id,user_id,content_json,plain_te
 ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','11111111-1111-4111-8111-111111111111','{"type":"doc","content":[]}','Synthetic');
 select is((select count(*) from public.personal_note_documents),1::bigint,'owner reads document');
 select is((select count(*) from public.notes where id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'),0::bigint,'owner cannot read other note');
-select throws_matching($$insert into public.personal_note_documents(note_id,user_id,content_json,plain_text) values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','22222222-2222-4222-8222-222222222222','{}','x')$$,'row-level security','cross-account document insert denied');
+select throws_matching(
+  $$insert into public.personal_note_documents(note_id,user_id,content_json,plain_text) values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','22222222-2222-4222-8222-222222222222','{}','x')$$,
+  'row-level security|personal note data requires an owned manual_note',
+  'cross-account document insert denied'
+);
 
 insert into public.personal_note_versions(user_id,note_id,body_revision,title,content_json,plain_text,reason) values
 ('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',1,'User A note','{"type":"doc","content":[]}','Synthetic','manual');
