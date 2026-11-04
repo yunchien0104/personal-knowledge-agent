@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING
 import json
 import os
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
@@ -76,6 +76,16 @@ class DeepModelCall:
     provider: str
     model_name: str
     service_tier: str | None = None
+    finish_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeepOperationPreflight:
+    max_calls: int
+    max_output_tokens_per_call: int
+    max_total_output_tokens: int
+    max_input_tokens: int
+    max_cost_usd: Decimal
 
 
 class DeepModelValidationError(ValueError):
@@ -95,6 +105,7 @@ class DeepProviderError(RuntimeError):
         known_cost_usd: Decimal,
         latency_ms: int,
         request_ids: tuple[str, ...] = (),
+        finish_reasons: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.error_kind = error_kind
@@ -103,6 +114,7 @@ class DeepProviderError(RuntimeError):
         self.known_cost_usd = known_cost_usd
         self.latency_ms = latency_ms
         self.request_ids = request_ids
+        self.finish_reasons = finish_reasons
 
     def with_previous(
         self,
@@ -111,6 +123,7 @@ class DeepProviderError(RuntimeError):
         cost_usd: Decimal,
         latency_ms: int,
         request_ids: tuple[str, ...],
+        finish_reasons: tuple[str, ...] = (),
     ) -> "DeepProviderError":
         return DeepProviderError(
             str(self),
@@ -120,7 +133,20 @@ class DeepProviderError(RuntimeError):
             known_cost_usd=cost_usd + self.known_cost_usd,
             latency_ms=latency_ms + self.latency_ms,
             request_ids=(*request_ids, *self.request_ids),
+            finish_reasons=(*finish_reasons, *self.finish_reasons),
         )
+
+
+RepairPolicy = Literal["repair_once", "do_not_repair"]
+
+
+def repair_policy(error: Exception) -> RepairPolicy:
+    """Only contract/semantic validation failures may consume the one repair call."""
+    if isinstance(error, DeepProviderError):
+        return "do_not_repair"
+    if isinstance(error, (DeepModelValidationError, ValidationError, ValueError, KeyError)):
+        return "repair_once"
+    return "do_not_repair"
 
 
 class _StructuredDeepModel:
@@ -136,7 +162,7 @@ class _StructuredDeepModel:
         self.provider = client.provider
         self.model_name = client.model
 
-    def max_operation_cost(self, prompt: Mapping[str, Any]) -> Decimal:
+    def operation_preflight(self, prompt: Mapping[str, Any]) -> DeepOperationPreflight:
         system = str(prompt.get("systemInstructions") or "")
         user = {key: value for key, value in prompt.items() if key != "systemInstructions"}
         input_bytes = len(json.dumps(
@@ -146,8 +172,20 @@ class _StructuredDeepModel:
         # bounded repair diagnostics and reserve both the initial and repair calls.
         repair_input_upper = input_bytes + 4096
         input_tokens_upper = input_bytes + repair_input_upper
-        output_tokens_upper = self.client.max_output_tokens * (1 + MAX_REPAIR_ATTEMPTS)
-        return self.pricing.cost(LLMUsage(input_tokens_upper, output_tokens_upper))
+        max_calls = 1 + MAX_REPAIR_ATTEMPTS
+        output_tokens_upper = self.client.max_output_tokens * max_calls
+        return DeepOperationPreflight(
+            max_calls=max_calls,
+            max_output_tokens_per_call=self.client.max_output_tokens,
+            max_total_output_tokens=output_tokens_upper,
+            max_input_tokens=input_tokens_upper,
+            max_cost_usd=self.pricing.cost(
+                LLMUsage(input_tokens_upper, output_tokens_upper)
+            ),
+        )
+
+    def max_operation_cost(self, prompt: Mapping[str, Any]) -> Decimal:
+        return self.operation_preflight(prompt).max_cost_usd
 
     def _call(self, prompt: Mapping[str, Any]) -> DeepModelCall:
         system = prompt.get("systemInstructions")
@@ -167,6 +205,7 @@ class _StructuredDeepModel:
             )
         except StructuredLLMError as error:
             request_ids = (error.request_id,) if error.request_id else ()
+            finish_reasons = (error.finish_reason,) if error.finish_reason else ()
             raise DeepProviderError(
                 str(error),
                 error_kind=error.error_kind,
@@ -175,6 +214,7 @@ class _StructuredDeepModel:
                 known_cost_usd=self.pricing.cost(error.usage),
                 latency_ms=error.latency_ms,
                 request_ids=request_ids,
+                finish_reasons=finish_reasons,
             ) from error
         if result.usage.input_tokens <= 0 or result.usage.output_tokens <= 0:
             request_ids = (result.request_id,) if result.request_id else ()
@@ -219,6 +259,7 @@ class _StructuredDeepModel:
             provider=result.provider,
             model_name=result.model,
             service_tier=result.service_tier,
+            finish_reason=result.finish_reason,
         )
         try:
             validated = self.output_model.model_validate(call.output)
@@ -233,6 +274,7 @@ class _StructuredDeepModel:
             provider=call.provider,
             model_name=call.model_name,
             service_tier=call.service_tier,
+            finish_reason=call.finish_reason,
         )
 
 
@@ -287,7 +329,10 @@ def _client_from_environment(prefix: str) -> StructuredLLMClient:
         base_url,
         api_key,
         model,
-        max_output_tokens=int(os.environ.get(f"{prefix}_MAX_OUTPUT_TOKENS", "2048")),
+        max_output_tokens=int(os.environ.get(
+            f"{prefix}_MAX_OUTPUT_TOKENS",
+            "2560" if prefix == "R2B" else "3584",
+        )),
         timeout_seconds=int(os.environ.get(f"{prefix}_TIMEOUT_SECONDS", "60")),
         provider=provider,
         reasoning_effort=reasoning_effort,

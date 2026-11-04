@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from typing import Annotated, Any, Mapping, Protocol
+from typing import Annotated, Any, Literal, Mapping, Protocol
 from uuid import UUID, uuid4
 
-from pydantic import Field, ValidationError
+from pydantic import Field
 from decimal import Decimal
 
 from personal_brain.llm_client import LLMUsage
@@ -60,14 +60,18 @@ ConstraintDescription = Annotated[str, Field(min_length=1, max_length=1000)]
 RetrievalQuery = Annotated[str, Field(min_length=2, max_length=500)]
 
 
+class ProposedQuery(DeepStrictModel):
+    source: Literal["internal", "web"]
+    query: RetrievalQuery
+
+
 class ProposedSubquestion(DeepStrictModel):
     key: PlanKey
     question: str = Field(min_length=3, max_length=500)
     priority: int = Field(ge=1, le=5)
     dependsOnKeys: list[PlanKey] = Field(default_factory=list, max_length=8)
     requirements: list[ProposedRequirement] = Field(min_length=1, max_length=5)
-    internalQueries: list[RetrievalQuery] = Field(default_factory=list, max_length=4)
-    webQueries: list[RetrievalQuery] = Field(default_factory=list, max_length=4)
+    queries: list[ProposedQuery] = Field(min_length=1, max_length=4)
 
 
 class ProposedAssumption(DeepStrictModel):
@@ -114,6 +118,7 @@ class DeepPlanningResult:
     actual_cost_usd: Decimal = Decimal("0")
     latency_ms: int = 0
     request_ids: tuple[str, ...] = ()
+    finish_reasons: tuple[str, ...] = ()
 
 
 def build_planning_context_pack(
@@ -204,14 +209,12 @@ def _proposal_to_plan(proposal: ProposedResearchPlan, request: ResearchRequestV1
             dependsOn=[key_to_id[key] for key in proposed.dependsOnKeys if key in key_to_id],
             evidenceRequirementIds=requirement_ids,
         ))
-        queries = [("internal", query) for query in proposed.internalQueries]
-        queries += [("web", query) for query in proposed.webQueries]
-        for query_index, (source, query) in enumerate(queries[:4], 1):
+        for query_index, proposed_query in enumerate(proposed.queries, 1):
             retrieval.append(RetrievalProposalV1(
                 id=f"query_{sub_index:02d}_{query_index:02d}",
                 subquestionId=subquestion_id,
-                source=source,
-                query=query,
+                source=proposed_query.source,
+                query=proposed_query.query,
                 purpose=f"Address {subquestion_id} evidence requirements",
             ))
     constraints = [
@@ -291,8 +294,7 @@ def _safe_fallback(request: ResearchRequestV1) -> ProposedResearchPlan:
             "priority": 1,
             "dependsOnKeys": [],
             "requirements": requirements,
-            "internalQueries": [request.originalQuestion],
-            "webQueries": [],
+            "queries": [{"source": "internal", "query": request.originalQuestion}],
         }],
     })
 
@@ -314,6 +316,7 @@ class DeepResearchPlanner:
         actual_cost = Decimal("0")
         latency_ms = 0
         request_ids: tuple[str, ...] = ()
+        finish_reasons: tuple[str, ...] = ()
         if self.model:
             try:
                 response = self.model.propose(planning_prompt(request, context))
@@ -326,6 +329,8 @@ class DeepResearchPlanner:
                     latency_ms += response.latency_ms
                     if response.request_id:
                         request_ids = (*request_ids, response.request_id)
+                    if response.finish_reason:
+                        finish_reasons = (*finish_reasons, response.finish_reason)
                 else:
                     raw = response
                 proposal = ProposedResearchPlan.model_validate(
@@ -340,6 +345,7 @@ class DeepResearchPlanner:
                     DeepModelValidationError,
                     DeepProviderError,
                     bounded_repair_diagnostic,
+                    repair_policy,
                 )
                 if isinstance(error, DeepProviderError):
                     raise error.with_previous(
@@ -347,6 +353,7 @@ class DeepResearchPlanner:
                         cost_usd=actual_cost,
                         latency_ms=latency_ms,
                         request_ids=request_ids,
+                        finish_reasons=finish_reasons,
                     ) from error
                 if isinstance(error, DeepModelValidationError):
                     provider = error.call.provider
@@ -356,7 +363,9 @@ class DeepResearchPlanner:
                     latency_ms += error.call.latency_ms
                     if error.call.request_id:
                         request_ids = (*request_ids, error.call.request_id)
-                elif not isinstance(error, (ValidationError, ValueError, KeyError)):
+                    if error.call.finish_reason:
+                        finish_reasons = (*finish_reasons, error.call.finish_reason)
+                if repair_policy(error) != "repair_once":
                     raise
                 error_text = bounded_repair_diagnostic(error)
                 try:
@@ -373,6 +382,8 @@ class DeepResearchPlanner:
                         latency_ms += response.latency_ms
                         if response.request_id:
                             request_ids = (*request_ids, response.request_id)
+                        if response.finish_reason:
+                            finish_reasons = (*finish_reasons, response.finish_reason)
                     else:
                         raw = response
                     proposal = ProposedResearchPlan.model_validate(
@@ -389,6 +400,7 @@ class DeepResearchPlanner:
                             cost_usd=actual_cost,
                             latency_ms=latency_ms,
                             request_ids=request_ids,
+                            finish_reasons=finish_reasons,
                         ) from repair_error
                     if isinstance(repair_error, DeepModelValidationError):
                         provider = repair_error.call.provider
@@ -398,7 +410,9 @@ class DeepResearchPlanner:
                         latency_ms += repair_error.call.latency_ms
                         if repair_error.call.request_id:
                             request_ids = (*request_ids, repair_error.call.request_id)
-                    elif not isinstance(repair_error, (ValidationError, ValueError, KeyError)):
+                        if repair_error.call.finish_reason:
+                            finish_reasons = (*finish_reasons, repair_error.call.finish_reason)
+                    if repair_policy(repair_error) != "repair_once":
                         raise
                     proposal = None
         if proposal is None:
@@ -418,6 +432,7 @@ class DeepResearchPlanner:
             actual_cost_usd=actual_cost,
             latency_ms=latency_ms,
             request_ids=request_ids,
+            finish_reasons=finish_reasons,
         )
 
     def max_operation_cost(

@@ -36,6 +36,7 @@ class StructuredLLMResult:
     latency_ms: int
     request_id: str | None
     service_tier: str | None = None
+    finish_reason: str | None = None
 
 
 class StructuredLLMError(RuntimeError):
@@ -48,6 +49,8 @@ class StructuredLLMError(RuntimeError):
         usage: LLMUsage = LLMUsage(),
         latency_ms: int = 0,
         request_id: str | None = None,
+        finish_reason: str | None = None,
+        refusal: str | None = None,
     ) -> None:
         super().__init__(message)
         self.error_kind = error_kind
@@ -55,6 +58,8 @@ class StructuredLLMError(RuntimeError):
         self.usage = usage
         self.latency_ms = latency_ms
         self.request_id = request_id
+        self.finish_reason = finish_reason
+        self.refusal = refusal
 
 
 def _usage(raw: Any) -> LLMUsage:
@@ -214,10 +219,10 @@ class StructuredLLMClient:
         try:
             result = json.loads(response_body)
             usage = _usage(result.get("usage"))
-            content = result["choices"][0]["message"]["content"]
-            output = json.loads(content)
-            if not isinstance(output, dict):
-                raise ValueError("structured LLM output must be an object")
+            choice = result["choices"][0]
+            message = choice["message"]
+            finish_reason = choice.get("finish_reason")
+            refusal = message.get("refusal")
             model = result.get("model") or self.model
             request_id = header_request_id or result.get("id")
             service_tier = result.get("service_tier")
@@ -227,6 +232,10 @@ class StructuredLLMClient:
                 raise ValueError("LLM request ID is invalid")
             if service_tier is not None and not isinstance(service_tier, str):
                 raise ValueError("LLM service tier metadata is invalid")
+            if finish_reason is not None and not isinstance(finish_reason, str):
+                raise ValueError("LLM finish reason metadata is invalid")
+            if refusal is not None and not isinstance(refusal, str):
+                raise ValueError("LLM refusal metadata is invalid")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             parsed_usage = usage if "usage" in locals() else LLMUsage()
             raise StructuredLLMError(
@@ -240,6 +249,76 @@ class StructuredLLMClient:
                     if isinstance(locals().get("result"), dict) else None
                 ),
             ) from error
+
+        terminal_errors = {
+            "length": (
+                "LLM output token budget was exhausted",
+                "output_budget_exhausted",
+            ),
+            "content_filter": (
+                "LLM response was blocked by the content filter",
+                "content_filter",
+            ),
+        }
+        if finish_reason in terminal_errors:
+            message_text, error_kind = terminal_errors[finish_reason]
+            raise StructuredLLMError(
+                message_text,
+                error_kind=error_kind,
+                outcome_unknown=False,
+                usage=usage,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                finish_reason=finish_reason,
+                refusal=refusal,
+            )
+        if refusal:
+            raise StructuredLLMError(
+                "LLM refused the structured request",
+                error_kind="provider_refusal",
+                outcome_unknown=False,
+                usage=usage,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                finish_reason=finish_reason,
+                refusal=refusal,
+            )
+        if finish_reason not in {None, "stop"}:
+            raise StructuredLLMError(
+                "LLM stopped without a structured response",
+                error_kind="unexpected_finish_reason",
+                outcome_unknown=False,
+                usage=usage,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                finish_reason=finish_reason,
+            )
+
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise StructuredLLMError(
+                "LLM returned no structured response content",
+                error_kind="empty_provider_response",
+                outcome_unknown=False,
+                usage=usage,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                finish_reason=finish_reason,
+            )
+        try:
+            output = json.loads(content)
+            if not isinstance(output, dict):
+                raise ValueError("structured LLM output must be an object")
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise StructuredLLMError(
+                "LLM structured response JSON is invalid",
+                error_kind="invalid_json_response",
+                outcome_unknown=False,
+                usage=usage,
+                latency_ms=latency_ms,
+                request_id=request_id,
+                finish_reason=finish_reason,
+            ) from error
         return StructuredLLMResult(
             output=output,
             provider=self.provider,
@@ -248,4 +327,5 @@ class StructuredLLMClient:
             latency_ms=latency_ms,
             request_id=request_id,
             service_tier=service_tier,
+            finish_reason=finish_reason,
         )

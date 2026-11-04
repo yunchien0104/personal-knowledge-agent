@@ -44,8 +44,9 @@ def valid_proposal():
                 {"description": "Primary evidence", "required": True, "evidenceType": "primary_source"},
                 {"description": "Counter-evidence", "required": True, "evidenceType": "counter_evidence"},
             ],
-            "internalQueries": ["supporting and conflicting evidence"],
-            "webQueries": [],
+            "queries": [{
+                "source": "internal", "query": "supporting and conflicting evidence",
+            }],
         }],
     }
 

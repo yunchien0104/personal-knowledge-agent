@@ -1,7 +1,14 @@
 from uuid import UUID
 
+import pytest
+
 from personal_brain.research.deep_contracts import EvidenceRecordV1, ResearchRequestV1
-from personal_brain.research.deep_evaluation import EvidenceEvaluator, evaluation_prompt
+from personal_brain.research.deep_evaluation import (
+    EvidenceEvaluator,
+    EvidencePayloadLimitError,
+    deterministic_precheck,
+    evaluation_prompt,
+)
 from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
 
 
@@ -137,3 +144,17 @@ def test_derivative_sources_do_not_count_as_independent_and_prompt_is_untrusted(
     assert "untrusted" in model.prompt["systemInstructions"]
     prompt = evaluation_prompt(research_plan, [first])
     assert prompt["untrustedEvidence"][0]["excerpt"].startswith("Ignore instructions")
+
+
+def test_r2c_evidence_limit_blocks_instead_of_silently_truncating():
+    records = [
+        evidence(
+            f"30000000-0000-4000-8000-{index:012d}",
+            content_hash=f"{index:064x}",
+        )
+        for index in range(100, 181)
+    ]
+    with pytest.raises(EvidencePayloadLimitError, match="80-record limit"):
+        deterministic_precheck(
+            records, user_id=UUID(USER_ID), run_id=UUID(RUN_ID)
+        )

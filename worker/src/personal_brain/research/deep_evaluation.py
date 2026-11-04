@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
-from pydantic import Field, ValidationError
+from pydantic import Field
 
 from personal_brain.research.deep_contracts import (
     AssessmentOverallStatusV1,
@@ -28,6 +28,10 @@ from personal_brain.llm_client import LLMUsage
 
 R2C_PROMPT_VERSION = "r2c-evidence-v1"
 MAX_EVALUATION_EVIDENCE = 80
+
+
+class EvidencePayloadLimitError(ValueError):
+    pass
 
 
 class EvidenceEvaluationModel(Protocol):
@@ -72,6 +76,7 @@ class EvaluationResult:
     actual_cost_usd: Decimal = Decimal("0")
     latency_ms: int = 0
     request_ids: tuple[str, ...] = ()
+    finish_reasons: tuple[str, ...] = ()
 
 
 def _lineage_key(record: EvidenceRecordV1) -> str:
@@ -101,8 +106,10 @@ def deterministic_precheck(
         seen_versions.add(identity)
         lineage[record.evidenceId] = _lineage_key(record)
         selected.append(record)
-        if len(selected) == MAX_EVALUATION_EVIDENCE:
-            break
+        if len(selected) > MAX_EVALUATION_EVIDENCE:
+            raise EvidencePayloadLimitError(
+                f"R2C evidence exceeds the explicit {MAX_EVALUATION_EVIDENCE}-record limit"
+            )
     return selected, lineage
 
 
@@ -253,6 +260,7 @@ class EvidenceEvaluator:
         aggregate_cost = usage.cost_usd
         aggregate_latency = usage.latency_ms
         request_ids: tuple[str, ...] = ()
+        finish_reasons: tuple[str, ...] = ()
         repaired = False
         if self.model:
             error_text = None
@@ -270,6 +278,8 @@ class EvidenceEvaluator:
                         aggregate_latency += response.latency_ms
                         if response.request_id:
                             request_ids = (*request_ids, response.request_id)
+                        if response.finish_reason:
+                            finish_reasons = (*finish_reasons, response.finish_reason)
                     else:
                         raw = response
                     telemetry = EvaluationTelemetryV1(
@@ -301,12 +311,14 @@ class EvidenceEvaluator:
                         actual_cost_usd=aggregate_cost,
                         latency_ms=aggregate_latency,
                         request_ids=request_ids,
+                        finish_reasons=finish_reasons,
                     )
                 except Exception as error:
                     from personal_brain.research.deep_llm import (
                         DeepModelValidationError,
                         DeepProviderError,
                         bounded_repair_diagnostic,
+                        repair_policy,
                     )
                     if isinstance(error, DeepProviderError):
                         raise error.with_previous(
@@ -314,6 +326,7 @@ class EvidenceEvaluator:
                             cost_usd=aggregate_cost,
                             latency_ms=aggregate_latency,
                             request_ids=request_ids,
+                            finish_reasons=finish_reasons,
                         ) from error
                     if isinstance(error, DeepModelValidationError):
                         provider = error.call.provider
@@ -323,10 +336,12 @@ class EvidenceEvaluator:
                         aggregate_latency += error.call.latency_ms
                         if error.call.request_id:
                             request_ids = (*request_ids, error.call.request_id)
+                        if error.call.finish_reason:
+                            finish_reasons = (*finish_reasons, error.call.finish_reason)
                         error_text = bounded_repair_diagnostic(error)
                         repaired = True
                         continue
-                    if not isinstance(error, (ValidationError, ValueError, KeyError)):
+                    if repair_policy(error) != "repair_once":
                         raise
                     error_text = bounded_repair_diagnostic(error)
                     repaired = True
@@ -346,6 +361,7 @@ class EvidenceEvaluator:
             actual_cost_usd=aggregate_cost,
             latency_ms=aggregate_latency,
             request_ids=request_ids,
+            finish_reasons=finish_reasons,
         )
 
     def max_operation_cost(

@@ -4,14 +4,23 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+import json
 from uuid import UUID, uuid4
 
+import pytest
+
 from personal_brain.models import JobPayloadV1
-from personal_brain.research.deep_contracts import EvidenceAssessmentV1, ResearchPlanV1
-from personal_brain.research.deep_coordinator import DeepResearchCoordinator
-from personal_brain.research.deep_evaluation import EvaluationResult
+from personal_brain.llm_client import LLMUsage
+from personal_brain.research.deep_contracts import (
+    EvidenceAssessmentV1,
+    ResearchBudgetStateV1,
+    ResearchIterationStateV1,
+    ResearchPlanV1,
+)
+from personal_brain.research.deep_coordinator import DeepResearchCoordinator, _operation_id
+from personal_brain.research.deep_evaluation import EvidenceEvaluator, EvaluationResult
 from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
-from personal_brain.supabase_gateway import ClaimedJob
+from personal_brain.supabase_gateway import ClaimedJob, GatewayError
 
 
 def request_json(run_id: UUID, user_id: UUID) -> dict:
@@ -176,6 +185,50 @@ class ProgressiveEvaluator:
         return EvaluationResult(assessment, repaired=False, fallback_used=False)
 
 
+@dataclass
+class CountingPlanner:
+    calls: int = 0
+
+    def max_operation_cost(self, _request, _context):
+        return Decimal("0.0400")
+
+    def plan(self, _request, _context):
+        self.calls += 1
+        raise AssertionError("terminal operation must not re-enter R2B")
+
+
+@dataclass
+class CountingEvaluator(ProgressiveEvaluator):
+    def max_operation_cost(self, _plan, _records, *, user_id):
+        del user_id
+        return Decimal("0.0500")
+
+
+def assessing_state(run_id: UUID, plan: dict) -> dict:
+    return ResearchIterationStateV1(
+        schemaVersion="research-iteration-state-v1",
+        runId=run_id,
+        planVersion=plan["planVersion"],
+        checkpointVersion=1,
+        currentRound=1,
+        completedRounds=[],
+        executionPhase="assessing",
+        queryFingerprints=[],
+        operationIds=[],
+        assessmentIds=[],
+        requirementProgress={"req_01": "unknown"},
+        unresolvedCriticalGapIds=[],
+        proposedActions=[],
+        approvedActionIds=[],
+        budget=ResearchBudgetStateV1(
+            limitUsd=Decimal("0.5"), protectedFinalReportReserveUsd=Decimal("0.1"),
+            reservedUsd=Decimal("0"), actualUsd=Decimal("0"),
+            uncertainUsd=Decimal("0"),
+        ),
+        consecutiveNoInformationGainRounds=0,
+    ).model_dump(mode="json")
+
+
 def evidence_row(evidence_id: UUID, asset_id: UUID, revision_id: UUID, text: str) -> dict:
     return {"evidenceId": str(evidence_id), "id": str(evidence_id), "assetId": str(asset_id),
             "revisionId": str(revision_id), "content": text, "excerpt": text,
@@ -252,6 +305,159 @@ def test_outcome_unknown_paid_or_external_operation_is_never_retried() -> None:
     assert result[2] == "outcome_unknown"
     assert retrieval.calls == []
     assert gateway.appended_rounds == []
+
+
+@pytest.mark.parametrize(
+    "operation_status,expected_code",
+    [
+        ("failed", "deep_operation_reauthorization_required"),
+        ("cancelled", "deep_operation_reauthorization_required"),
+        ("abandoned", "deep_operation_reauthorization_required"),
+        ("outcome_unknown", "deep_operation_reauthorization_required"),
+        ("running", "deep_operation_reauthorization_required"),
+        ("completed", "missing_completed_plan"),
+    ],
+)
+def test_r2b_terminal_or_inflight_operation_never_reenters_provider(
+    operation_status: str, expected_code: str
+) -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    gateway = FakeGateway(request, None, {})
+    gateway.operations[str(_operation_id(run_id, "plan:v1"))] = operation_status
+    planner = CountingPlanner()
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway, FakeRetrieval({}), planner=planner
+        ).process_claimed(job(run_id, user_id), "takeover-worker", 120)
+
+    assert caught.value.code == expected_code
+    assert planner.calls == 0
+    assert gateway.settlements == []
+
+
+@pytest.mark.parametrize(
+    "operation_status",
+    ["failed", "cancelled", "abandoned", "outcome_unknown", "running"],
+)
+def test_r2c_terminal_or_inflight_operation_blocks_without_provider_call(
+    operation_status: str,
+) -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    plan = plan_json(request)
+    gateway = FakeGateway(request, plan, {})
+    gateway.bundle["state"] = assessing_state(run_id, plan)
+    gateway.checkpoints = [deepcopy(gateway.bundle["state"])]
+    gateway.operations[
+        str(_operation_id(run_id, "round:1:evaluate"))
+    ] = operation_status
+    evaluator = CountingEvaluator()
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}), evaluator=evaluator
+    ).process_claimed(job(run_id, user_id), "takeover-worker", 120)
+
+    assert result.status == "completed"
+    assert evaluator.calls == 0
+    assert gateway.checkpoints[-1]["stopReason"] == "authorization_blocked"
+    assert gateway.settlements == []
+
+
+def test_completed_r2c_settlement_is_replayed_without_duplicate_provider_call() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    request["effectiveLimits"]["maxQueries"] = 1
+    plan = plan_json(request)
+    gateway = FakeGateway(request, plan, {})
+    gateway.bundle["state"] = assessing_state(run_id, plan)
+    gateway.checkpoints = [deepcopy(gateway.bundle["state"])]
+    assessment = ProgressiveEvaluator().assess(
+        ResearchPlanV1.model_validate(plan), [], user_id=user_id
+    ).assessment
+    gateway.bundle["assessment"] = assessment.model_dump(mode="json")
+    gateway.operations[
+        str(_operation_id(run_id, "round:1:evaluate"))
+    ] = "completed"
+    evaluator = CountingEvaluator()
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}), evaluator=evaluator
+    ).process_claimed(job(run_id, user_id), "restart-worker", 120)
+
+    assert result.status == "completed"
+    assert evaluator.calls == 0
+    assert gateway.settlements == []
+
+
+def test_r2c_oversized_evidence_blocks_before_reservation_or_provider_call() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    plan = plan_json(request)
+    rows = [
+        evidence_row(uuid4(), uuid4(), uuid4(), f"source {index}")
+        for index in range(81)
+    ]
+    gateway = FakeGateway(request, plan, {})
+    gateway.bundle["state"] = assessing_state(run_id, plan)
+    gateway.bundle["evidence"] = rows
+    gateway.checkpoints = [deepcopy(gateway.bundle["state"])]
+
+    class NeverCalledModel:
+        provider = "fixture"
+        model_name = "fixture"
+
+        def max_operation_cost(self, _prompt):
+            return Decimal("0.0500")
+
+        def evaluate(self, _prompt):
+            raise AssertionError("oversized evidence must not reach R2C")
+
+        def repair(self, _prompt):
+            raise AssertionError("oversized evidence must not reach R2C repair")
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}), evaluator=EvidenceEvaluator(NeverCalledModel())
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert not any(row["cost_category"] == "r2c" for row in gateway.reservations)
+    assert gateway.checkpoints[-1]["stopReason"] == "authorization_blocked"
+
+
+def test_r2c_budget_preflight_blocks_before_provider_call() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    plan = plan_json(request)
+
+    class BudgetRejectingGateway(FakeGateway):
+        def reserve_deep_research_operation(self, _job, _worker, **kwargs):
+            self.reservations.append(deepcopy(kwargs))
+            if kwargs["cost_category"] == "r2c":
+                return {
+                    "operationId": kwargs["operation_id"],
+                    "status": "budget_exhausted",
+                    "reservedCostUsd": "0",
+                }
+            return super().reserve_deep_research_operation(_job, _worker, **kwargs)
+
+    gateway = BudgetRejectingGateway(request, plan, {})
+    gateway.bundle["state"] = assessing_state(run_id, plan)
+    gateway.checkpoints = [deepcopy(gateway.bundle["state"])]
+    evaluator = CountingEvaluator()
+
+    result = DeepResearchCoordinator(
+        gateway, FakeRetrieval({}), evaluator=evaluator
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    assert evaluator.calls == 0
+    r2c_reservations = [
+        row for row in gateway.reservations if row["cost_category"] == "r2c"
+    ]
+    assert r2c_reservations[0]["estimated_cost_usd"] == "0.0500"
+    assert gateway.checkpoints[-1]["stopReason"] == "budget_exhausted"
 
 
 def test_stale_worker_stops_before_any_side_effect() -> None:
@@ -370,6 +576,8 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
                 model_provider="fixture:fallback", model_name="fixture",
                 repaired=True, fallback_used=True,
                 actual_cost_usd=Decimal("0.0200"),
+                usage=LLMUsage(100, 25, 125, reasoning_tokens=10),
+                request_ids=("req-r2b",), finish_reasons=("stop",),
             )
 
     class CostedEvaluator(ProgressiveEvaluator):
@@ -382,6 +590,8 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
             return EvaluationResult(
                 result.assessment, repaired=False, fallback_used=False,
                 actual_cost_usd=Decimal("0.0300"),
+                usage=LLMUsage(200, 50, 250, reasoning_tokens=20),
+                request_ids=("req-r2c",), finish_reasons=("stop",),
             )
 
     result = DeepResearchCoordinator(
@@ -398,6 +608,16 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
     paid_settlements = [row for row in gateway.settlements if row["actual_cost_usd"] != "0"]
     assert [row["actual_cost_usd"] for row in paid_settlements] == ["0.0200", "0.0300"]
     assert paid_settlements[0]["error_code"] == "r2b_fallback"
+    planning_metadata = json.loads(paid_settlements[0]["result_ref"])
+    evaluation_metadata = json.loads(paid_settlements[1]["result_ref"])
+    assert planning_metadata == {
+        "requestIds": ["req-r2b"], "finishReasons": ["stop"],
+        "usage": {"inputTokens": 100, "outputTokens": 25, "totalTokens": 125,
+                  "cachedInputTokens": 0, "cacheWriteInputTokens": 0,
+                  "reasoningTokens": 10},
+    }
+    assert evaluation_metadata["requestIds"] == ["req-r2c"]
+    assert evaluation_metadata["usage"]["reasoningTokens"] == 20
 
 
 def test_deadline_crossed_during_r2b_settles_cost_but_discards_output() -> None:

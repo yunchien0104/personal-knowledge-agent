@@ -8,11 +8,25 @@ Baseline: `00d3c15`
 
 ## Result
 
-Status: **PARTIAL — R2B/R2C Provider schemas now align with their authoritative DTO/contracts and Local DB verification passes; post-repair real-provider R2B/R2C verification still requires a new explicit paid-test authorization.**
+Status: **PARTIAL — Execution-layer replay safety, terminal-response classification, contract boundaries, and Local DB budget verification pass; R2B/R2C still require a successful post-repair real-provider verification.**
 
 R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. The explicitly authorized verification below made one bounded R2B paid call. It did not call R2C, access hosted Supabase, deploy, push, or merge.
 
 The initial missing model and pricing configuration was supplied on 2026-11-04. The bounded live verification below used `gpt-6.1-sol` with Standard service tier, low reasoning effort, and explicit $2/M input and $10/M output pricing. The configured API key was neither printed nor overwritten.
+
+## Execution-layer repair (2026-11-04)
+
+No paid provider request was made during this repair.
+
+| Root cause | Fix | Regression evidence |
+| --- | --- | --- |
+| Existing `running` and terminal operations could be returned from `_reserve_start()` and then cross the provider boundary again. | Only the worker that successfully performs `reserved -> running` receives the internal `admitted` status. Existing `running` is reconciliation-required; `failed`, `cancelled`, `abandoned`, and `outcome_unknown` require a newly authorized operation; `completed` requires the durable output. | Parameterized R2B/R2C takeover tests, outcome-unknown retrieval test, and completed-R2C replay test verify zero duplicate provider calls and zero new settlements. |
+| Chat response content was parsed before inspecting provider terminal metadata, so 950 reasoning tokens with zero visible JSON and `finish_reason=length` appeared to be invalid JSON. | Parse metadata first. `length`, refusal, content filter, unexpected finish reason, empty content, invalid JSON, timeout, and transport uncertainty now have distinct error kinds while preserving available usage, reasoning tokens, request ID, finish reason, latency, and priced cost. | Transport tests reproduce 950 reasoning / 0 visible / length, refusal, content filter, empty content, invalid JSON, and timeout. Adapter tests prove length/refusal/content-filter/invalid-JSON paths do not consume repair. |
+| Repair was selected by broad exception flow. | Explicit repair policy permits one repair only for DTO/Pydantic/backend contract validation. Provider terminal errors and unknown outcomes never repair automatically. The operation preflight reserves initial plus one repair call before either call. | Initial+repair usage aggregation, validation repair, terminal no-repair, and preflight reservation tests pass. |
+| R2B offered four internal plus four Web queries but converted only the first four. | Provider DTO now exposes one typed `queries` array of at most four `{source, query}` objects; conversion is one-to-one and never slices. | Four-query boundary converts all four; five queries fail DTO validation. |
+| R2C silently stopped after 80 accepted evidence records. | The explicit 80-record boundary now raises `EvidencePayloadLimitError`; coordinator ends `authorization_blocked` before reservation/provider execution. | 81-record regression proves fail-closed behavior with no truncation. |
+
+P0 replay safety is **PASS (offline + Local DB)**. A `reserved` operation is recoverable under the fenced lease; a pre-existing `running` operation is not assumed safe to replay. Real lease takeover remains enforced by the database generation fence, and terminal settlement replay is idempotent.
 
 ## Implementation
 
@@ -32,7 +46,13 @@ Required shared values: `R2B_R2C_API_BASE_URL`, `R2B_R2C_API_KEY`, `R2B_R2C_PROV
 
 Required per adapter: `R2B_MODEL` / `R2C_MODEL`, `R2B_MAX_OUTPUT_TOKENS` / `R2C_MAX_OUTPUT_TOKENS`, `R2B_TIMEOUT_SECONDS` / `R2C_TIMEOUT_SECONDS`, `{R2B|R2C}_PRICING_VERIFIED=true`, `{R2B|R2C}_INPUT_COST_PER_MILLION_USD`, and `{R2B|R2C}_OUTPUT_COST_PER_MILLION_USD`.
 
-Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls now use `default` (Standard), `low`, `explicit` prompt-cache mode with no breakpoints, and a 90-second timeout. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. The current bounded test setting is 950 maximum completion tokens per adapter.
+Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls use `default` (Standard), `low`, and `explicit` prompt-cache mode with no breakpoints. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. Candidate completion ceilings are now independently configured as **R2B 2560** and **R2C 3584**; they are conservative test candidates, not a sufficiency claim.
+
+`max_completion_tokens` covers visible output plus reasoning tokens. For the deterministic empty-context fixtures, the byte-conservative preflight (initial + one possible repair) produces:
+
+- R2B: 2 calls × 2560 output tokens, 12,346 total input-token upper bound, **$0.0759** maximum reservation.
+- R2C: 2 calls × 3584 output tokens, 18,998 total input-token upper bound, **$0.1097** maximum reservation.
+- Combined: **$0.1856**, within the non-final portion of the $0.50 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
 
 ## Verification
 
@@ -40,13 +60,14 @@ Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PRO
 
 ```sh
 PYTHONPATH=worker/src:. worker/.venv/bin/pytest worker/tests -q \
+  --ignore=worker/tests/test_http_server.py \
   --ignore=worker/tests/research/test_atomic_generator.py \
   --ignore=worker/tests/research/test_claim_verifier.py \
   --ignore=worker/tests/research/test_research_generator.py \
   --ignore=worker/tests/research/test_research_pipeline_live.py
 ```
 
-Latest result: **194 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes/service tiers, strict schemas, bounded repair diagnostics, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation. Focused regressions reproduce the prior untyped R2B object, the rejected free-text `evidenceType`, an unconstrained assumption confidence, and out-of-range R2C scores; invalid values are never coerced, and validation metadata survives the single bounded repair.
+Latest focused execution-layer result: **70/70 PASS**. Latest broad offline result excluding provider/script-entry modules and the sandbox-blocked loopback HTTP module: **211 passed, 9 subtests passed**. Including the HTTP module before the last two focused additions produced **209 passed, 9 subtests passed, 8 setup failures** because this sandbox denied `127.0.0.1:0` socket bind before assertions. Coverage includes terminal response classification, metadata/cost preservation, error-directed repair, replay prevention, lease takeover behavior, query/evidence bounds, reserve-before-call order, settlement, Worker injection, and Legacy separation.
 
 ### Provider Schema/DTO/Contract repair — PASS (offline)
 
@@ -80,6 +101,8 @@ Results:
 - DB lint: **0 errors**.
 
 The schema-repair regression additionally replayed all 33 migrations in a new disposable project `pb-schema-regression-6etlab` on port 58322, then ran the complete database suite: **19 files, 508/508 assertions PASS**. The stack was stopped with `--no-backup`; existing projects on 5432x and 5532x remained running and untouched. No database migration changed in this repair.
+
+The execution-layer repair repeated the same acceptance on a newly created database-only project `pb-exec-repair-20261104` at port 61322: clean **33/33** migration replay, **19 pgTAP files / 508 assertions PASS**, including Deep budget concurrency 16/16, durability 23/23, infrastructure repair 24/24, LLM budget 15/15, and Web publication 33/33. DB lint returned zero errors and five existing warnings. The project was stopped with `--no-backup`; its container/volume were absent afterward, while the pre-existing 5432x and 5532x projects remained running.
 
 ### Initial REAL_PROVIDER verification — historical R2B/R2C failures
 
@@ -119,6 +142,7 @@ The disposable stack was stopped with `--no-backup`; its container and volume we
 
 ## Remaining blockers
 
-1. The next bounded R2B then R2C real-provider verification is technically prepared by the offline Schema and Local DB checks, but remains blocked until another explicit paid-test authorization. The prior authorization was consumed; do not retry under it.
+1. R2B/R2C execution-layer safety is prepared for another separately authorized real-provider verification, but this repair intentionally made no paid call. Candidate ceilings are not yet proven sufficient by a real response.
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
 3. R2C remains real-provider unverified. Web provider and frontend work were intentionally out of scope.
+4. A durable reconciliation procedure is still required for a crash after a provider response but before its output/cost metadata becomes durable; the coordinator now blocks the ambiguous `running` operation instead of replaying it.

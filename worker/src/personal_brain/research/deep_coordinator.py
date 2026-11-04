@@ -38,6 +38,12 @@ from personal_brain.supabase_gateway import GatewayError
 
 
 ZERO = Decimal("0")
+RECOVERABLE_OPERATION_STATUSES = frozenset({"reserved"})
+REAUTHORIZATION_REQUIRED_STATUSES = frozenset({
+    "failed", "cancelled", "abandoned", "outcome_unknown",
+})
+RUNNING_RECONCILIATION_STATUS = "running_reconciliation_required"
+ADMITTED_OPERATION_STATUS = "admitted"
 
 
 def _canonical_hash(value: Any) -> str:
@@ -47,6 +53,28 @@ def _canonical_hash(value: Any) -> str:
 
 def _operation_id(run_id: UUID, key: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"personal-brain:{run_id}:{key}")
+
+
+def _provider_result_ref(
+    request_ids: tuple[str, ...], usage: Any, finish_reasons: tuple[str, ...]
+) -> str | None:
+    if not request_ids and not finish_reasons and not getattr(usage, "total_tokens", 0):
+        return None
+    value = json.dumps({
+        "requestIds": list(request_ids),
+        "finishReasons": list(finish_reasons),
+        "usage": {
+            "inputTokens": int(getattr(usage, "input_tokens", 0)),
+            "outputTokens": int(getattr(usage, "output_tokens", 0)),
+            "totalTokens": int(getattr(usage, "total_tokens", 0)),
+            "cachedInputTokens": int(getattr(usage, "cached_input_tokens", 0)),
+            "cacheWriteInputTokens": int(getattr(usage, "cache_write_input_tokens", 0)),
+            "reasoningTokens": int(getattr(usage, "reasoning_tokens", 0)),
+        },
+    }, separators=(",", ":"))
+    if len(value) > 1000:
+        raise ValueError("provider operation metadata exceeds the durable result_ref limit")
+    return value
 
 
 def _budget(raw: Any, limit: Decimal) -> ResearchBudgetStateV1:
@@ -207,15 +235,19 @@ class DeepResearchCoordinator:
         status = result.get("status")
         if status == "budget_exhausted":
             return operation_id, status
-        if status in {"completed", "outcome_unknown", "failed", "cancelled", "abandoned"}:
+        if status in {"completed", *REAUTHORIZATION_REQUIRED_STATUSES}:
             return operation_id, str(status)
-        if status not in {"reserved", "running"}:
+        if status == "running":
+            # A previous worker may already have crossed the external boundary.
+            # The durable output/settlement must be reconciled before a new paid call.
+            return operation_id, RUNNING_RECONCILIATION_STATUS
+        if status not in RECOVERABLE_OPERATION_STATUSES:
             raise GatewayError("invalid_operation_state", "Research operation state is invalid", retryable=False)
-        if status == "reserved" and not self.gateway.start_deep_research_operation(
+        if not self.gateway.start_deep_research_operation(
             job, worker_id, str(operation_id)
         ):
             raise LeaseLostError("Worker lease is no longer valid")
-        return operation_id, "running"
+        return operation_id, ADMITTED_OPERATION_STATUS
 
     def _settle(
         self, job: Any, worker_id: str, operation_id: UUID, *,
@@ -252,9 +284,7 @@ class DeepResearchCoordinator:
             job, worker_id, request, key, "search_internal", "r1",
             {"query": query, "round": round_number},
         )
-        if status in {"completed", "outcome_unknown"}:
-            return [], operation_id, status
-        if status == "budget_exhausted":
+        if status != ADMITTED_OPERATION_STATUS:
             return [], operation_id, status
         try:
             result = self.retrieval.retrieve_for_job(
@@ -300,7 +330,7 @@ class DeepResearchCoordinator:
             job, worker_id, request, key, "discover_web", "web",
             {"query": query, "round": round_number}, self.web_operation_estimate_usd,
         )
-        if status in {"completed", "outcome_unknown", "budget_exhausted"}:
+        if status != ADMITTED_OPERATION_STATUS:
             return [], operation_id, status
         try:
             captures = discover_and_fetch(self.web_provider, request, query)
@@ -359,8 +389,27 @@ class DeepResearchCoordinator:
                     )
                     if status == "budget_exhausted":
                         raise GatewayError("deep_budget_exhausted", "Deep Research budget is exhausted", retryable=False)
-                    if status == "outcome_unknown":
-                        raise GatewayError("deep_operation_uncertain", "Planning outcome is uncertain", retryable=False)
+                    if status == "completed":
+                        raise GatewayError(
+                            "missing_completed_plan",
+                            "Completed R2B operation has no durable Research Plan",
+                            retryable=False,
+                        )
+                    if status in {
+                        *REAUTHORIZATION_REQUIRED_STATUSES,
+                        RUNNING_RECONCILIATION_STATUS,
+                    }:
+                        raise GatewayError(
+                            "deep_operation_reauthorization_required",
+                            "R2B operation is terminal and requires a newly authorized operation",
+                            retryable=False,
+                        )
+                    if status != ADMITTED_OPERATION_STATUS:
+                        raise GatewayError(
+                            "invalid_operation_state",
+                            "R2B operation is not admitted to the provider boundary",
+                            retryable=False,
+                        )
                     try:
                         planned = self.planner.plan(request, context)
                     except Exception as error:
@@ -373,6 +422,9 @@ class DeepResearchCoordinator:
                             status=settlement,
                             actual_cost_usd=error.known_cost_usd,
                             error_code=f"r2b_{error.error_kind}",
+                            result_ref=_provider_result_ref(
+                                error.request_ids, error.usage, error.finish_reasons
+                            ),
                         )
                         raise GatewayError(
                             "deep_provider_outcome_unknown" if error.outcome_unknown
@@ -386,7 +438,10 @@ class DeepResearchCoordinator:
                             job, worker_id, operation_id,
                             actual_cost_usd=planned.actual_cost_usd,
                             error_code="duration_exhausted",
-                            result_ref=",".join(planned.request_ids) or None,
+                            result_ref=_provider_result_ref(
+                                planned.request_ids, planned.usage,
+                                planned.finish_reasons,
+                            ),
                         )
                         result = self.gateway.complete_deep_research_without_publication(
                             job, worker_id, outcome="insufficient",
@@ -408,7 +463,10 @@ class DeepResearchCoordinator:
                         job, worker_id, operation_id,
                         actual_cost_usd=planned.actual_cost_usd,
                         error_code="r2b_fallback" if planned.fallback_used else None,
-                        result_ref=",".join(planned.request_ids) or None,
+                        result_ref=_provider_result_ref(
+                            planned.request_ids, planned.usage,
+                            planned.finish_reasons,
+                        ),
                     )
                     state = ResearchIterationStateV1(
                         schemaVersion="research-iteration-state-v1", runId=request.runId,
@@ -513,6 +571,18 @@ class DeepResearchCoordinator:
                             })
                             self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                             break
+                        if op_status in {
+                            *REAUTHORIZATION_REQUIRED_STATUSES,
+                            RUNNING_RECONCILIATION_STATUS,
+                        }:
+                            state = self._terminal_state(
+                                state, reason="authorization_blocked"
+                            )
+                            self._checkpoint(
+                                job, worker_id, state, plan_id=plan.planId,
+                                assessment_id=assessment.assessmentId if assessment else None,
+                            )
+                            break
                         refreshed = self._load(job, worker_id)
                         records = _evidence_records(list(refreshed.get("evidence") or []), request)
                         state = state.model_copy(update={
@@ -533,9 +603,24 @@ class DeepResearchCoordinator:
                         )
                         break
 
-                    evaluation_estimate = self.evaluator.max_operation_cost(
-                        plan, records, user_id=request.userId
-                    ) if hasattr(self.evaluator, "max_operation_cost") else ZERO
+                    try:
+                        evaluation_estimate = self.evaluator.max_operation_cost(
+                            plan, records, user_id=request.userId
+                        ) if hasattr(self.evaluator, "max_operation_cost") else ZERO
+                    except Exception as error:
+                        from personal_brain.research.deep_evaluation import (
+                            EvidencePayloadLimitError,
+                        )
+                        if not isinstance(error, EvidencePayloadLimitError):
+                            raise
+                        state = self._terminal_state(
+                            state, reason="authorization_blocked"
+                        )
+                        self._checkpoint(
+                            job, worker_id, state, plan_id=plan.planId,
+                            assessment_id=assessment.assessmentId if assessment else None,
+                        )
+                        break
                     evaluation_id, evaluation_status = self._reserve_start(
                         job, worker_id, request, f"round:{state.currentRound}:evaluate",
                         "evaluate_evidence", "r2c",
@@ -551,15 +636,30 @@ class DeepResearchCoordinator:
                         })
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                         break
-                    if evaluation_status == "outcome_unknown":
+                    if evaluation_status in {
+                        *REAUTHORIZATION_REQUIRED_STATUSES,
+                        RUNNING_RECONCILIATION_STATUS,
+                    }:
                         state = state.model_copy(update={
                             "checkpointVersion": state.checkpointVersion + 1,
-                            "executionPhase": "terminal", "stopReason": "budget_exhausted",
+                            "executionPhase": "terminal", "stopReason": "authorization_blocked",
                             "outcome": "qualified_partial",
                         })
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
                         break
-                    if evaluation_status != "completed":
+                    if evaluation_status == "completed" and assessment is None:
+                        raise GatewayError(
+                            "missing_completed_assessment",
+                            "Completed R2C operation has no durable assessment",
+                            retryable=False,
+                        )
+                    if evaluation_status not in {ADMITTED_OPERATION_STATUS, "completed"}:
+                        raise GatewayError(
+                            "invalid_operation_state",
+                            "R2C operation is not admitted to the provider boundary",
+                            retryable=False,
+                        )
+                    if evaluation_status == ADMITTED_OPERATION_STATUS:
                         try:
                             evaluated = self.evaluator.assess(
                                 plan, records, user_id=request.userId
@@ -574,6 +674,10 @@ class DeepResearchCoordinator:
                                 status=settlement,
                                 actual_cost_usd=error.known_cost_usd,
                                 error_code=f"r2c_{error.error_kind}",
+                                result_ref=_provider_result_ref(
+                                    error.request_ids, error.usage,
+                                    error.finish_reasons,
+                                ),
                             )
                             raise GatewayError(
                                 "deep_provider_outcome_unknown" if error.outcome_unknown
@@ -587,7 +691,10 @@ class DeepResearchCoordinator:
                                 job, worker_id, evaluation_id,
                                 actual_cost_usd=evaluated.actual_cost_usd,
                                 error_code="duration_exhausted",
-                                result_ref=",".join(evaluated.request_ids) or None,
+                                result_ref=_provider_result_ref(
+                                    evaluated.request_ids, evaluated.usage,
+                                    evaluated.finish_reasons,
+                                ),
                             )
                             state = self._terminal_state(
                                 state, reason="duration_exhausted"
@@ -606,13 +713,10 @@ class DeepResearchCoordinator:
                             job, worker_id, evaluation_id,
                             actual_cost_usd=evaluated.actual_cost_usd,
                             error_code="r2c_fallback" if evaluated.fallback_used else None,
-                            result_ref=",".join(evaluated.request_ids) or None,
-                        )
-                    elif assessment is None:
-                        raise GatewayError(
-                            "missing_completed_assessment",
-                            "Completed evaluation has no durable assessment",
-                            retryable=False,
+                            result_ref=_provider_result_ref(
+                                evaluated.request_ids, evaluated.usage,
+                                evaluated.finish_reasons,
+                            ),
                         )
                     assert assessment is not None
                     progress = {item.requirementId: item.status for item in assessment.requirementCoverage}

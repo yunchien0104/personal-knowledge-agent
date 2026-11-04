@@ -3,6 +3,18 @@
 ## Deep Research R2B/R2C LLM integration (2026-11-04)
 
 - Current branch: `feat/deep-research-llm-integration` from baseline `00d3c15`.
+- Execution-layer P0 repair now admits a paid boundary only after this worker
+  successfully transitions a reserved operation to running. Existing running
+  operations require reconciliation; completed/failed/cancelled/abandoned/
+  outcome-unknown operations cannot silently re-enter a provider call.
+- Structured transport classifies length exhaustion, refusal, content filter,
+  empty content, invalid JSON, timeout, and unknown outcomes before JSON parsing,
+  preserving usage, reasoning tokens, request ID, finish reason, and priced cost.
+- Bounded repair is now error-directed: one repair for contract validation only;
+  no automatic retry for length/refusal/filter/timeout/unknown outcomes.
+- R2B uses a single four-item typed query boundary without silent slicing. R2C
+  blocks above 80 evidence records instead of truncating. Candidate ceilings are
+  R2B 2560 and R2C 3584 completion tokens, including reasoning tokens.
 - Production R2B/R2C adapters now use the shared structured transport, strict
   module-owned schemas, bounded repair, authoritative usage metadata, and
   verified per-model pricing; the Deep Worker injects them without changing
@@ -11,14 +23,18 @@
   actual usage afterward. Unknown provider outcomes retain the full reservation
   as uncertain. Additive database enforcement covers $0.50/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
-- PASS (MOCK): 183 Worker tests and 9 subtests.
-- PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 507 assertions,
-  including 14 dedicated R2B/R2C ledger assertions; DB lint has zero errors.
+- PASS (MOCK): 70 focused execution-layer tests; 211 broad Worker tests and 9
+  subtests with sandbox-blocked HTTP/provider script modules excluded.
+- PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 508 assertions,
+  including 15 dedicated R2B/R2C ledger assertions; DB lint has zero errors.
 - BLOCKED (REAL_PROVIDER): one bounded request each exposed an R2B untyped-map
   schema rejection and an R2C numeric-bound validation failure. Both schemas were
   repaired offline, but the full $0.0993 test cap remains conservatively uncertain,
   so neither request was retried and authoritative usage/cost is unavailable.
 - Remaining full paid Deep E2E blocker: R2A/R2E/R2F ledger integration.
+- Remaining crash-recovery blocker: reconcile the ambiguous interval after a
+  provider response but before output/cost metadata becomes durable. It is now
+  fail-closed and cannot produce a duplicate call.
 - Canonical detail: `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`.
 
 ## Deep Research infrastructure repair (2026-11-04)
