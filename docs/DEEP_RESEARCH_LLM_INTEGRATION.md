@@ -8,7 +8,7 @@ Baseline: `00d3c15`
 
 ## Result
 
-Status: **PARTIAL — schema/error handling and Local DB budget verification pass; the authorized repaired R2B call exposed a second contract defect, so R2C was not run.**
+Status: **PARTIAL — R2B/R2C Provider schemas now align with their authoritative DTO/contracts and Local DB verification passes; post-repair real-provider R2B/R2C verification still requires a new explicit paid-test authorization.**
 
 R2B and R2C are wired into the Deep Worker path through production OpenAI-compatible adapters. Legacy Planner/R1/R2A/R2E/R2F construction and behavior were not changed. The explicitly authorized verification below made one bounded R2B paid call. It did not call R2C, access hosted Supabase, deploy, push, or merge.
 
@@ -20,7 +20,7 @@ The initial missing model and pricing configuration was supplied on 2026-11-04. 
 - `worker/src/personal_brain/research/deep_llm.py`: separately configured R2B and R2C adapters, provider-compatible strict schemas, Pydantic validation, one bounded repair, verified pricing, conservative input/output upper-bound reservations, and explicit unknown-outcome errors. Unexpected service tier, cache use, or missing usage fail closed because configured Standard pricing would no longer be authoritative.
 - `worker/src/personal_brain/research/deep_planning.py`: aggregates initial/repair usage and cost; marks fallback distinctly and propagates provider failures.
 - `worker/src/personal_brain/research/deep_evaluation.py`: model output excludes backend-owned identity and telemetry fields; the backend adds them after validation. Success and fallback are persisted distinctly.
-- `worker/src/personal_brain/research/schema_utils.py`: Deep schemas preserve provider-supported numeric bounds while the default mode retains Legacy compatibility. R2C scores remain independently enforced by Pydantic and are never coerced.
+- `worker/src/personal_brain/research/schema_utils.py`: Deep schemas preserve provider-supported string, numeric, and array constraints while the default mode retains Legacy compatibility. R2C scores remain independently enforced by Pydantic and are never coerced.
 - `worker/src/personal_brain/research/deep_coordinator.py`: reserves before every R2B/R2C operation, settles actual priced usage, preserves the entire reservation as uncertain when the provider outcome/usage is unknown, records request IDs, and rechecks lease/deadline after calls before persistence.
 - `worker/src/personal_brain/runner.py`: injects both production adapters only into the Deep coordinator. Missing model/pricing configuration fails closed. Legacy injection is unchanged.
 - `supabase/migrations/20261104002931_enforce_deep_research_daily_budget.sql`: additive daily aggregate budget with Asia/Taipei date boundary; atomic run/daily/monthly reservation and settlement locks. Limits remain $0.50/run, $2/day, $10/month, with $0.10 protected final-stage reserve.
@@ -46,7 +46,16 @@ PYTHONPATH=worker/src:. worker/.venv/bin/pytest worker/tests -q \
   --ignore=worker/tests/research/test_research_pipeline_live.py
 ```
 
-Latest result: **189 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes/service tiers, strict schemas, bounded repair diagnostics, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation. Focused regressions reproduce the prior untyped R2B object and out-of-range R2C scores; the latter proves the invalid first response is not coerced and its usage/request ID/cost survive the single bounded repair.
+Latest result: **194 passed, 9 subtests passed**. The four excluded modules execute provider paths during collection or as script entry points. Coverage includes metadata compatibility, detailed reasoning/cache usage, Standard-tier, explicit cache and reasoning parameters, fail-closed unexpected cache writes/service tiers, strict schemas, bounded repair diagnostics, missing-usage unknown outcomes, pricing, reserve-before-call order, settlement, fallback/error truthfulness, post-call deadline fencing, Worker injection, and Legacy separation. Focused regressions reproduce the prior untyped R2B object, the rejected free-text `evidenceType`, an unconstrained assumption confidence, and out-of-range R2C scores; invalid values are never coerced, and validation metadata survives the single bounded repair.
+
+### Provider Schema/DTO/Contract repair — PASS (offline)
+
+- `ProposedRequirement.evidenceType` and `EvidenceRequirementV1.evidenceType` now consume one shared closed Literal: `fact`, `comparison`, `trend`, `counter_evidence`, `primary_source`, or `other`. The observed value `Internal specifications and acceptance criteria` is rejected by the Provider DTO before plan conversion.
+- `ProposedAssumption.confidence` and `ResearchAssumptionV1.confidence` now share the same `low` / `medium` / `high` Literal.
+- R2B constraint descriptions, dependency keys, and internal/Web query items now carry the same item-level pattern and length constraints required by the objects created during conversion.
+- R2C top-level evidence-quality, coverage, subquestion, conflict, gap, and explanation bounds now mirror `EvidenceAssessmentV1`; all nested response objects continue to use the authoritative contract classes directly. Backend-owned identity and telemetry remain excluded from model output.
+- The Deep-only Provider schema preserves enums, nullable `anyOf` branches, string/array/numeric bounds, patterns, and supported formats. Every object has all properties in `required` and `additionalProperties=false`. The default/Legacy schema mode remains unchanged.
+- Regression tests compare every preserved constraint path between each R2B/R2C Pydantic DTO and the emitted Strict Structured Outputs schema, plus exact enum and top-level contract parity. No Provider call was made during this repair.
 
 ### LOCAL_DB — PASS
 
@@ -70,6 +79,8 @@ Results:
 - Focused real-PostgreSQL budget/durability/concurrency run: **3 files, 54/54 assertions PASS**. The R2B/R2C file is **15/15 PASS** and now uses the proposed $0.0422/$0.0565 reservations. It covers reserve-before-start, settlement, unused-reservation release, ledger events, and run/daily/monthly balances. The other files verify two actual PostgreSQL sessions, duplicate settlement fencing, lease takeover, and conservative `outcome_unknown` accounting.
 - DB lint: **0 errors**.
 
+The schema-repair regression additionally replayed all 33 migrations in a new disposable project `pb-schema-regression-6etlab` on port 58322, then ran the complete database suite: **19 files, 508/508 assertions PASS**. The stack was stopped with `--no-backup`; existing projects on 5432x and 5532x remained running and untouched. No database migration changed in this repair.
+
 ### Initial REAL_PROVIDER verification — historical R2B/R2C failures
 
 At execution time, the old deterministic fixtures produced reservations of $0.0420 for R2B and $0.0573 for R2C, including one possible bounded repair per operation. The combined $0.0993 stayed below the then-approved $0.10 cap. Because both old live outcomes lost authoritative usage, that full amount remains uncertain and is never reinterpreted as zero. The adapter now uses explicit-only caching with no breakpoints and rejects unexpected cache usage.
@@ -89,7 +100,7 @@ With 950 maximum completion tokens, low reasoning, Standard tier, explicit-only/
 
 A new disposable Local PostgreSQL project `pb-r2bc-live-0rfldo` ran on port 59322. The original prior live fixture had already been removed; therefore this isolated record first re-established the old $0.0420 and $0.0573 unknown outcomes as two explicit carry-forward Ledger operations. Before the new call, run/daily/monthly each showed `uncertain=0.0993`. Available capacity was $0.3007 non-final run budget, $1.9007 daily, and $9.9007 monthly, so the approved $0.0987 fit every limit without consuming the protected $0.10 final reserve.
 
-Exactly one new R2B request was made. The $0.0422 reservation was durable and `running` before the provider boundary. No automatic repair or retry was enabled. OpenAI returned a strict-schema-shaped proposal, but conversion into the authoritative `ResearchPlanV1` failed because the model emitted `evidenceType="Internal specifications and acceptance criteria"`; `EvidenceRequirementV1` permits only `fact`, `comparison`, `trend`, `counter_evidence`, `primary_source`, or `other`. Root cause: `ProposedRequirement.evidenceType` is still typed as unconstrained `str`, so the provider schema did not enforce the backend enum.
+Exactly one new R2B request was made. The $0.0422 reservation was durable and `running` before the provider boundary. No automatic repair or retry was enabled. OpenAI returned a strict-schema-shaped proposal, but conversion into the authoritative `ResearchPlanV1` failed because the model emitted `evidenceType="Internal specifications and acceptance criteria"`; `EvidenceRequirementV1` permits only `fact`, `comparison`, `trend`, `counter_evidence`, `primary_source`, or `other`. Root cause: `ProposedRequirement.evidenceType` was typed as unconstrained `str`; commit `ed2a48e` replaces it with the authoritative shared enum and adds the observed-value regression.
 
 - Provider/model/tier: `openai` / `gpt-6.1-sol` / `default`.
 - Request ID: `req_41b66c2c5a6447e4b05bb5ce32e0bac6`.
@@ -104,9 +115,10 @@ The disposable stack was stopped with `--no-backup`; its container and volume we
 ## Repair commit
 
 - `e606109` — `fix(research): harden real provider verification`
+- `ed2a48e` — `fix(research): align deep provider schemas`
 
 ## Remaining blockers
 
-1. Change `ProposedRequirement.evidenceType` to the same closed enum used by `EvidenceRequirementV1`, add a regression for the observed value, and re-run offline tests. Do not retry R2B or run R2C without another explicit paid-test authorization.
+1. The next bounded R2B then R2C real-provider verification is technically prepared by the offline Schema and Local DB checks, but remains blocked until another explicit paid-test authorization. The prior authorization was consumed; do not retry under it.
 2. R2A/R2E/R2F paid-call ledger integration remains outside this change and blocks unrestricted full paid Deep E2E. Do not run a complete paid Deep workflow until that is implemented.
 3. R2C remains real-provider unverified. Web provider and frontend work were intentionally out of scope.
