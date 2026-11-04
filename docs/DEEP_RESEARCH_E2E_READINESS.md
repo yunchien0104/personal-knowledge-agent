@@ -1,5 +1,25 @@
 # Deep Research full E2E readiness
 
+## R2B 8192-token execution repair (2026-11-05)
+
+After the three-PDF run exhausted the prior 2560-token R2B ceiling entirely as
+reasoning, the R2B-only default is now 8192 completion tokens. R2C remains 3584;
+R2A, R2E, and R2F limits are unchanged. The existing error-directed policy also
+remains unchanged: only contract validation may use the single bounded repair,
+while length, timeout, refusal, content filter, and unknown outcomes do not
+retry automatically.
+
+The three-PDF payload-aware preflight below includes an initial call plus one
+possible contract repair per R2B/R2C stage. The matrix includes the configured
+R2A/R2E/R2F repair and reverification envelope. It does not assume average
+usage, successful cache discounts, or zero cost for unknown outcomes.
+
+Verification was free/offline: 83 focused tests passed; the full non-provider
+Worker suite passed with 263 tests, 1 skip, and 9 script subtests; a clean
+38-migration Local Supabase stack passed all 23 pgTAP files / 632 assertions.
+No Provider call, hosted Supabase access, Production change, Push, Merge, or
+Deploy occurred.
+
 ## Real Provider verification (2026-11-04)
 
 `REAL_PROVIDER_FULL_E2E`: **PASS** on the local
@@ -94,15 +114,16 @@ reserved, uncertain, and protected run spend.
 
 ## Worst-case budget
 
-Configured assumptions: R2B `$0.0759`; each representative-evidence R2C round
-`$0.1221` (the supplied combined B/C figure is `$0.1980` for one round); internal
-R1 and R2D `$0`; finalization is `$0.1152 + $0.0314 × claims`.
+Current three-PDF assumptions use the actual preflight payloads from 9, 11, and
+14 cumulative lexical evidence records. R2B at the new 8192-token ceiling is
+`$0.1921`; R2C rounds are `$0.2292`, `$0.2424`, and `$0.2747`; internal R1 and
+R2D are `$0`; finalization remains `$0.1152 + $0.0314 × claims`.
 
 | Search rounds | 1 claim | 3 claims | 6 claims |
 |---:|---:|---:|---:|
-| 1 | $0.3446 | $0.4074 | $0.5016 |
-| 2 | $0.4667 | $0.5295 | $0.6237 |
-| 3 | $0.5888 | $0.6516 | $0.7458 |
+| 1 | $0.5679 | $0.6307 | $0.7249 |
+| 2 | $0.8103 | $0.8731 | $0.9673 |
+| 3 | $1.0850 | $1.1478 | $1.2420 |
 
 For Web-enabled runs add the configured `$0.0100` envelope per Web round, so
 the three rows add `$0.0100`, `$0.0200`, and `$0.0300` respectively. Repairs and
@@ -114,10 +135,12 @@ envelope above one claim: the verified final costs are `$0.1466`, `$0.2094`, and
 within the current `$1.00` hard cap. Staged settlement/release still improves
 typical capacity while every worst-case reservation remains fail-closed.
 
-`BUDGET_FEASIBILITY` is **PASS** for every configured combination in the table;
-the largest listed Internal-only combination is `$0.7458`, or `$0.7758` with the
-documented three Web-round envelopes. The system still fails before R2B when its
-configured final envelope cannot be protected, and
+`BUDGET_FEASIBILITY` is **PASS** for one or two Internal-only rounds at up to six
+claims, but **FAIL-CLOSED** for a guaranteed three-round run under the `$1.00`
+run cap. Staged settlement and release can admit a third round only when actual
+earlier spend leaves enough capacity for both that round and the protected final
+reserve; worst-case planning must not assume that saving. The system still fails
+before R2B when its configured final envelope cannot be protected, and
 before any later paid operation that would consume protected run funds. A
 separate aggregate hold across concurrent runs is not yet represented in the
 daily/monthly budget rows; controlled Real E2E must use an isolated test account

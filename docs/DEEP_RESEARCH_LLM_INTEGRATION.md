@@ -46,13 +46,13 @@ Required shared values: `R2B_R2C_API_BASE_URL`, `R2B_R2C_API_KEY`, `R2B_R2C_PROV
 
 Required per adapter: `R2B_MODEL` / `R2C_MODEL`, `R2B_MAX_OUTPUT_TOKENS` / `R2C_MAX_OUTPUT_TOKENS`, `R2B_TIMEOUT_SECONDS` / `R2C_TIMEOUT_SECONDS`, `{R2B|R2C}_PRICING_VERIFIED=true`, `{R2B|R2C}_INPUT_COST_PER_MILLION_USD`, and `{R2B|R2C}_OUTPUT_COST_PER_MILLION_USD`.
 
-Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls use `default` (Standard), `low`, and `explicit` prompt-cache mode with no breakpoints. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. Candidate completion ceilings are now independently configured as **R2B 2560** and **R2C 3584**; they are conservative test candidates, not a sufficiency claim.
+Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls use `default` (Standard), `low`, and `explicit` prompt-cache mode with no breakpoints. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. Completion ceilings are independently configured as **R2B 8192** and **R2C 3584**. R2B was raised after a real call consumed all 2560 completion tokens as reasoning and produced no visible JSON; 8192 remains a bounded ceiling, not a sufficiency claim.
 
 `max_completion_tokens` covers visible output plus reasoning tokens. For the deterministic empty-context fixtures, the byte-conservative preflight (initial + one possible repair) produces:
 
-- R2B: 2 calls × 2560 output tokens, 12,346 total input-token upper bound, **$0.0759** maximum reservation.
+- R2B: 2 calls × 8192 output tokens, 12,346 total input-token upper bound, **$0.1886** maximum reservation for the deterministic empty-context fixture.
 - R2C: 2 calls × 3584 output tokens, 18,998 total input-token upper bound, **$0.1097** maximum reservation.
-- Combined: **$0.1856**, within the non-final portion of the $1.00 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
+- Combined: **$0.2983**, within the non-final portion of the $1.00 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
 
 ## Verification
 

@@ -57,8 +57,9 @@
 - Bounded repair is now error-directed: one repair for contract validation only;
   no automatic retry for length/refusal/filter/timeout/unknown outcomes.
 - R2B uses a single four-item typed query boundary without silent slicing. R2C
-  blocks above 80 evidence records instead of truncating. Candidate ceilings are
-  R2B 2560 and R2C 3584 completion tokens, including reasoning tokens.
+  blocks above 80 evidence records instead of truncating. R2B now reserves 8192
+  completion tokens per initial/repair call after a real length-exhaustion
+  diagnostic; R2C remains 3584. Both ceilings include reasoning tokens.
 - Production R2B/R2C adapters now use the shared structured transport, strict
   module-owned schemas, bounded repair, authoritative usage metadata, and
   verified per-model pricing; the Deep Worker injects them without changing
@@ -67,6 +68,13 @@
   actual usage afterward. Unknown provider outcomes retain the full reservation
   as uncertain. Additive database enforcement covers $1.00/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
+- Three-PDF conservative preflight after the R2B 8192-token change is $0.1921
+  for R2B, $0.2292/$0.2424/$0.2747 for cumulative R2C rounds, and $0.3036 for
+  six-claim finalization. One/two rounds fit at $0.7249/$0.9673; a guaranteed
+  three-round run is blocked at $1.2420 by the unchanged $1.00 run cap.
+- PASS (FREE): 83 focused R2B/R2C/Coordinator/Finalization tests; complete
+  non-provider Worker 263 passed, 1 skipped, 9 subtests; clean 38-migration
+  Local Supabase replay and all 23 pgTAP files / 632 assertions.
 - PASS (MOCK): 70 focused execution-layer tests; 211 broad Worker tests and 9
   subtests with sandbox-blocked HTTP/provider script modules excluded.
 - PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 508 assertions,
@@ -1086,7 +1094,8 @@
   before non-final paid calls; crash/replay/publication safety regressions pass.
 - PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
   files / 628 assertions; public-schema lint has zero errors.
-- PASS: configured budget feasibility. One round plus six claims is $0.5016 and
-  fits the current $1.00 run cap; cross-run daily/monthly aggregate holds remain
-  a separate durability limitation.
+- PASS: configured budget feasibility for the current three-PDF payload through
+  two rounds and six claims ($0.9673). The three-round worst case is $1.2420 and
+  is correctly blocked by the unchanged $1.00 run cap; cross-run daily/monthly
+  aggregate holds remain a separate durability limitation.
 - Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.

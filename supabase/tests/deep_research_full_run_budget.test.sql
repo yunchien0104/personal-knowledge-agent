@@ -65,7 +65,7 @@ select is((select protected_final_reserve_usd from public.research_run_budgets
 select is(public.reserve_deep_research_operation(
   (select job_id from full_budget_state),'full-budget-worker',1,
   'fc000000-0000-4000-8000-000000000010','full:r2b','plan_research','r2b',
-  repeat('a',64),0.0759
+  repeat('a',64),0.1886
 )->>'status','reserved','R2B is admitted while the complete final envelope remains');
 select ok(public.start_deep_research_operation(
   (select job_id from full_budget_state),'full-budget-worker',1,
