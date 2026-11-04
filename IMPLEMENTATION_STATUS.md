@@ -1,5 +1,24 @@
 # Personal Brain Implementation Status
 
+## Deep Research R2B/R2C LLM integration (2026-11-04)
+
+- Current branch: `feat/deep-research-llm-integration` from baseline `00d3c15`.
+- Production R2B/R2C adapters now use the shared structured transport, strict
+  module-owned schemas, bounded repair, authoritative usage metadata, and
+  verified per-model pricing; the Deep Worker injects them without changing
+  Legacy Planner/R1/R2A/R2E/R2F behavior.
+- R2B/R2C reserve worst-case cost atomically before provider calls and settle
+  actual usage afterward. Unknown provider outcomes retain the full reservation
+  as uncertain. Additive database enforcement covers $0.50/run, $2/day, and
+  $10/month with the existing protected final-stage reserve.
+- PASS (MOCK): 178 Worker tests and 9 subtests.
+- PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 507 assertions,
+  including 14 dedicated R2B/R2C ledger assertions; DB lint has zero errors.
+- BLOCKED (REAL_PROVIDER): explicit `R2B_MODEL`, `R2C_MODEL`, and independently
+  verified pricing flags/values are absent. No request was sent and cost was $0.
+- Remaining full paid Deep E2E blocker: R2A/R2E/R2F ledger integration.
+- Canonical detail: `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`.
+
 ## Deep Research infrastructure repair (2026-11-04)
 
 - Current branch: `fix/deep-research-infrastructure` from baseline `7c0a4ea`.

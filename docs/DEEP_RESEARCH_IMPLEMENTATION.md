@@ -67,7 +67,9 @@ credential was used during the repair.
 ## Next safe milestone
 
 Local database prerequisites for R2B/R2C real LLM integration are satisfied. The
-next milestone must add authoritative provider usage settlement behind the existing
-reservation boundary, use capped test credentials, and then repeat RLS/RPC and E2E
-checks in an explicitly isolated Staging project. Real provider integration is not
-part of this repair.
+R2B/R2C production adapters, Worker injection, strict schemas, and atomic
+provider-cost accounting are now implemented and verified offline and against an
+isolated Local PostgreSQL stack. Real-provider verification remains blocked until
+explicit B/C model identifiers and independently verified pricing are configured;
+see `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`. R2A/R2E/R2F paid-call ledger
+integration remains required before unrestricted full paid Deep E2E.
