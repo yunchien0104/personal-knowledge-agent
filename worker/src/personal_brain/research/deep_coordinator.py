@@ -372,8 +372,7 @@ class DeepResearchCoordinator:
                             job, worker_id, operation_id,
                             status=settlement,
                             actual_cost_usd=error.known_cost_usd,
-                            error_code="r2b_provider_outcome_unknown" if error.outcome_unknown
-                            else "r2b_provider_error",
+                            error_code=f"r2b_{error.error_kind}",
                         )
                         raise GatewayError(
                             "deep_provider_outcome_unknown" if error.outcome_unknown
@@ -574,8 +573,7 @@ class DeepResearchCoordinator:
                                 job, worker_id, evaluation_id,
                                 status=settlement,
                                 actual_cost_usd=error.known_cost_usd,
-                                error_code="r2c_provider_outcome_unknown" if error.outcome_unknown
-                                else "r2c_provider_error",
+                                error_code=f"r2c_{error.error_kind}",
                             )
                             raise GatewayError(
                                 "deep_provider_outcome_unknown" if error.outcome_unknown

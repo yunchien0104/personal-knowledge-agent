@@ -23,12 +23,19 @@ from personal_brain.research.schema_utils import to_openai_schema
 
 MONEY_QUANTUM = Decimal("0.0001")
 MAX_REPAIR_ATTEMPTS = 1
+MAX_REPAIR_DIAGNOSTIC_CHARS = 1000
 
 
 def _money(value: Decimal) -> Decimal:
     if value <= 0:
         return Decimal("0")
     return value.quantize(MONEY_QUANTUM, rounding=ROUND_CEILING)
+
+
+def bounded_repair_diagnostic(error: Exception) -> str:
+    """Keep provider repair context printable and inside the reserved byte allowance."""
+    printable = str(error).encode("ascii", errors="replace").decode("ascii")
+    return " ".join(printable.split())[:MAX_REPAIR_DIAGNOSTIC_CHARS]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +89,7 @@ class DeepProviderError(RuntimeError):
         self,
         message: str,
         *,
+        error_kind: str,
         outcome_unknown: bool,
         usage: LLMUsage,
         known_cost_usd: Decimal,
@@ -89,6 +97,7 @@ class DeepProviderError(RuntimeError):
         request_ids: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
+        self.error_kind = error_kind
         self.outcome_unknown = outcome_unknown
         self.usage = usage
         self.known_cost_usd = known_cost_usd
@@ -105,6 +114,7 @@ class DeepProviderError(RuntimeError):
     ) -> "DeepProviderError":
         return DeepProviderError(
             str(self),
+            error_kind=self.error_kind,
             outcome_unknown=self.outcome_unknown,
             usage=usage + self.usage,
             known_cost_usd=cost_usd + self.known_cost_usd,
@@ -151,12 +161,15 @@ class _StructuredDeepModel:
             result = self.client.generate_with_metadata(
                 system_prompt=system,
                 user_input=user_input,
-                output_schema=to_openai_schema(self.output_model),
+                output_schema=to_openai_schema(
+                    self.output_model, preserve_numeric_bounds=True
+                ),
             )
         except StructuredLLMError as error:
             request_ids = (error.request_id,) if error.request_id else ()
             raise DeepProviderError(
                 str(error),
+                error_kind=error.error_kind,
                 outcome_unknown=error.outcome_unknown,
                 usage=error.usage,
                 known_cost_usd=self.pricing.cost(error.usage),
@@ -167,6 +180,19 @@ class _StructuredDeepModel:
             request_ids = (result.request_id,) if result.request_id else ()
             raise DeepProviderError(
                 "LLM provider omitted authoritative token usage",
+                error_kind="missing_usage",
+                outcome_unknown=True,
+                usage=result.usage,
+                known_cost_usd=Decimal("0"),
+                latency_ms=result.latency_ms,
+                request_ids=request_ids,
+            )
+        requested_tier = getattr(self.client, "service_tier", None)
+        if requested_tier is not None and result.service_tier != requested_tier:
+            request_ids = (result.request_id,) if result.request_id else ()
+            raise DeepProviderError(
+                "LLM provider did not use the requested Standard service tier",
+                error_kind="unexpected_service_tier",
                 outcome_unknown=True,
                 usage=result.usage,
                 known_cost_usd=Decimal("0"),
@@ -177,6 +203,7 @@ class _StructuredDeepModel:
             request_ids = (result.request_id,) if result.request_id else ()
             raise DeepProviderError(
                 "LLM provider used prompt caching despite explicit-only mode",
+                error_kind="unexpected_cache_usage",
                 outcome_unknown=True,
                 usage=result.usage,
                 known_cost_usd=Decimal("0"),

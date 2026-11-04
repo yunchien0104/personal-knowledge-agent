@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+import socket
 import time
 from typing import Any
 from urllib.request import Request, urlopen
@@ -42,12 +43,14 @@ class StructuredLLMError(RuntimeError):
         self,
         message: str,
         *,
+        error_kind: str = "provider_error",
         outcome_unknown: bool,
         usage: LLMUsage = LLMUsage(),
         latency_ms: int = 0,
         request_id: str | None = None,
     ) -> None:
         super().__init__(message)
+        self.error_kind = error_kind
         self.outcome_unknown = outcome_unknown
         self.usage = usage
         self.latency_ms = latency_ms
@@ -176,16 +179,33 @@ class StructuredLLMClient:
                 header_request_id = response.headers.get("x-request-id")
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
+            parsed_usage = LLMUsage()
+            try:
+                error_result = json.loads(detail)
+                parsed_usage = _usage(error_result.get("usage"))
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+            rejected_before_execution = error.code in {400, 401, 403, 404, 422}
             raise StructuredLLMError(
                 f"LLM HTTP {error.code}: {detail[:2000]}",
-                outcome_unknown=True,
+                error_kind=(
+                    "provider_rejection" if rejected_before_execution
+                    else "provider_http_error"
+                ),
+                outcome_unknown=not rejected_before_execution,
+                usage=parsed_usage,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 request_id=(error.headers.get("x-request-id") if error.headers else None),
             ) from error
 
         except (URLError, TimeoutError) as error:
+            timed_out = isinstance(error, TimeoutError) or (
+                isinstance(error, URLError)
+                and isinstance(getattr(error, "reason", None), (TimeoutError, socket.timeout))
+            )
             raise StructuredLLMError(
-                "LLM connection failed",
+                "LLM request timed out" if timed_out else "LLM connection failed",
+                error_kind="timeout" if timed_out else "transport_error",
                 outcome_unknown=True,
                 latency_ms=int((time.monotonic() - started) * 1000),
             ) from error
@@ -211,6 +231,7 @@ class StructuredLLMClient:
             parsed_usage = usage if "usage" in locals() else LLMUsage()
             raise StructuredLLMError(
                 "LLM structured response is invalid",
+                error_kind="invalid_provider_response",
                 outcome_unknown=False,
                 usage=parsed_usage,
                 latency_ms=latency_ms,

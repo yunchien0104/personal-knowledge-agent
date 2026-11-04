@@ -15,7 +15,9 @@ UNSUPPORTED = {
 }
 
 
-def to_openai_schema(model: type[BaseModel]) -> dict[str, Any]:
+def to_openai_schema(
+    model: type[BaseModel], *, preserve_numeric_bounds: bool = False
+) -> dict[str, Any]:
     schema = deepcopy(model.model_json_schema())
 
     def clean(node: Any) -> None:
@@ -33,7 +35,10 @@ def to_openai_schema(model: type[BaseModel]) -> dict[str, Any]:
                 existing = str(node.get("description") or "").strip()
                 suffix = "Constraints: " + "; ".join(constraints) + "."
                 node["description"] = f"{existing} {suffix}".strip()
-            for key in UNSUPPORTED:
+            unsupported = UNSUPPORTED - (
+                {"minimum", "maximum"} if preserve_numeric_bounds else set()
+            )
+            for key in unsupported:
                 node.pop(key, None)
 
             if node.get("type") == "object":

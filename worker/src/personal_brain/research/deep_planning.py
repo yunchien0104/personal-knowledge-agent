@@ -332,6 +332,7 @@ class DeepResearchPlanner:
                 from personal_brain.research.deep_llm import (
                     DeepModelValidationError,
                     DeepProviderError,
+                    bounded_repair_diagnostic,
                 )
                 if isinstance(error, DeepProviderError):
                     raise error.with_previous(
@@ -350,7 +351,7 @@ class DeepResearchPlanner:
                         request_ids = (*request_ids, error.call.request_id)
                 elif not isinstance(error, (ValidationError, ValueError, KeyError)):
                     raise
-                error_text = str(error)[:2000]
+                error_text = bounded_repair_diagnostic(error)
                 try:
                     repaired = True
                     response = self.model.repair(

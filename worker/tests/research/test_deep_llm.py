@@ -11,6 +11,7 @@ from personal_brain.research.deep_llm import (
     OpenAICompatibleEvidenceEvaluationModel,
     VerifiedPricing,
     DeepProviderError,
+    bounded_repair_diagnostic,
 )
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
@@ -60,6 +61,35 @@ def proposal():
     }
 
 
+def assessment_output(plan, *, gap_score=None):
+    gaps = [] if gap_score is None else [{
+        "id": "gap_01",
+        "requirementId": plan.evidenceRequirements[0].id,
+        "severity": "critical",
+        "expectedInformationGain": gap_score,
+        "resolvability": 3,
+        "dependencyImpact": gap_score,
+        "proposedAction": "search_internal",
+        "explanation": "Required evidence is missing",
+    }]
+    return {
+        "evidenceQuality": [],
+        "requirementCoverage": [{
+            "requirementId": plan.evidenceRequirements[0].id,
+            "status": "missing", "sufficiency": "fail", "independence": "unknown",
+            "supportingEvidenceIds": [], "contradictingEvidenceIds": [],
+            "explanation": "No evidence was supplied",
+        }],
+        "subquestionStatus": [{
+            "subquestionId": plan.subquestions[0].id, "status": "missing",
+            "requirementIds": plan.subquestions[0].evidenceRequirementIds,
+        }],
+        "overallStatus": "insufficient", "contradiction": "unknown",
+        "independence": "unknown", "conflicts": [], "prioritizedGaps": gaps,
+        "explanation": "Evidence is insufficient",
+    }
+
+
 class FakeClient:
     provider = "fixture-provider"
     model = "fixture-model"
@@ -98,6 +128,17 @@ class UnexpectedCacheWriteClient(FakeClient):
             output=proposal(), provider=self.provider, model=self.model,
             usage=LLMUsage(100, 25, 125, 0, 100, 5),
             latency_ms=4, request_id="req-cache-write", service_tier="default",
+        )
+
+
+class UnexpectedServiceTierClient(FakeClient):
+    service_tier = "default"
+
+    def generate_with_metadata(self, **_kwargs):
+        return StructuredLLMResult(
+            output=proposal(), provider=self.provider, model=self.model,
+            usage=LLMUsage(100, 25, 125), latency_ms=4,
+            request_id="req-fast-tier", service_tier="priority",
         )
 
 
@@ -146,12 +187,21 @@ def test_r2b_schema_contains_no_untyped_object_maps():
 
 
 def test_provider_schema_preserves_numeric_bounds_as_model_instructions():
-    schema = to_openai_schema(ProposedEvidenceAssessment)
+    schema = to_openai_schema(
+        ProposedEvidenceAssessment, preserve_numeric_bounds=True
+    )
     gap = schema["$defs"]["ResearchGapV1"]["properties"]
     assert "greater than or equal to 1" in gap["expectedInformationGain"]["description"]
     assert "less than or equal to 5" in gap["expectedInformationGain"]["description"]
-    assert "minimum" not in gap["expectedInformationGain"]
-    assert "maximum" not in gap["expectedInformationGain"]
+    assert gap["expectedInformationGain"]["minimum"] == 1
+    assert gap["expectedInformationGain"]["maximum"] == 5
+
+
+def test_legacy_schema_mode_still_removes_numeric_bounds():
+    schema = to_openai_schema(ProposedEvidenceAssessment)
+    score = schema["$defs"]["ResearchGapV1"]["properties"]["expectedInformationGain"]
+    assert "minimum" not in score
+    assert "maximum" not in score
 
 
 def test_max_reservation_covers_initial_and_repair_calls():
@@ -168,28 +218,34 @@ def test_r2c_adapter_persists_provider_success_metadata():
     plan = DeepResearchPlanner().plan(
         request(), build_planning_context_pack([], request())
     ).plan
-    output = {
-        "evidenceQuality": [],
-        "requirementCoverage": [{
-            "requirementId": plan.evidenceRequirements[0].id,
-            "status": "missing", "sufficiency": "fail", "independence": "unknown",
-            "supportingEvidenceIds": [], "contradictingEvidenceIds": [],
-            "explanation": "No evidence was supplied",
-        }],
-        "subquestionStatus": [{
-            "subquestionId": plan.subquestions[0].id, "status": "missing",
-            "requirementIds": plan.subquestions[0].evidenceRequirementIds,
-        }],
-        "overallStatus": "insufficient", "contradiction": "unknown",
-        "independence": "unknown", "conflicts": [], "prioritizedGaps": [],
-        "explanation": "Evidence is insufficient",
-    }
+    output = assessment_output(plan)
     model = OpenAICompatibleEvidenceEvaluationModel(FakeClient([output]), pricing())
     result = EvidenceEvaluator(model).assess(plan, [], user_id=UUID(USER_ID))
     assert result.fallback_used is False
     assert result.assessment.telemetry.executionStatus == "provider_success"
     assert result.assessment.telemetry.providerRequestIds == ["req-1"]
     assert result.actual_cost_usd == Decimal("0.0002")
+
+
+def test_r2c_out_of_range_scores_are_not_coerced_and_repair_preserves_metadata():
+    plan = DeepResearchPlanner().plan(
+        request(), build_planning_context_pack([], request())
+    ).plan
+    invalid = assessment_output(plan, gap_score=10)
+    repaired = assessment_output(plan, gap_score=5)
+    client = FakeClient([invalid, repaired])
+    model = OpenAICompatibleEvidenceEvaluationModel(client, pricing())
+
+    result = EvidenceEvaluator(model).assess(plan, [], user_id=UUID(USER_ID))
+
+    assert result.repaired is True
+    assert result.fallback_used is False
+    assert result.assessment.prioritizedGaps[0].expectedInformationGain == 5
+    assert result.usage == LLMUsage(200, 50, 250)
+    assert result.actual_cost_usd == Decimal("0.0004")
+    assert result.request_ids == ("req-1", "req-2")
+    score_schema = client.schemas[0]["$defs"]["ResearchGapV1"]["properties"]
+    assert score_schema["expectedInformationGain"]["maximum"] == 5
 
 
 def test_unknown_provider_outcome_never_becomes_silent_fallback():
@@ -219,6 +275,24 @@ def test_unexpected_cache_write_is_uncertain_not_underpriced():
         )
     assert caught.value.outcome_unknown is True
     assert "prompt caching" in str(caught.value)
+
+
+def test_unexpected_service_tier_is_uncertain_not_underpriced():
+    model = OpenAICompatibleDeepPlanningModel(UnexpectedServiceTierClient([]), pricing())
+    with pytest.raises(DeepProviderError) as caught:
+        DeepResearchPlanner(model).plan(
+            request(), build_planning_context_pack([], request())
+        )
+    assert caught.value.outcome_unknown is True
+    assert caught.value.error_kind == "unexpected_service_tier"
+    assert caught.value.known_cost_usd == Decimal("0")
+
+
+def test_repair_diagnostic_is_printable_and_bounded_for_cost_reservation():
+    diagnostic = bounded_repair_diagnostic(ValueError("é\n" * 2000))
+    assert len(diagnostic) <= 1000
+    assert diagnostic.isascii()
+    assert "\n" not in diagnostic
 
 
 def test_environment_configuration_fails_closed_without_explicit_model_and_pricing():

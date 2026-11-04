@@ -1,5 +1,6 @@
 import json
-from urllib.error import URLError
+from io import BytesIO
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 import pytest
@@ -69,6 +70,23 @@ def test_invalid_known_response_preserves_usage_for_accounting():
     assert caught.value.outcome_unknown is False
     assert caught.value.usage.total_tokens == 18
     assert caught.value.request_id == "req-header"
+    assert caught.value.error_kind == "invalid_provider_response"
+
+
+def test_schema_rejection_is_distinct_and_preserves_provider_request_id():
+    error = HTTPError(
+        "https://api.openai.com/v1/chat/completions",
+        400,
+        "Bad Request",
+        {"x-request-id": "req-rejected"},
+        BytesIO(b'{"error":{"message":"invalid_json_schema"}}'),
+    )
+    with patch("personal_brain.llm_client.urlopen", side_effect=error):
+        with pytest.raises(StructuredLLMError) as caught:
+            client().generate_with_metadata("system", {}, {"type": "object"})
+    assert caught.value.error_kind == "provider_rejection"
+    assert caught.value.outcome_unknown is False
+    assert caught.value.request_id == "req-rejected"
 
 
 def test_transport_failure_is_conservatively_unknown():
@@ -77,6 +95,15 @@ def test_transport_failure_is_conservatively_unknown():
             client().generate_with_metadata("system", {}, {"type": "object"})
     assert caught.value.outcome_unknown is True
     assert caught.value.usage.total_tokens == 0
+    assert caught.value.error_kind == "transport_error"
+
+
+def test_timeout_is_distinct_and_conservatively_unknown():
+    with patch("personal_brain.llm_client.urlopen", side_effect=TimeoutError()):
+        with pytest.raises(StructuredLLMError) as caught:
+            client().generate_with_metadata("system", {}, {"type": "object"})
+    assert caught.value.error_kind == "timeout"
+    assert caught.value.outcome_unknown is True
 
 
 def test_reasoning_parameters_and_detailed_usage_are_preserved():

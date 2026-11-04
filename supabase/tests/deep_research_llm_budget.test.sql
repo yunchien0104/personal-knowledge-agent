@@ -1,7 +1,10 @@
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(14);
+select plan(15);
+
+select ok(0.0422::numeric + 0.0565::numeric <= 0.1000::numeric,
+  'fresh R2B and R2C worst-case reservations fit the scoped test cap');
 
 delete from auth.users where id = 'fa000000-0000-4000-8000-000000000001';
 insert into auth.users (
@@ -34,7 +37,7 @@ select is(public.reserve_deep_research_operation(
    where request_key = 'fa000000-0000-4000-8000-000000000002'),
   'deep-llm-budget-owner', 1,
   'fa000000-0000-4000-8000-000000000003', 'llm:r2b',
-  'plan_research', 'r2b', repeat('a', 64), 0.0400
+  'plan_research', 'r2b', repeat('a', 64), 0.0422
 ) ->> 'status', 'reserved', 'R2B reserves its worst-case cost before execution');
 select ok(public.start_deep_research_operation(
   (select job_id from public.research_runs
@@ -53,7 +56,7 @@ select is(public.reserve_deep_research_operation(
    where request_key = 'fa000000-0000-4000-8000-000000000002'),
   'deep-llm-budget-owner', 1,
   'fa000000-0000-4000-8000-000000000004', 'llm:r2c',
-  'evaluate_evidence', 'r2c', repeat('b', 64), 0.0500
+  'evaluate_evidence', 'r2c', repeat('b', 64), 0.0565
 ) ->> 'status', 'reserved', 'R2C reserves its worst-case cost before execution');
 select ok(public.start_deep_research_operation(
   (select job_id from public.research_runs

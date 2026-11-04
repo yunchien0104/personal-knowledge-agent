@@ -117,7 +117,9 @@ def evaluation_prompt(
             "related evidence is not sufficient evidence; scope/date/definition/condition differences "
             "are not automatically contradictions; derivative sources are not independent. Evaluate "
             "relevance, reliability, freshness, sufficiency, contradiction, and independence. Never "
-            "introduce uncited factual conclusions. Propose gaps and actions; do not execute them."
+            "introduce uncited factual conclusions. Propose gaps and actions; do not execute them. "
+            "Every expectedInformationGain, resolvability, and dependencyImpact score must be an "
+            "integer from 1 through 5 inclusive."
         ),
         "researchPlan": plan.model_dump(mode="json"),
         "untrustedEvidence": [record.model_dump(mode="json") for record in records],
@@ -303,6 +305,7 @@ class EvidenceEvaluator:
                     from personal_brain.research.deep_llm import (
                         DeepModelValidationError,
                         DeepProviderError,
+                        bounded_repair_diagnostic,
                     )
                     if isinstance(error, DeepProviderError):
                         raise error.with_previous(
@@ -319,12 +322,12 @@ class EvidenceEvaluator:
                         aggregate_latency += error.call.latency_ms
                         if error.call.request_id:
                             request_ids = (*request_ids, error.call.request_id)
-                        error_text = str(error)[:2000]
+                        error_text = bounded_repair_diagnostic(error)
                         repaired = True
                         continue
                     if not isinstance(error, (ValidationError, ValueError, KeyError)):
                         raise
-                    error_text = str(error)[:2000]
+                    error_text = bounded_repair_diagnostic(error)
                     repaired = True
         aggregate_evaluation_usage = EvaluationUsage(
             aggregate_usage.input_tokens,
