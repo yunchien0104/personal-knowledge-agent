@@ -1,11 +1,28 @@
 # Personal Brain Implementation Status
 
+## Deep Research R2C ceiling and evidence-sufficiency repair (2026-11-05)
+
+- Raised only R2C's default completion ceiling from 3584 to 8192; R2B remains
+  8192 and R2A/E/F, model, tier, reasoning, timeout, repair, and Ledger behavior
+  are unchanged.
+- R2B rejects all-optional evidence plans. At least one core requirement must be
+  required; supplemental requirements may remain optional.
+- R2C and R2D now require all required coverage to be satisfied/pass, allow
+  genuinely optional gaps, and still reject critical gaps and material
+  contradictions. R2D rechecks required coverage after checkpoint resume.
+- Conservative three-PDF worst case is now `$0.8171` for one round/six claims,
+  `$0.9947` for two rounds/one claim, and fail-closed at `$1.0575` / `$1.1517`
+  for two rounds with three/six claims under the unchanged `$1.00` run cap.
+- PASS: 67 focused R2B/R2C/R2D tests; complete non-provider Worker 269 passed,
+  1 skipped, 9 subtests passed; clean disposable Local Supabase 38/38 migration
+  replay and 23 pgTAP files / 632 assertions. No paid call or hosted access.
+
 ## Notes Editor + AI Cursor integration (2026-11-05)
 
 - Integrated the isolated Notes workspace onto the committed Deep Research branch without replacing Research, Auth, shared API, Supabase, or Worker implementations.
 - Added the Tiptap editor, spreadsheet workbooks/formulas, PDF export, autosave/OCC, inline AI cursor/popover, and explicit OpenAI/Gemini provider adapters.
 - Added the Personal Notes baseline and two additive reference-separation migrations for review only; no hosted or production migration was executed.
-- PASS: TypeScript, ESLint, production build, 70 Notes tests, 34 existing Web unit regressions, 18 local Auth/API/PDF integration tests, and 255 offline Worker tests plus 9 subtests (1 skipped).
+- PASS: TypeScript, ESLint, production build, 70 Notes tests, 34 existing Web unit regressions, 18 local Auth/API/PDF integration tests, and 261 final-HEAD offline Worker tests plus 9 subtests (1 skipped).
 - BLOCKED: Playwright reaches the production test server but macOS sandbox policy denies Chromium Mach Port registration before assertions. Real AI providers and hosted Supabase were not called.
 - Next: review the three additive Notes migrations, then replay them and pgTAP in a disposable database before any staging or production migration decision.
 
@@ -68,7 +85,8 @@
 - R2B uses a single four-item typed query boundary without silent slicing. R2C
   blocks above 80 evidence records instead of truncating. R2B now reserves 8192
   completion tokens per initial/repair call after a real length-exhaustion
-  diagnostic; R2C remains 3584. Both ceilings include reasoning tokens.
+  diagnostic; R2C is now also 8192 after its own real length-exhaustion
+  diagnostic. Both ceilings include reasoning tokens.
 - Production R2B/R2C adapters now use the shared structured transport, strict
   module-owned schemas, bounded repair, authoritative usage metadata, and
   verified per-model pricing; the Deep Worker injects them without changing
@@ -77,10 +95,10 @@
   actual usage afterward. Unknown provider outcomes retain the full reservation
   as uncertain. Additive database enforcement covers $1.00/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
-- Three-PDF conservative preflight after the R2B 8192-token change is $0.1921
-  for R2B, $0.2292/$0.2424/$0.2747 for cumulative R2C rounds, and $0.3036 for
-  six-claim finalization. One/two rounds fit at $0.7249/$0.9673; a guaranteed
-  three-round run is blocked at $1.2420 by the unchanged $1.00 run cap.
+- Three-PDF conservative preflight is $0.1921 for R2B,
+  $0.3214/$0.3346/$0.3669 for R2C rounds, and $0.3036 for six-claim
+  finalization. One round/six claims fits at $0.8171; two rounds/six claims
+  fail closed at $1.1517 under the unchanged $1.00 run cap.
 - PASS (FREE): 83 focused R2B/R2C/Coordinator/Finalization tests; complete
   non-provider Worker 263 passed, 1 skipped, 9 subtests; clean 38-migration
   Local Supabase replay and all 23 pgTAP files / 632 assertions.
@@ -1103,8 +1121,9 @@
   before non-final paid calls; crash/replay/publication safety regressions pass.
 - PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
   files / 628 assertions; public-schema lint has zero errors.
-- PASS: configured budget feasibility for the current three-PDF payload through
-  two rounds and six claims ($0.9673). The three-round worst case is $1.2420 and
-  is correctly blocked by the unchanged $1.00 run cap; cross-run daily/monthly
+- PASS: configured budget feasibility remains fail-closed for the current
+  three-PDF payload: one round/six claims is $0.8171 and two rounds/one claim is
+  $0.9947; two rounds with three/six claims exceed the $1.00 run cap at
+  $1.0575/$1.1517. Cross-run daily/monthly
   aggregate holds remain a separate durability limitation.
 - Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.

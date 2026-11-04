@@ -46,13 +46,13 @@ Required shared values: `R2B_R2C_API_BASE_URL`, `R2B_R2C_API_KEY`, `R2B_R2C_PROV
 
 Required per adapter: `R2B_MODEL` / `R2C_MODEL`, `R2B_MAX_OUTPUT_TOKENS` / `R2C_MAX_OUTPUT_TOKENS`, `R2B_TIMEOUT_SECONDS` / `R2C_TIMEOUT_SECONDS`, `{R2B|R2C}_PRICING_VERIFIED=true`, `{R2B|R2C}_INPUT_COST_PER_MILLION_USD`, and `{R2B|R2C}_OUTPUT_COST_PER_MILLION_USD`.
 
-Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls use `default` (Standard), `low`, and `explicit` prompt-cache mode with no breakpoints. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. Completion ceilings are independently configured as **R2B 8192** and **R2C 3584**. R2B was raised after a real call consumed all 2560 completion tokens as reasoning and produced no visible JSON; 8192 remains a bounded ceiling, not a sufficiency claim.
+Reasoning-model configuration also supports `R2B_R2C_SERVICE_TIER`, `R2B_R2C_PROMPT_CACHE_MODE`, and `{R2B|R2C}_REASONING_EFFORT`. Deep calls use `default` (Standard), `low`, and `explicit` prompt-cache mode with no breakpoints. Disabling implicit cache writes keeps the verified $2/M ordinary-input price authoritative; any unexpected cache usage fails closed as `outcome_unknown`. Completion ceilings are independently configurable and now default to **R2B 8192** and **R2C 8192**. Each was raised only after a real call exhausted its smaller ceiling as reasoning and produced no visible JSON; 8192 remains a bounded ceiling, not a sufficiency claim.
 
 `max_completion_tokens` covers visible output plus reasoning tokens. For the deterministic empty-context fixtures, the byte-conservative preflight (initial + one possible repair) produces:
 
 - R2B: 2 calls × 8192 output tokens, 12,346 total input-token upper bound, **$0.1886** maximum reservation for the deterministic empty-context fixture.
-- R2C: 2 calls × 3584 output tokens, 18,998 total input-token upper bound, **$0.1097** maximum reservation.
-- Combined: **$0.2983**, within the non-final portion of the $1.00 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
+- R2C: 2 calls × 8192 output tokens, 18,998 total input-token upper bound, **$0.2019** maximum reservation.
+- Combined: **$0.3905**, within the non-final portion of the $1.00 run cap, the $2 daily cap, and the $10 monthly cap. Actual preflight remains payload-dependent; larger R2C evidence must be reserved atomically or is blocked before execution.
 
 ## Verification
 
@@ -204,7 +204,7 @@ order by operation_id, attempt_number;
 
 R2C now durably distinguishes accepted output, Provider DTO rejection, backend-contract rejection, Provider terminal state, bounded-repair outcome, and fallback. Initial and repair attempts retain their own authoritative metadata. No Prompt, raw Evidence, API key, or raw model output is stored. The operation Ledger remains the authoritative source for reservation and settlement; the diagnostic cost is an immutable per-attempt observation and does not mutate balances.
 
-The Contract, Prompt, and R2D decision rule now share one definition: `overallStatus=sufficient` means the available evidence is adequate to answer the research question, not that a proposed claim is true. A well-supported negative answer may therefore be sufficient. `sufficient` additionally requires every evidence requirement to be `satisfied`, every sufficiency decision to be `pass`, and no critical gap. An unresolved material contradiction remains `conflicted`; differences caused by condition, scope, date, or definition are represented as such and do not by themselves force another research round. R2D reaches the quality target only when this sufficiency condition holds without a material contradiction or critical gap.
+The Contract, Prompt, and R2D decision rule now share one definition: `overallStatus=sufficient` means the available evidence is adequate to answer the research question, not that a proposed claim is true. A well-supported negative answer may therefore be sufficient. `sufficient` additionally requires every **required** evidence requirement to be `satisfied` with `sufficiency=pass`, and no critical gap. Optional requirements may remain unresolved when they are not needed to answer the question. An unresolved material contradiction remains `conflicted`; differences caused by condition, scope, date, or definition are represented as such and do not by themselves force another research round. R2D independently rechecks required coverage on resume before reaching the quality target.
 
 Offline quality fixtures cover: sufficient supporting evidence, sufficient refuting evidence, insufficient evidence, material contradiction, condition-dependent outcomes, and non-independent sources. R2C-to-R2D contract tests verify that evidence sufficiency, claim support, contradictions, and critical gaps cannot be conflated.
 

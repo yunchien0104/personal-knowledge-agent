@@ -5,6 +5,7 @@ from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
     ProposedResearchPlan,
     build_planning_context_pack,
+    evaluate_plan_quality,
     planning_prompt,
 )
 
@@ -99,6 +100,28 @@ def test_provider_dto_rejects_duplicate_and_unknown_dependency_keys():
     unknown["subquestions"][0]["dependsOnKeys"] = ["missing"]
     with pytest.raises(ValueError, match="unknown key"):
         ProposedResearchPlan.model_validate(unknown)
+
+
+def test_provider_dto_and_quality_gate_reject_all_optional_core_evidence():
+    all_optional = valid_proposal()
+    for requirement in all_optional["subquestions"][0]["requirements"]:
+        requirement["required"] = False
+    with pytest.raises(ValueError, match="at least one Evidence Requirement"):
+        ProposedResearchPlan.model_validate(all_optional)
+
+    valid = DeepResearchPlanner().plan(
+        request(), build_planning_context_pack([], request())
+    ).plan
+    optional_requirements = [
+        item.model_copy(update={"required": False})
+        for item in valid.evidenceRequirements
+    ]
+    invalid_copy = valid.model_copy(update={
+        "evidenceRequirements": optional_requirements,
+    })
+    decision = evaluate_plan_quality(invalid_copy)
+    assert decision.gate == "needs_revision"
+    assert "core research evidence cannot be entirely optional" in decision.reasons
 
 
 def test_planner_repairs_once_and_backend_assigns_authoritative_ids():

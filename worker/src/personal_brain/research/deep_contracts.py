@@ -228,6 +228,10 @@ class ResearchPlanV1(DeepStrictModel):
     def validate_against_request(self, request: ResearchRequestV1) -> ResearchPlanV1:
         if self.runId != request.runId or self.requestId != request.requestId:
             raise ValueError("plan identity does not match request")
+        if not any(item.required for item in self.evidenceRequirements):
+            raise ValueError(
+                "at least one Evidence Requirement for the core research question must be required"
+            )
         if _near_duplicate(self.objective) != _near_duplicate(request.objective):
             raise ValueError("plan objective must preserve the authoritative request objective")
         if any(item.source == "web" for item in self.retrievalProposals):
@@ -360,13 +364,6 @@ class EvidenceAssessmentV1(DeepStrictModel):
         coverage_ids = [item.requirementId for item in self.requirementCoverage]
         if len(coverage_ids) != len(set(coverage_ids)):
             raise ValueError("Requirement Coverage must be unique")
-        if self.overallStatus == "sufficient" and any(
-            item.status != "satisfied" or item.sufficiency != "pass"
-            for item in self.requirementCoverage
-        ):
-            raise ValueError(
-                "overall sufficient requires every assessed requirement to be satisfied and sufficient"
-            )
         if self.overallStatus == "sufficient" and any(
             item.severity == "critical" for item in self.prioritizedGaps
         ):

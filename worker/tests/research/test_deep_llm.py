@@ -593,7 +593,7 @@ def test_deep_environment_uses_bounded_standard_reasoning_configuration():
     assert model.client.prompt_cache_mode == "explicit"
 
 
-def test_r2b_and_r2c_have_distinct_conservative_default_completion_ceilings():
+def test_r2b_and_r2c_use_8192_conservative_default_completion_ceilings():
     environment = {
         "R2B_R2C_API_BASE_URL": "https://api.openai.com/v1",
         "R2B_R2C_API_KEY": "secret",
@@ -611,7 +611,7 @@ def test_r2b_and_r2c_have_distinct_conservative_default_completion_ceilings():
         evaluation = OpenAICompatibleEvidenceEvaluationModel.from_environment()
 
     assert planning.client.max_output_tokens == 8192
-    assert evaluation.client.max_output_tokens == 3584
+    assert evaluation.client.max_output_tokens == 8192
 
 
 def test_r2b_default_preflight_reserves_8192_tokens_for_initial_and_repair():
@@ -637,3 +637,90 @@ def test_r2b_default_preflight_reserves_8192_tokens_for_initial_and_repair():
     assert preflight.max_total_output_tokens == 16384
     assert preflight.max_input_tokens == 4280
     assert preflight.max_cost_usd == Decimal("0.1724")
+
+
+def test_r2c_default_preflight_reserves_8192_tokens_for_initial_and_repair():
+    environment = {
+        "R2B_R2C_API_BASE_URL": "https://api.openai.com/v1",
+        "R2B_R2C_API_KEY": "secret",
+        "R2C_MODEL": "gpt-6.1-sol",
+        "R2C_PRICING_VERIFIED": "true",
+        "R2C_INPUT_COST_PER_MILLION_USD": "2",
+        "R2C_OUTPUT_COST_PER_MILLION_USD": "10",
+    }
+    with patch.dict("os.environ", environment, clear=True):
+        evaluation = OpenAICompatibleEvidenceEvaluationModel.from_environment()
+
+    preflight = evaluation.operation_preflight({
+        "systemInstructions": "bounded",
+        "researchPlan": {"question": "test"},
+        "untrustedEvidence": [],
+        "outputSchema": {},
+    })
+
+    assert preflight.max_calls == 2
+    assert preflight.max_output_tokens_per_call == 8192
+    assert preflight.max_total_output_tokens == 16384
+    assert preflight.max_input_tokens == 4324
+    assert preflight.max_cost_usd == Decimal("0.1725")
+
+
+def test_r2c_output_budget_exhaustion_never_uses_bounded_repair():
+    research_plan = DeepResearchPlanner().plan(
+        request(), build_planning_context_pack([], request())
+    ).plan
+    client = OutputBudgetExhaustedClient()
+    model = OpenAICompatibleEvidenceEvaluationModel(client, pricing())
+    diagnostics = []
+
+    with pytest.raises(DeepProviderError) as caught:
+        EvidenceEvaluator(model).assess(
+            research_plan, [], user_id=UUID(USER_ID),
+            diagnostic_sink=diagnostics.append,
+        )
+
+    assert client.calls == 1
+    assert caught.value.error_kind == "output_budget_exhausted"
+    assert caught.value.finish_reasons == ("length",)
+    assert caught.value.usage.reasoning_tokens == 950
+    assert [(item.attemptStage, item.validationStage) for item in diagnostics] == [
+        ("initial", "provider_terminal")
+    ]
+
+
+def test_three_pdf_two_round_six_claim_budget_matrix_fails_closed_at_one_dollar():
+    standard_pricing = VerifiedPricing(Decimal("2"), Decimal("10"))
+    ceiling_delta = standard_pricing.cost(LLMUsage(
+        0, 2 * (8192 - 3584), 2 * (8192 - 3584)
+    ))
+    assert ceiling_delta == Decimal("0.0922")
+
+    r2b = Decimal("0.1921")
+    r2c_rounds = [
+        Decimal("0.2292") + ceiling_delta,
+        Decimal("0.2424") + ceiling_delta,
+    ]
+    finalization = {
+        1: Decimal("0.1466"),
+        3: Decimal("0.2094"),
+        6: Decimal("0.3036"),
+    }
+    matrix = {
+        (rounds, claims): r2b + sum(r2c_rounds[:rounds]) + final_cost
+        for rounds in (1, 2)
+        for claims, final_cost in finalization.items()
+    }
+
+    assert matrix == {
+        (1, 1): Decimal("0.6601"),
+        (1, 3): Decimal("0.7229"),
+        (1, 6): Decimal("0.8171"),
+        (2, 1): Decimal("0.9947"),
+        (2, 3): Decimal("1.0575"),
+        (2, 6): Decimal("1.1517"),
+    }
+    assert matrix[(1, 6)] <= Decimal("1.00")
+    assert matrix[(2, 1)] <= Decimal("1.00")
+    assert matrix[(2, 3)] > Decimal("1.00")
+    assert matrix[(2, 6)] > Decimal("1.00")
+    assert matrix[(2, 6)] <= Decimal("2.00") < Decimal("10.00")

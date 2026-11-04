@@ -278,12 +278,14 @@ def test_evidence_record_preserves_internal_provenance_and_rejects_snippet_citat
         EvidenceRecordV1.model_validate({**base, "isSearchSnippet": True})
 
 
-def test_missing_requirement_cannot_be_overridden_by_overall_sufficient():
-    with pytest.raises(ValidationError, match="every assessed requirement"):
-        EvidenceAssessmentV1.model_validate(assessment_data(overallStatus="sufficient"))
+def test_context_free_assessment_defers_required_semantics_to_plan_validation():
+    assessment = EvidenceAssessmentV1.model_validate(
+        assessment_data(overallStatus="sufficient")
+    )
+    assert assessment.requirementCoverage[0].status == "missing"
 
 
-def test_overall_sufficient_requires_sufficiency_pass_and_no_critical_gap():
+def test_overall_sufficient_rejects_critical_gap():
     covered = assessment_data(
         overallStatus="sufficient",
         requirementCoverage=[{
@@ -297,10 +299,6 @@ def test_overall_sufficient_requires_sufficiency_pass_and_no_critical_gap():
             "requirementIds": ["req_primary"],
         }],
     )
-    with pytest.raises(ValidationError, match="satisfied and sufficient"):
-        EvidenceAssessmentV1.model_validate(covered)
-
-    covered["requirementCoverage"][0]["sufficiency"] = "pass"
     covered["prioritizedGaps"] = [{
         "id": "gap_critical", "requirementId": "req_primary",
         "severity": "critical", "expectedInformationGain": 5,

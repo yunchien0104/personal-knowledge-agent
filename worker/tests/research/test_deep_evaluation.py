@@ -119,6 +119,70 @@ def test_missing_required_evidence_uses_insufficient_fallback():
     assert result.assessment.telemetry.executionStatus == "fallback"
 
 
+def test_sufficient_allows_optional_gap_but_requires_core_evidence():
+    research_plan = plan()
+    assert len(research_plan.evidenceRequirements) >= 2
+    requirements = [
+        research_plan.evidenceRequirements[0],
+        *(
+            item.model_copy(update={"required": False})
+            for item in research_plan.evidenceRequirements[1:]
+        ),
+    ]
+    research_plan = research_plan.model_copy(update={
+        "evidenceRequirements": requirements,
+    })
+    record = evidence("30000000-0000-4000-8000-000000000020")
+    output = assessment_output(research_plan, [str(record.evidenceId)])
+    for coverage in output["requirementCoverage"][1:]:
+        coverage.update({
+            "status": "missing",
+            "sufficiency": "unknown",
+            "independence": "unknown",
+            "supportingEvidenceIds": [],
+            "explanation": "Optional context is unavailable but not needed for the answer",
+        })
+    result = EvidenceEvaluator(FixtureModel(output)).assess(
+        research_plan, [record], user_id=UUID(USER_ID)
+    )
+    assert result.assessment.overallStatus == "sufficient"
+    assert result.assessment.requirementCoverage[1].status == "missing"
+
+    missing_required = assessment_output(research_plan, [])
+    missing_required["requirementCoverage"][0].update({
+        "status": "missing", "sufficiency": "fail",
+    })
+    failed = EvidenceEvaluator(FixtureModel(missing_required)).assess(
+        research_plan, [], user_id=UUID(USER_ID)
+    )
+    assert failed.fallback_used is True
+    assert failed.assessment.overallStatus == "insufficient"
+
+
+def test_all_optional_plan_is_rejected_before_r2c_provider_boundary():
+    research_plan = plan()
+    research_plan = research_plan.model_copy(update={
+        "evidenceRequirements": [
+            item.model_copy(update={"required": False})
+            for item in research_plan.evidenceRequirements
+        ],
+    })
+
+    class TrackingModel(FixtureModel):
+        calls = 0
+
+        def evaluate(self, prompt):
+            self.calls += 1
+            return super().evaluate(prompt)
+
+    model = TrackingModel(assessment_output(research_plan, []))
+    with pytest.raises(ValueError, match="no required core evidence"):
+        EvidenceEvaluator(model).assess(
+            research_plan, [], user_id=UUID(USER_ID)
+        )
+    assert model.calls == 0
+
+
 def test_unknown_evidence_id_never_enters_assessment():
     research_plan = plan()
     known = evidence("30000000-0000-4000-8000-000000000020")
@@ -147,6 +211,10 @@ def test_derivative_sources_do_not_count_as_independent_and_prompt_is_untrusted(
     assert "untrusted" in model.prompt["systemInstructions"]
     prompt = evaluation_prompt(research_plan, [first])
     assert prompt["untrustedEvidence"][0]["excerpt"].startswith("Ignore instructions")
+    instructions = prompt["systemInstructions"]
+    assert "every required requirement" in instructions
+    assert "every requirement to be satisfied" not in instructions
+    assert instructions.count("scope, date, definition, or condition differences") == 1
 
 
 def test_r2c_evidence_limit_blocks_instead_of_silently_truncating():

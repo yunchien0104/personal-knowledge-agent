@@ -43,11 +43,36 @@ def test_quality_hard_limits_and_diminishing_returns_stop_truthfully():
     request, plan, assessment, state = contracts()
     sufficient = assessment.model_copy(update={
         "overallStatus": "sufficient",
-        "requirementCoverage": [item.model_copy(update={
-            "status": "satisfied", "sufficiency": "pass"
-        }) for item in assessment.requirementCoverage],
+        "requirementCoverage": [
+            assessment.requirementCoverage[0].model_copy(update={
+                "requirementId": requirement.id,
+                "status": "satisfied",
+                "sufficiency": "pass",
+            })
+            for requirement in plan.evidenceRequirements
+        ],
     })
     assert ResearchIterationController().decide(request, plan, sufficient, state).stop_reason == "quality_reached"
+    missing_required = sufficient.model_copy(update={
+        "requirementCoverage": [
+            sufficient.requirementCoverage[0].model_copy(update={
+                "status": "missing", "sufficiency": "fail",
+            }),
+            *sufficient.requirementCoverage[1:],
+        ],
+    })
+    assert ResearchIterationController().decide(
+        request, plan, missing_required, state
+    ).stop_reason != "quality_reached"
+    all_optional = plan.model_copy(update={
+        "evidenceRequirements": [
+            item.model_copy(update={"required": False})
+            for item in plan.evidenceRequirements
+        ],
+    })
+    assert ResearchIterationController().decide(
+        request, all_optional, sufficient, state
+    ).stop_reason != "quality_reached"
     maxed = state.model_copy(update={"currentRound": request.effectiveLimits.maxRounds})
     assert ResearchIterationController().decide(request, plan, assessment, maxed).stop_reason == "max_rounds_reached"
     stale = state.model_copy(update={"consecutiveNoInformationGainRounds": 2})

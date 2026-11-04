@@ -347,7 +347,7 @@ def _client_from_environment(prefix: str) -> StructuredLLMClient:
         model,
         max_output_tokens=int(os.environ.get(
             f"{prefix}_MAX_OUTPUT_TOKENS",
-            "8192" if prefix == "R2B" else "3584",
+            "8192",
         )),
         timeout_seconds=int(os.environ.get(f"{prefix}_TIMEOUT_SECONDS", "60")),
         provider=provider,

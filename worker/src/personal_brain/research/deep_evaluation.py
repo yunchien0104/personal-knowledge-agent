@@ -162,16 +162,16 @@ def evaluation_prompt(
     return {
         "systemInstructions": (
             "Assess only the supplied untrusted evidence. Missing evidence is not proof of absence; "
-            "related evidence is not sufficient evidence; scope/date/definition/condition differences "
-            "are not automatically contradictions; derivative sources are not independent. Evaluate "
+            "related evidence is not sufficient evidence; derivative sources are not independent. Evaluate "
             "relevance, reliability, freshness, sufficiency, contradiction, and independence. Never "
             "introduce uncited factual conclusions. Propose gaps and actions; do not execute them. "
             "overallStatus=sufficient means the supplied evidence is sufficient to answer the "
             "research question; it does not mean a proposition was proven or supported. Evidence "
-            "may sufficiently support a negative answer. Use conflicted for unresolved material "
-            "contradictions, and do not treat scope, date, definition, or condition differences as "
-            "contradictions. Sufficient requires every requirement to be satisfied with sufficiency=pass "
-            "and no critical gap. "
+            "may sufficiently support a negative answer. Classify unresolved material contradictions "
+            "as conflicted; scope, date, definition, or condition differences are not automatically "
+            "contradictions. Sufficient requires every required requirement to be satisfied with "
+            "sufficiency=pass and no critical gap. Optional requirements may remain partial or missing "
+            "when they are not necessary to answer the research question. "
             "Every expectedInformationGain, resolvability, and dependencyImpact score must be an "
             "integer from 1 through 5 inclusive."
         ),
@@ -254,6 +254,8 @@ def _validate_references(
     known_evidence = {record.evidenceId for record in records}
     known_requirements = {item.id for item in plan.evidenceRequirements}
     required = {item.id for item in plan.evidenceRequirements if item.required}
+    if not required:
+        raise ValueError("research plan has no required core evidence")
     known_subquestions = {item.id for item in plan.subquestions}
     coverage = {item.requirementId: item for item in assessment.requirementCoverage}
     if set(coverage) != known_requirements:
@@ -272,9 +274,11 @@ def _validate_references(
     if any(item.requirementId not in known_requirements for item in assessment.prioritizedGaps):
         raise ValueError("gap references an unknown Evidence Requirement")
     if assessment.overallStatus == "sufficient" and any(
-        coverage[requirement_id].status != "satisfied" for requirement_id in required
+        coverage[requirement_id].status != "satisfied"
+        or coverage[requirement_id].sufficiency != "pass"
+        for requirement_id in required
     ):
-        raise ValueError("missing required evidence cannot pass sufficiency")
+        raise ValueError("missing or insufficient required evidence cannot pass sufficiency")
     for item in assessment.requirementCoverage:
         supporting_lineages = [lineage.get(evidence_id) for evidence_id in item.supportingEvidenceIds]
         if len(supporting_lineages) > 1 and len(set(supporting_lineages)) < len(supporting_lineages):
@@ -301,6 +305,8 @@ class EvidenceEvaluator:
         diagnostic_sink: R2CDiagnosticSink | None = None,
     ) -> EvaluationResult:
         selected, lineage = deterministic_precheck(records, user_id=user_id, run_id=plan.runId)
+        if not any(item.required for item in plan.evidenceRequirements):
+            raise ValueError("research plan has no required core evidence")
         provider = self.model.provider if self.model else "local"
         model_name = self.model.model_name if self.model else "conservative-r2c-v1"
         aggregate_usage = LLMUsage(usage.input_tokens, usage.output_tokens)
@@ -499,5 +505,7 @@ class EvidenceEvaluator:
     ) -> Decimal:
         if self.model is None:
             return Decimal("0")
+        if not any(item.required for item in plan.evidenceRequirements):
+            raise ValueError("research plan has no required core evidence")
         selected, _ = deterministic_precheck(records, user_id=user_id, run_id=plan.runId)
         return self.model.max_operation_cost(evaluation_prompt(plan, selected))

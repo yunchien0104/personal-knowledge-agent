@@ -1,10 +1,34 @@
 # Deep Research full E2E readiness
 
+## R2C 8192-token and required-evidence repair (2026-11-05)
+
+The three-PDF Real Provider run showed that R2C consumed its entire 3584-token
+completion allowance as reasoning and returned no visible JSON. R2C now uses an
+8192-token ceiling, matching R2B; R2A, R2E, R2F, Standard tier, low reasoning,
+timeout, and bounded-repair policy are unchanged. Length exhaustion remains
+non-repairable, and every initial/repair call remains covered by the atomic
+payload-aware reservation.
+
+R2B now rejects a new plan when all Evidence Requirements are optional. At
+least one requirement necessary to answer the core question must be required;
+supplemental requirements may remain optional. R2C and R2D now agree that only
+required requirements must be satisfied with `sufficiency=pass` for
+`overallStatus=sufficient`, while any critical gap or material contradiction
+still prevents quality completion. The R2D check repeats this validation when
+resuming a persisted assessment.
+
+Free verification: focused R2B/R2C/R2D contracts **67 passed**; complete
+non-provider Worker **268 passed, 1 skipped, 9 subtests passed**. A newly
+created disposable Local Supabase replayed **38/38 migrations** and all **23
+pgTAP files / 632 assertions passed**. The retained 60321/60322 PDF stack was
+not reset or used as a clean test fixture. No paid Provider call occurred.
+
 ## R2B 8192-token execution repair (2026-11-05)
 
 After the three-PDF run exhausted the prior 2560-token R2B ceiling entirely as
-reasoning, the R2B-only default is now 8192 completion tokens. R2C remains 3584;
-R2A, R2E, and R2F limits are unchanged. The existing error-directed policy also
+reasoning, that repair raised R2B to 8192 while R2C retained its prior lower
+ceiling. The repair above now raises R2C to 8192 as well. R2A, R2E, and R2F
+limits are unchanged. The existing error-directed policy also
 remains unchanged: only contract validation may use the single bounded repair,
 while length, timeout, refusal, content filter, and unknown outcomes do not
 retry automatically.
@@ -114,16 +138,19 @@ reserved, uncertain, and protected run spend.
 
 ## Worst-case budget
 
-Current three-PDF assumptions use the actual preflight payloads from 9, 11, and
-14 cumulative lexical evidence records. R2B at the new 8192-token ceiling is
-`$0.1921`; R2C rounds are `$0.2292`, `$0.2424`, and `$0.2747`; internal R1 and
-R2D are `$0`; finalization remains `$0.1152 + $0.0314 × claims`.
+Current conservative three-PDF assumptions use the previously measured
+preflight payloads from 9, 11, and 14 cumulative lexical evidence records. R2B
+is `$0.1921`; after the R2C ceiling increase, R2C rounds are conservatively
+`$0.3214`, `$0.3346`, and `$0.3669`; internal R1 and R2D are `$0`;
+finalization remains `$0.1152 + $0.0314 × claims`. The retained failed-run
+payload with 8 evidence records independently recalculates to `$0.2818` under
+the new R2C ceiling, but the larger 9/11/14-record values drive this matrix.
 
 | Search rounds | 1 claim | 3 claims | 6 claims |
 |---:|---:|---:|---:|
-| 1 | $0.5679 | $0.6307 | $0.7249 |
-| 2 | $0.8103 | $0.8731 | $0.9673 |
-| 3 | $1.0850 | $1.1478 | $1.2420 |
+| 1 | $0.6601 | $0.7229 | $0.8171 |
+| 2 | $0.9947 | $1.0575 | $1.1517 |
+| 3 | $1.3616 | $1.4244 | $1.5186 |
 
 For Web-enabled runs add the configured `$0.0100` envelope per Web round, so
 the three rows add `$0.0100`, `$0.0200`, and `$0.0300` respectively. Repairs and
@@ -135,11 +162,12 @@ envelope above one claim: the verified final costs are `$0.1466`, `$0.2094`, and
 within the current `$1.00` hard cap. Staged settlement/release still improves
 typical capacity while every worst-case reservation remains fail-closed.
 
-`BUDGET_FEASIBILITY` is **PASS** for one or two Internal-only rounds at up to six
-claims, but **FAIL-CLOSED** for a guaranteed three-round run under the `$1.00`
-run cap. Staged settlement and release can admit a third round only when actual
-earlier spend leaves enough capacity for both that round and the protected final
-reserve; worst-case planning must not assume that saving. The system still fails
+`BUDGET_FEASIBILITY` is **PASS** for one Internal-only round at up to six claims,
+and for two rounds with one claim (`$0.9947`). Two rounds with three or six
+claims fail closed at `$1.0575` / `$1.1517` under the `$1.00` run cap. Staged
+settlement and release can admit a later round only when actual earlier spend
+leaves enough capacity for that round and the protected final reserve;
+worst-case planning must not assume that saving. The system still fails
 before R2B when its configured final envelope cannot be protected, and
 before any later paid operation that would consume protected run funds. A
 separate aggregate hold across concurrent runs is not yet represented in the

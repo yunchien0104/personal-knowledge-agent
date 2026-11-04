@@ -64,8 +64,21 @@ class ResearchIterationController:
         has_critical_gap = any(
             item.severity == "critical" for item in assessment.prioritizedGaps
         )
+        coverage = {
+            item.requirementId: item for item in assessment.requirementCoverage
+        }
+        required_ids = {
+            item.id for item in plan.evidenceRequirements if item.required
+        }
+        required_coverage_complete = bool(required_ids) and all(
+            requirement_id in coverage
+            and coverage[requirement_id].status == "satisfied"
+            and coverage[requirement_id].sufficiency == "pass"
+            for requirement_id in required_ids
+        )
         if (
             assessment.overallStatus == "sufficient"
+            and required_coverage_complete
             and not has_material_contradiction
             and not has_critical_gap
         ):
