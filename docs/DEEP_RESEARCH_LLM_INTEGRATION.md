@@ -228,7 +228,7 @@ lease fencing, uncertain outcomes, unused-slot release, restart reuse, and
 idempotent publication are covered by Worker and real PostgreSQL regressions.
 
 At the documented $2/M input and $10/M output prices, six-claim defaults reserve a
-maximum **$0.3036** for finalization. Missing verified pricing, insufficient run /
+maximum **$0.4636** for finalization after the PDF payload repair. Missing verified pricing, insufficient run /
 daily / monthly capacity, oversized input, terminal replay, or ambiguous Provider
 outcome fails closed. No paid final-stage call was made, so a controlled Full Deep
 Real Provider E2E still requires separate authorization and remains **BLOCKED**.

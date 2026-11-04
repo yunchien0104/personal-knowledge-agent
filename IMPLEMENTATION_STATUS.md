@@ -11,6 +11,25 @@
 - PASS: TypeScript, ESLint, production build, and 74 Notes tests, including four
   new import response/paragraph/preservation/fail-closed regressions.
 
+## Deep Research PDF synthesis payload and query scheduling repair (2026-11-05)
+
+- Clarified that the R2A input guard uses serialized UTF-8 bytes as a conservative
+  tokenizer-independent upper bound, not an exact GPT token count. The observed
+  39,423-byte payload therefore exceeded the old 12,000 safe envelope without
+  proving an equal provider token count.
+- Raised only Deep R2A input capacity to 48,000 and its possible R2F repair input
+  to 64,000. Synthesis now removes execution-only plan metadata and exact duplicate
+  Evidence IDs while retaining all research semantics and citation provenance.
+- Separated round and query accounting: one research round may execute multiple
+  authorized R2B proposals up to `maxQueries` before R2C; `maxRounds` continues to
+  bound R2C/R2D iteration. R2C's eight-record pass-through has a direct regression.
+- Payload-limit failures now retain safe observed/limit counts under the specific
+  `deep_finalization_payload_limit` job diagnostic without prompt or evidence text.
+- The new six-claim final envelope is `$0.4636`. Read-only replay of the accepted
+  eight-query PDF plan yields a safe recommended envelope of six queries / three
+  claims at `$0.9391`; eight queries / six claims require `$1.1430` and the R2A
+  payload upper bound also exceeds 48,000, so that shape fails closed.
+
 ## Deep Research R2C ceiling and evidence-sufficiency repair (2026-11-05)
 
 - Raised only R2C's default completion ceiling from 3584 to 8192; R2B remains
@@ -21,9 +40,9 @@
 - R2C and R2D now require all required coverage to be satisfied/pass, allow
   genuinely optional gaps, and still reject critical gaps and material
   contradictions. R2D rechecks required coverage after checkpoint resume.
-- Conservative three-PDF worst case is now `$0.8171` for one round/six claims,
-  `$0.9947` for two rounds/one claim, and fail-closed at `$1.0575` / `$1.1517`
-  for two rounds with three/six claims under the unchanged `$1.00` run cap.
+- Read-only lexical replay of the accepted PDF plan confirms six queries / three
+  claims at `$0.9391`; eight queries / six claims require `$1.1430` and fail
+  closed under the unchanged `$1.00` run cap.
 - PASS: 67 focused R2B/R2C/R2D tests; complete non-provider Worker 269 passed,
   1 skipped, 9 subtests passed; clean disposable Local Supabase 38/38 migration
   replay and 23 pgTAP files / 632 assertions. No paid call or hosted access.
@@ -107,9 +126,9 @@
   as uncertain. Additive database enforcement covers $1.00/run, $2/day, and
   $10/month with the existing protected final-stage reserve.
 - Three-PDF conservative preflight is $0.1921 for R2B,
-  $0.3214/$0.3346/$0.3669 for R2C rounds, and $0.3036 for six-claim
-  finalization. One round/six claims fits at $0.8171; two rounds/six claims
-  fail closed at $1.1517 under the unchanged $1.00 run cap.
+  $0.3214/$0.3346/$0.3669 for R2C rounds, and $0.4636 for six-claim
+  finalization. For the accepted plan, six queries / three claims fit at `$0.9391`;
+  eight queries / six claims fail closed at `$1.1430` under the `$1.00` run cap.
 - PASS (FREE): 83 focused R2B/R2C/Coordinator/Finalization tests; complete
   non-provider Worker 263 passed, 1 skipped, 9 subtests; clean 38-migration
   Local Supabase replay and all 23 pgTAP files / 632 assertions.
@@ -1177,7 +1196,7 @@
   disposable stack, including 40 dedicated finalization assertions.
 - BLOCKED (REAL_PROVIDER): no paid R2A/E/F call was authorized or run. A controlled
   Full Deep E2E requires fresh authorization and sufficient capacity for the
-  $0.3036 default worst-case final envelope within the current $1.00 run cap.
+  $0.4636 default worst-case final envelope within the current $1.00 run cap.
 - Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.
 
 ### Full Deep E2E readiness (local, 2026-11-04)
@@ -1189,9 +1208,8 @@
 - PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
   files / 628 assertions; public-schema lint has zero errors.
 - PASS: configured budget feasibility remains fail-closed for the current
-  three-PDF payload: one round/six claims is $0.8171 and two rounds/one claim is
-  $0.9947; two rounds with three/six claims exceed the $1.00 run cap at
-  $1.0575/$1.1517. Cross-run daily/monthly
+  three-PDF payload: six queries / three claims fit at `$0.9391`; eight queries /
+  six claims exceed the `$1.00` run cap at `$1.1430`. Cross-run daily/monthly
   aggregate holds remain a separate durability limitation.
 - Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.
 

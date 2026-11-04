@@ -688,39 +688,37 @@ def test_r2c_output_budget_exhaustion_never_uses_bounded_repair():
     ]
 
 
-def test_three_pdf_two_round_six_claim_budget_matrix_fails_closed_at_one_dollar():
-    standard_pricing = VerifiedPricing(Decimal("2"), Decimal("10"))
-    ceiling_delta = standard_pricing.cost(LLMUsage(
-        0, 2 * (8192 - 3584), 2 * (8192 - 3584)
-    ))
-    assert ceiling_delta == Decimal("0.0922")
-
+def test_three_pdf_query_and_claim_budget_matrix_fails_closed_at_one_dollar():
     r2b = Decimal("0.1921")
-    r2c_rounds = [
-        Decimal("0.2292") + ceiling_delta,
-        Decimal("0.2424") + ceiling_delta,
-    ]
+    # Read-only lexical replay of the accepted eight-query R2B plan. Values are
+    # the current R2C initial+repair preflight after each query-prefix union.
+    r2c_by_query_count = {
+        1: Decimal("0.3438"),
+        2: Decimal("0.3583"),
+        6: Decimal("0.3776"),
+        7: Decimal("0.4367"),
+        8: Decimal("0.4873"),
+    }
     finalization = {
-        1: Decimal("0.1466"),
-        3: Decimal("0.2094"),
-        6: Decimal("0.3036"),
+        1: Decimal("0.3066"),
+        3: Decimal("0.3694"),
+        6: Decimal("0.4636"),
     }
     matrix = {
-        (rounds, claims): r2b + sum(r2c_rounds[:rounds]) + final_cost
-        for rounds in (1, 2)
+        (queries, claims): r2b + r2c + final_cost
+        for queries, r2c in r2c_by_query_count.items()
         for claims, final_cost in finalization.items()
     }
 
-    assert matrix == {
-        (1, 1): Decimal("0.6601"),
-        (1, 3): Decimal("0.7229"),
-        (1, 6): Decimal("0.8171"),
-        (2, 1): Decimal("0.9947"),
-        (2, 3): Decimal("1.0575"),
-        (2, 6): Decimal("1.1517"),
-    }
+    assert matrix[(1, 6)] == Decimal("0.9995")
+    assert matrix[(2, 6)] == Decimal("1.0140")
+    assert matrix[(6, 3)] == Decimal("0.9391")
+    assert matrix[(7, 3)] == Decimal("0.9982")
+    assert matrix[(8, 1)] == Decimal("0.9860")
+    assert matrix[(8, 3)] == Decimal("1.0488")
+    assert matrix[(8, 6)] == Decimal("1.1430")
     assert matrix[(1, 6)] <= Decimal("1.00")
-    assert matrix[(2, 1)] <= Decimal("1.00")
-    assert matrix[(2, 3)] > Decimal("1.00")
     assert matrix[(2, 6)] > Decimal("1.00")
-    assert matrix[(2, 6)] <= Decimal("2.00") < Decimal("10.00")
+    assert matrix[(6, 3)] <= Decimal("1.00")
+    assert matrix[(8, 3)] > Decimal("1.00")
+    assert matrix[(8, 6)] <= Decimal("2.00") < Decimal("10.00")

@@ -65,18 +65,29 @@ fails Worker construction closed when Deep Research is enabled.
 
 At $2/M input and $10/M output with the documented defaults and six claims:
 
-- R2A synthesis: 12,000 input + 2,560 output = **$0.0496**.
+- R2A synthesis: 48,000 input + 2,560 output = **$0.1216**.
 - Six R2E calls: 4,000 input + 768 output each = **$0.0942** after per-operation conservative rounding.
-- One R2F repair: 20,000 input + 2,560 output = **$0.0656**.
+- One R2F repair: 64,000 input + 2,560 output = **$0.1536**.
 - Six R2F reverifications: 4,000 input + 768 output each = **$0.0942**.
-- Maximum Deep finalization reservation: **$0.3036**.
+- Maximum Deep finalization reservation: **$0.4636**.
+
+The input guard deliberately counts the UTF-8 bytes of the serialized prompt as
+a tokenizer-independent **upper bound**, not as the exact model token count. The
+failed PDF run's 39,423-byte payload therefore did not prove that the provider
+would consume 39,423 tokens; it proved that the old 12,000-token safe envelope
+could not admit the request without an authoritative tokenizer. Deep synthesis
+now removes execution-only plan metadata and exact duplicate Evidence IDs while
+retaining every research-semantic field and complete citation provenance. The
+same reconstructed payload falls from a 40,701 to 37,598 upper bound and fits
+the new 48,000 guard. Conflicting duplicate Evidence IDs still fail closed.
 
 The Coordinator now writes the configured finalizer envelope as the protected
 run reserve before R2B/R2C. Earlier actual, uncertain, reserved, and protected
 spend must fit the $1.00 run cap or execution fails before the next Provider
 boundary. This is a hard upper-bound candidate, not a Real Provider sufficiency
-claim. The unrestricted six-claim, one-round combined worst case is $0.5016 and
-now fits the per-run cap. See `DEEP_RESEARCH_E2E_READINESS.md`.
+claim. The accepted PDF plan's recommended six-query/three-claim configuration
+is $0.9391; its unrestricted eight-query/six-claim shape is $1.1430 and fails
+closed. See `DEEP_RESEARCH_E2E_READINESS.md`.
 
 ## Verification results
 
@@ -99,7 +110,7 @@ now fits the per-run cap. See `DEEP_RESEARCH_E2E_READINESS.md`.
 - A controlled Full Deep E2E needs explicit new paid authorization, a fresh
   isolated Local PostgreSQL stack, verified final-stage model/pricing/tier/cache
   configuration, representative non-sensitive evidence, and a preflight that fits
-  both the $0.3036 final envelope and the $1.00 total run cap after all prior spend.
+  both the $0.4636 final envelope and the $1.00 total run cap after all prior spend.
 - Acceptance requires real R2A output, every R2E/R2F usage/request ID, exact Ledger
   reconciliation, strict gate success or truthful insufficient result, and no
   fallback represented as Provider success. No automatic replay is permitted for

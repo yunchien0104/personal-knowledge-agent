@@ -18,6 +18,7 @@ from personal_brain.research.deep_contracts import (
     ResearchPlanV1,
 )
 from personal_brain.research.deep_coordinator import DeepResearchCoordinator, _operation_id
+from personal_brain.research.deep_controller import query_fingerprint
 from personal_brain.research.deep_diagnostics import R2CValidationDiagnostic
 from personal_brain.research.deep_evaluation import EvidenceEvaluator, EvaluationResult
 from personal_brain.research.deep_planning import DeepResearchPlanner, build_planning_context_pack
@@ -238,7 +239,7 @@ def assessing_state(run_id: UUID, plan: dict) -> dict:
         currentRound=1,
         completedRounds=[],
         executionPhase="assessing",
-        queryFingerprints=[],
+        queryFingerprints=[query_fingerprint("first record")],
         operationIds=[],
         assessmentIds=[],
         requirementProgress={"req_01": "unknown"},
@@ -261,7 +262,7 @@ def evidence_row(evidence_id: UUID, asset_id: UUID, revision_id: UUID, text: str
             "retrievalScore": 1.0, "score": 1.0, "queryHits": 1}
 
 
-def test_multi_round_accumulates_evidence_and_checkpoints() -> None:
+def test_one_round_executes_all_planned_queries_before_one_assessment() -> None:
     run_id, user_id = uuid4(), uuid4()
     request = request_json(run_id, user_id)
     first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
@@ -277,7 +278,8 @@ def test_multi_round_accumulates_evidence_and_checkpoints() -> None:
 
     assert result.status == "completed"
     assert retrieval.calls == ["first record", "second record"]
-    assert gateway.appended_rounds == [1, 2]
+    assert gateway.appended_rounds == [1, 1]
+    assert evaluator.calls == 1
     assert {row["id"] for row in gateway.bundle["evidence"]} == set(catalog)
     assert gateway.checkpoints[-1]["executionPhase"] == "terminal"
     assert gateway.checkpoints[-1]["outcome"] == "complete"

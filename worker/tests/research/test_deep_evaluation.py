@@ -231,6 +231,28 @@ def test_r2c_evidence_limit_blocks_instead_of_silently_truncating():
         )
 
 
+def test_r2c_provider_receives_every_distinct_evidence_record():
+    research_plan = plan()
+    records = [
+        evidence(
+            f"30000000-0000-4000-8000-{index:012d}",
+            content_hash=f"{index:064x}",
+        )
+        for index in range(20, 28)
+    ]
+    evidence_ids = [str(record.evidenceId) for record in records]
+    model = FixtureModel(assessment_output(research_plan, evidence_ids))
+
+    result = EvidenceEvaluator(model).assess(
+        research_plan, records, user_id=UUID(USER_ID)
+    )
+
+    assert result.fallback_used is False
+    supplied = model.prompt["untrustedEvidence"]
+    assert len(supplied) == 8
+    assert {row["evidenceId"] for row in supplied} == set(evidence_ids)
+
+
 def test_r2c_accepted_attempt_emits_safe_usage_cost_diagnostic():
     research_plan = plan()
     record = evidence("30000000-0000-4000-8000-000000000020")

@@ -30,8 +30,10 @@ credential was used during the repair.
 - Every Deep run has a persisted deadline. The database prevents new operations
   and operation starts after it, while the coordinator rechecks it after restart
   and between phases. Post-deadline synthesis/publication is not started.
-- `maxQueries` is enforced by both coordinator round count and database operation
-  count. Existing max-round/controller behavior is unchanged.
+- `maxRounds` counts R2C/R2D assess/decide cycles, while `maxQueries` independently
+  caps fingerprinted retrieval operations in the coordinator and database. One
+  round may execute multiple authorized R2B proposals before a single R2C
+  assessment; crash/restart resumes from the persisted fingerprints.
 - Verified partial, insufficient, timed-out, failed, cancelled, and draft-ready
   states remain distinguishable. A verified partial does not create a Note or
   claim `draft_ready`.

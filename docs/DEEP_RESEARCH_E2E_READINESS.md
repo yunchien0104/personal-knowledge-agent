@@ -138,33 +138,37 @@ reserved, uncertain, and protected run spend.
 
 ## Worst-case budget
 
-Current conservative three-PDF assumptions use the previously measured
-preflight payloads from 9, 11, and 14 cumulative lexical evidence records. R2B
-is `$0.1921`; after the R2C ceiling increase, R2C rounds are conservatively
-`$0.3214`, `$0.3346`, and `$0.3669`; internal R1 and R2D are `$0`;
-finalization remains `$0.1152 + $0.0314 × claims`. The retained failed-run
-payload with 8 evidence records independently recalculates to `$0.2818` under
-the new R2C ceiling, but the larger 9/11/14-record values drive this matrix.
+The accepted three-PDF plan contains eight queries. A read-only PostgreSQL
+lexical replay returned 12 rows per query and 23 distinct Evidence IDs. R2B is
+`$0.1921`; internal R1 and R2D are `$0`; finalization is
+`$0.2752 + $0.0314 × claims`. Because one round now correctly batches multiple
+queries before one R2C assessment, query count—not round count—drives this
+fixture's R2C payload.
 
-| Search rounds | 1 claim | 3 claims | 6 claims |
-|---:|---:|---:|---:|
-| 1 | $0.6601 | $0.7229 | $0.8171 |
-| 2 | $0.9947 | $1.0575 | $1.1517 |
-| 3 | $1.3616 | $1.4244 | $1.5186 |
+| Query prefix | Distinct evidence | R2C worst case | R2A byte/token upper bound | 1 claim | 3 claims | 6 claims |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 8 | $0.3438 | 28,490 | $0.8425 | $0.9053 | $0.9995 |
+| 2 | 9 | $0.3583 | 31,324 | $0.8570 | $0.9198 | $1.0140 |
+| 6 | 11 | $0.3776 | 34,595 | $0.8763 | $0.9391 | $1.0333 |
+| 7 | 18 | $0.4367 | 43,848 | $0.9354 | $0.9982 | $1.0924 |
+| 8 | 23 | $0.4873 | 52,573 | $0.9860 | $1.0488 | $1.1430 |
 
 For Web-enabled runs add the configured `$0.0100` envelope per Web round, so
 the three rows add `$0.0100`, `$0.0200`, and `$0.0300` respectively. Repairs and
 reverification are already included. Unknown outcomes remain fully charged.
 
 The old `$0.10` final reserve is not sufficient for any configured finalization
-envelope above one claim: the verified final costs are `$0.1466`, `$0.2094`, and
-`$0.3036` for 1/3/6 claims. The new dynamic reserve fixes that unsafe assumption
+envelope: the verified final costs are `$0.3066`, `$0.3694`, and `$0.4636` for
+1/3/6 claims. The dynamic reserve fixes that unsafe assumption
 within the current `$1.00` hard cap. Staged settlement/release still improves
 typical capacity while every worst-case reservation remains fail-closed.
 
-`BUDGET_FEASIBILITY` is **PASS** for one Internal-only round at up to six claims,
-and for two rounds with one claim (`$0.9947`). Two rounds with three or six
-claims fail closed at `$1.0575` / `$1.1517` under the `$1.00` run cap. Staged
+`BUDGET_FEASIBILITY` is **PASS** for the retained fixture at six queries / three
+claims (`$0.9391`) or seven queries / three claims (`$0.9982`). The latter has
+too little operating margin to recommend. Eight queries also exceed the 48,000
+R2A input upper-bound guard, independently of cost. The recommended controlled
+configuration is therefore one round, at most six queries, and at most three
+claims. Staged
 settlement and release can admit a later round only when actual earlier spend
 leaves enough capacity for that round and the protected final reserve;
 worst-case planning must not assume that saving. The system still fails

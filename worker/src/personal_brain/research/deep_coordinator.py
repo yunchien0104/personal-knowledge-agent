@@ -162,6 +162,38 @@ def _publication_rows(records: list[EvidenceRecordV1]) -> list[dict[str, Any]]:
     } for item in records if item.citationEligible and item.validityStatus == "valid"]
 
 
+def _next_planned_retrieval_action(
+    request: ResearchRequestV1,
+    plan: ResearchPlanV1,
+    used_fingerprints: list[str],
+    *,
+    round_number: int,
+) -> ResearchActionV1 | None:
+    """Return the next authorized unused R2B proposal for the current round."""
+    used = set(used_fingerprints)
+    for proposal in plan.retrievalProposals:
+        fingerprint = query_fingerprint(proposal.query)
+        if fingerprint in used:
+            continue
+        if proposal.source == "internal":
+            action_type = "search_internal"
+        elif request.webPolicy == "auto" and request.permissions.webDiscovery:
+            action_type = "discover_web"
+        else:
+            continue
+        return ResearchActionV1(
+            actionId=_operation_id(
+                request.runId,
+                f"action:{round_number}:{fingerprint}",
+            ),
+            actionType=action_type,
+            reason="Execute the next authorized R2B retrieval proposal",
+            query=proposal.query,
+            gapIds=[],
+        )
+    return None
+
+
 class DeepResearchCoordinator:
     """Runs one claimed Deep Research job without creating a second queue."""
 
@@ -1155,7 +1187,7 @@ class DeepResearchCoordinator:
                         )
                         break
                     if state.executionPhase in {"planning", "deciding"}:
-                        if state.currentRound >= request.effectiveLimits.maxQueries:
+                        if len(state.queryFingerprints) >= request.effectiveLimits.maxQueries:
                             state = (
                                 self._begin_finalization(
                                     state,
@@ -1173,12 +1205,23 @@ class DeepResearchCoordinator:
                             )
                             break
                         if state.executionPhase == "planning":
-                            query = next((p.query for p in plan.retrievalProposals if p.source == "internal"), request.originalQuestion)
-                            action = ResearchActionV1(
-                                actionId=_operation_id(request.runId, f"action:{state.currentRound + 1}:{query_fingerprint(query)}"),
-                                actionType="search_internal", reason="Execute the next authorized internal query",
-                                query=query, gapIds=[],
+                            action = _next_planned_retrieval_action(
+                                request,
+                                plan,
+                                state.queryFingerprints,
+                                round_number=state.currentRound + 1,
                             )
+                            if action is None:
+                                action = ResearchActionV1(
+                                    actionId=_operation_id(
+                                        request.runId,
+                                        f"action:{state.currentRound + 1}:objective",
+                                    ),
+                                    actionType="search_internal",
+                                    reason="Use the authoritative question when no R2B proposal is available",
+                                    query=request.originalQuestion,
+                                    gapIds=[],
+                                )
                         else:
                             assert assessment is not None
                             decision = self.controller.decide(request, plan, assessment, state)
@@ -1271,14 +1314,30 @@ class DeepResearchCoordinator:
                             break
                         refreshed = self._load(job, worker_id)
                         records = _evidence_records(list(refreshed.get("evidence") or []), request)
+                        query_fingerprints = list(dict.fromkeys([
+                            *state.queryFingerprints,
+                            query_fingerprint(action.query),
+                        ]))
+                        next_action = None
+                        if len(query_fingerprints) < request.effectiveLimits.maxQueries:
+                            next_action = _next_planned_retrieval_action(
+                                request,
+                                plan,
+                                query_fingerprints,
+                                round_number=state.currentRound,
+                            )
                         state = state.model_copy(update={
                             "checkpointVersion": state.checkpointVersion + 1,
-                            "executionPhase": "assessing",
-                            "queryFingerprints": list(dict.fromkeys([*state.queryFingerprints, query_fingerprint(action.query)])),
+                            "executionPhase": "retrieving" if next_action else "assessing",
+                            "queryFingerprints": query_fingerprints,
                             "operationIds": list(dict.fromkeys([*state.operationIds, operation_id])),
+                            "proposedActions": [next_action] if next_action else [],
+                            "approvedActionIds": [next_action.actionId] if next_action else [],
                             "budget": _budget(refreshed.get("budget"), request.effectiveLimits.maxCostUsd),
                         })
                         self._checkpoint(job, worker_id, state, plan_id=plan.planId)
+                        if next_action is not None:
+                            continue
 
                     current = self._load(job, worker_id)
                     if self._deadline_exhausted(current):
@@ -1531,6 +1590,12 @@ class DeepResearchCoordinator:
             return ProcessResult("lease_lost", job.id)
         except GatewayError:
             raise
+        except FinalizationPayloadLimitError as error:
+            raise GatewayError(
+                "deep_finalization_payload_limit",
+                str(error),
+                retryable=False,
+            ) from error
         except (ValueError, TypeError, KeyError) as error:
             raise GatewayError(
                 "invalid_deep_research_state",

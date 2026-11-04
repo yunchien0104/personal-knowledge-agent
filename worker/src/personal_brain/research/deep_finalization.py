@@ -66,11 +66,11 @@ class FinalizationLimits:
     def from_environment(cls) -> "FinalizationLimits":
         return cls(
             max_claims=int(os.getenv("DEEP_FINAL_MAX_CLAIMS", "6")),
-            synthesis_input_tokens=int(os.getenv("DEEP_R2A_MAX_INPUT_TOKENS", "12000")),
+            synthesis_input_tokens=int(os.getenv("DEEP_R2A_MAX_INPUT_TOKENS", "48000")),
             synthesis_output_tokens=int(os.getenv("DEEP_R2A_MAX_OUTPUT_TOKENS", "2560")),
             verification_input_tokens=int(os.getenv("DEEP_R2E_MAX_INPUT_TOKENS", "4000")),
             verification_output_tokens=int(os.getenv("DEEP_R2E_MAX_OUTPUT_TOKENS", "768")),
-            repair_input_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_INPUT_TOKENS", "20000")),
+            repair_input_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_INPUT_TOKENS", "64000")),
             repair_output_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_OUTPUT_TOKENS", "2560")),
             reverification_input_tokens=int(os.getenv("DEEP_R2F_VERIFY_MAX_INPUT_TOKENS", "4000")),
             reverification_output_tokens=int(os.getenv("DEEP_R2F_VERIFY_MAX_OUTPUT_TOKENS", "768")),
@@ -95,7 +95,26 @@ class FinalizationPreflight:
 
 
 class FinalizationPayloadLimitError(ValueError):
-    pass
+    """Safe payload-limit failure without retaining prompt or evidence text."""
+
+    def __init__(
+        self,
+        stage: str,
+        *,
+        observed_upper_bound: int | None = None,
+        configured_limit: int | None = None,
+    ) -> None:
+        self.stage = stage
+        self.observed_upper_bound = observed_upper_bound
+        self.configured_limit = configured_limit
+        if observed_upper_bound is not None and configured_limit is not None:
+            message = (
+                f"{stage} payload token upper bound {observed_upper_bound} "
+                f"exceeds configured input limit {configured_limit}"
+            )
+        else:
+            message = stage
+        super().__init__(message)
 
 
 class FinalizationContractValidationError(ValueError):
@@ -121,14 +140,55 @@ class FinalizationProviderMetadataError(RuntimeError):
         self.outcome_unknown = outcome_unknown
 
 
-def _payload_tokens(value: Any, system_prompt: str = "") -> int:
-    # UTF-8 bytes are a conservative tokenizer-independent token upper bound.
+def _payload_token_upper_bound(value: Any, system_prompt: str = "") -> int:
+    # Every tokenizer token represents at least one serialized byte. This byte
+    # count is therefore a safe tokenizer-independent upper bound, not an exact
+    # token count. It intentionally fails closed when no model tokenizer or
+    # provider count-input endpoint is available offline.
     return len(json.dumps(
         {"system": system_prompt, "input": value},
         ensure_ascii=False,
         sort_keys=True,
         default=str,
     ).encode("utf-8"))
+
+
+def _synthesis_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove execution-only plan metadata while retaining research semantics."""
+    retained = (
+        "planId",
+        "planVersion",
+        "normalizedResearchIntent",
+        "objective",
+        "explicitConstraints",
+        "inferredAssumptions",
+        "essentialClarifications",
+        "subquestions",
+        "evidenceRequirements",
+        "coverageCriteria",
+    )
+    return {key: plan[key] for key in retained if key in plan}
+
+
+def _deduplicated_evidence(
+    evidence: list[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deduplicate exact Evidence IDs without weakening citation provenance."""
+    rows: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    for raw in evidence:
+        row = dict(raw)
+        evidence_id = str(row.get("id") or "").strip()
+        if not evidence_id:
+            raise ValueError("Finalization evidence is missing its immutable ID")
+        prior = by_id.get(evidence_id)
+        if prior is not None:
+            if prior != row:
+                raise ValueError("Conflicting duplicate Finalization evidence ID")
+            continue
+        by_id[evidence_id] = row
+        rows.append(row)
+    return rows
 
 
 def _clone_client(
@@ -255,15 +315,23 @@ class DeepFinalizationEngine:
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
     ) -> FinalizationPreflight:
+        synthesis_plan = _synthesis_plan(plan)
+        synthesis_evidence = _deduplicated_evidence(evidence)
         synthesis_input = self.generator._synthesis_input(
-            question, plan, evidence, max_claims=self.limits.max_claims
+            question,
+            synthesis_plan,
+            synthesis_evidence,
+            max_claims=self.limits.max_claims,
         )
-        if _payload_tokens(
+        input_upper_bound = _payload_token_upper_bound(
             synthesis_input,
             self.generator._synthesis_prompt(self.limits.max_claims),
-        ) > self.limits.synthesis_input_tokens:
+        )
+        if input_upper_bound > self.limits.synthesis_input_tokens:
             raise FinalizationPayloadLimitError(
-                "R2A synthesis payload exceeds its configured input limit"
+                "R2A synthesis",
+                observed_upper_bound=input_upper_bound,
+                configured_limit=self.limits.synthesis_input_tokens,
             )
         slots: list[FinalizationSlot] = [FinalizationSlot(
             key="final:synthesize:v1",
@@ -346,7 +414,10 @@ class DeepFinalizationEngine:
         evidence: list[Mapping[str, Any]],
     ) -> StructuredLLMResult:
         return self.generator.synthesize_with_metadata(
-            question, plan, evidence, max_claims=self.limits.max_claims
+            question,
+            _synthesis_plan(plan),
+            _deduplicated_evidence(evidence),
+            max_claims=self.limits.max_claims,
         )
 
     def accept_synthesis_call(
@@ -372,24 +443,28 @@ class DeepFinalizationEngine:
         draft: AtomicResearchDraft,
         results: list[VerificationResult],
     ) -> StructuredLLMResult:
+        repair_plan = _synthesis_plan(plan)
+        repair_evidence = _deduplicated_evidence(evidence)
         payload = {
             "question": question,
-            "plan": dict(plan),
-            "evidence": [dict(row) for row in evidence],
+            "plan": repair_plan,
+            "evidence": repair_evidence,
             "previous_draft": draft.model_dump(),
             "verification_feedback": [item.model_dump() for item in results],
         }
-        if (
-            _payload_tokens(payload, self.generator._repair_prompt())
-            > self.limits.repair_input_tokens
-        ):
+        input_upper_bound = _payload_token_upper_bound(
+            payload, self.generator._repair_prompt()
+        )
+        if input_upper_bound > self.limits.repair_input_tokens:
             raise FinalizationPayloadLimitError(
-                "R2F repair payload exceeds its configured input limit"
+                "R2F repair",
+                observed_upper_bound=input_upper_bound,
+                configured_limit=self.limits.repair_input_tokens,
             )
         return self.generator.repair_with_metadata(
             question,
-            plan,
-            evidence,
+            repair_plan,
+            repair_evidence,
             draft.model_dump(),
             [item.model_dump() for item in results],
         )

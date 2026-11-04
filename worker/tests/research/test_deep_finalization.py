@@ -16,7 +16,10 @@ from personal_brain.research.deep_coordinator import DeepResearchCoordinator
 from personal_brain.research.deep_contracts import ResearchPlanV1
 from personal_brain.research.deep_finalization import (
     DeepFinalizationEngine,
+    FinalizationPayloadLimitError,
     FinalizationLimits,
+    _deduplicated_evidence,
+    _payload_token_upper_bound,
 )
 from personal_brain.research.deep_planning import (
     DeepPlanningResult,
@@ -303,6 +306,82 @@ def test_preflight_reserves_worst_case_initial_repair_and_reverification() -> No
     assert preflight.maximum_cost_usd > Decimal("0")
 
 
+def test_payload_byte_count_is_a_conservative_token_upper_bound() -> None:
+    payload = {"evidence": "證據" * 1000}
+    serialized_bytes = len(
+        __import__("json").dumps(
+            {"system": "", "input": payload},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+
+    assert _payload_token_upper_bound(payload) == serialized_bytes
+    assert serialized_bytes > len(payload["evidence"])
+
+
+def test_r2a_preflight_reports_safe_observed_bound_and_limit() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    engine, _, _ = finalizer(draft(str(uuid4()), "source statement"))
+    engine.limits = replace(engine.limits, synthesis_input_tokens=256)
+
+    with pytest.raises(FinalizationPayloadLimitError) as caught:
+        engine.preflight(
+            run_id,
+            request["originalQuestion"],
+            plan_json(request),
+            [{
+                "id": str(uuid4()),
+                "origin": "internal",
+                "assetId": str(uuid4()),
+                "revisionId": str(uuid4()),
+                "excerpt": "bounded evidence",
+                "locator": {"kind": "pdf_page", "page_number": 1},
+            }],
+        )
+
+    assert caught.value.stage == "R2A synthesis"
+    assert caught.value.observed_upper_bound > 256
+    assert caught.value.configured_limit == 256
+    assert "bounded evidence" not in str(caught.value)
+
+
+def test_deep_synthesis_compacts_execution_metadata_and_deduplicates_evidence() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    evidence_id = str(uuid4())
+    row = {
+        "id": evidence_id,
+        "origin": "internal",
+        "assetId": str(uuid4()),
+        "revisionId": str(uuid4()),
+        "excerpt": "source statement",
+        "locator": {"kind": "pdf_page", "page_number": 3},
+    }
+    engine, generator_client, _ = finalizer(
+        draft(evidence_id, "source statement")
+    )
+
+    engine.synthesis_call(
+        request["originalQuestion"],
+        plan_json(request),
+        [row, deepcopy(row)],
+    )
+
+    sent = generator_client.requests[0]["user_input"]
+    assert len(sent["evidence"]) == 1
+    assert sent["evidence"][0]["locator"]["page_number"] == 3
+    assert "retrievalProposals" not in sent["plan"]
+    assert "requestId" not in sent["plan"]
+    assert sent["plan"]["evidenceRequirements"]
+
+    conflicting = deepcopy(row)
+    conflicting["excerpt"] = "different content"
+    with pytest.raises(ValueError, match="Conflicting duplicate"):
+        _deduplicated_evidence([row, conflicting])
+
+
 def test_deep_synthesis_communicates_reserved_total_claim_limit() -> None:
     run_id, user_id = uuid4(), uuid4()
     request = request_json(run_id, user_id)
@@ -339,7 +418,7 @@ def test_legacy_synthesis_payload_is_unchanged_without_deep_limit() -> None:
 
 @pytest.mark.parametrize(
     ("claim_count", "expected"),
-    [(1, "0.1466"), (3, "0.2094"), (6, "0.3036")],
+    [(1, "0.3066"), (3, "0.3694"), (6, "0.4636")],
 )
 def test_default_finalization_worst_case_by_claim_count(
     claim_count: int, expected: str
@@ -350,7 +429,7 @@ def test_default_finalization_worst_case_by_claim_count(
             LLMClaimJudge(QueueClient([])),
         ),
         VerifiedPricing(Decimal("2"), Decimal("10")),
-        FinalizationLimits(6, 12000, 2560, 4000, 768, 20000, 2560, 4000, 768),
+        FinalizationLimits(6, 48000, 2560, 4000, 768, 64000, 2560, 4000, 768),
     )
 
     assert engine.maximum_cost_usd(claim_count) == Decimal(expected)
@@ -392,6 +471,35 @@ def test_offline_full_pipeline_from_r2b_through_idempotent_publication() -> None
         "r2b", "r2c", "r2a", "r2e", "r2f"
     }
     assert gateway.checkpoints[-1]["executionPhase"] == "publishing"
+
+
+def test_r2a_payload_limit_keeps_specific_safe_job_diagnostic() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, None, {first["id"]: first, second["id"]: second}
+    )
+    planner = StaticPlanningProvider()
+    engine, generator_client, _ = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    engine.limits = replace(engine.limits, synthesis_input_tokens=256)
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway,
+            FakeRetrieval({"first record": [first], "second record": [second]}),
+            planner=planner,
+            evaluator=ProgressiveEvaluator(),
+            finalizer=engine,
+        ).process_claimed(job(run_id, user_id), "worker-payload-limit", 120)
+
+    assert caught.value.code == "deep_finalization_payload_limit"
+    assert "R2A synthesis payload token upper bound" in str(caught.value)
+    assert "first source" not in str(caught.value)
+    assert generator_client.calls == 0
 
 
 def test_infeasible_full_envelope_blocks_before_r2b_provider_boundary() -> None:
