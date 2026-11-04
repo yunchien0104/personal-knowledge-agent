@@ -255,9 +255,12 @@ class DeepFinalizationEngine:
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
     ) -> FinalizationPreflight:
-        synthesis_input = self.generator._synthesis_input(question, plan, evidence)
+        synthesis_input = self.generator._synthesis_input(
+            question, plan, evidence, max_claims=self.limits.max_claims
+        )
         if _payload_tokens(
-            synthesis_input, self.generator._synthesis_prompt()
+            synthesis_input,
+            self.generator._synthesis_prompt(self.limits.max_claims),
         ) > self.limits.synthesis_input_tokens:
             raise FinalizationPayloadLimitError(
                 "R2A synthesis payload exceeds its configured input limit"
@@ -342,7 +345,9 @@ class DeepFinalizationEngine:
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
     ) -> StructuredLLMResult:
-        return self.generator.synthesize_with_metadata(question, plan, evidence)
+        return self.generator.synthesize_with_metadata(
+            question, plan, evidence, max_claims=self.limits.max_claims
+        )
 
     def accept_synthesis_call(
         self,

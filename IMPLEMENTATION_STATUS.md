@@ -1,5 +1,28 @@
 # Personal Brain Implementation Status
 
+## Full Deep Research Real Provider E2E (2026-11-04)
+
+- PASS on `feat/deep-research-llm-integration`: Internal-only GPT-6.1 Sol
+  completed R2B → R1 → R2C → R2D → R2A → R2E → R2F gate → Publication.
+- Removed the controlled runner's fixed `$0.0759` R2B guard. Production
+  payload-aware preflight reserved `$0.0787`; R2C reserved `$0.1452`; the
+  configured three-claim finalization envelope remained `$0.2094`.
+- Added fail-closed Provider-required mode so R2B/R2C fallback cannot be
+  reported as a successful real-provider run.
+- Fixed the real R2A contract mismatch by communicating the already-enforced
+  Deep total-claim limit to the model. The optional limit is absent from Legacy
+  calls, preserving Legacy prompt and payload behavior.
+- Successful run actual cost: `$0.0615` across 6 calls; `$0` reserved and `$0`
+  uncertain at completion. The isolated account ledger, including the preceding
+  contract-failure run, reconciled to `$0.1207` actual.
+- Result: 3 claims, 3/3 R2E supported, R2F gate passed without repair, 4
+  citations from 3 internal assets, and one report
+  `ee254517-e097-45da-acfe-93d3059c3bbc`.
+- PASS: Worker 261 passed, 1 skipped, 9 subtests; isolated Local PostgreSQL
+  37/37 migrations; pgTAP 628/628; DB lint 0 errors; Web 34/34; TypeScript and
+  ESLint.
+- Canonical evidence: `docs/DEEP_RESEARCH_E2E_READINESS.md`.
+
 ## Deep Research R2B/R2C LLM integration (2026-11-04)
 
 - Current branch: `feat/deep-research-llm-integration` from baseline `00d3c15`.

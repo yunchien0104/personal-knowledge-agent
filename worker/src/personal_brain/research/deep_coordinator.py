@@ -177,6 +177,7 @@ class DeepResearchCoordinator:
         finalizer: DeepFinalizationEngine | None = None,
         web_provider: WebResearchProvider | None = None,
         web_operation_estimate_usd: Decimal = Decimal("0.0100"),
+        require_provider_success: bool = False,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.gateway = gateway
@@ -188,6 +189,7 @@ class DeepResearchCoordinator:
         self.finalizer = finalizer
         self.web_provider = web_provider
         self.web_operation_estimate_usd = web_operation_estimate_usd
+        self.require_provider_success = require_provider_success
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     def _deadline_exhausted(self, bundle: Mapping[str, Any]) -> bool:
@@ -1063,6 +1065,22 @@ class DeepResearchCoordinator:
                             retryable=False,
                         ) from error
                     lease.pulse()
+                    if self.require_provider_success and planned.fallback_used:
+                        self._settle(
+                            job, worker_id, operation_id,
+                            status="failed",
+                            actual_cost_usd=planned.actual_cost_usd,
+                            error_code="r2b_fallback_rejected",
+                            result_ref=_provider_result_ref(
+                                planned.request_ids, planned.usage,
+                                planned.finish_reasons,
+                            ),
+                        )
+                        raise GatewayError(
+                            "deep_provider_fallback_rejected",
+                            "R2B fallback cannot satisfy a provider-required run",
+                            retryable=False,
+                        )
                     if self._deadline_exhausted(self._load(job, worker_id)):
                         self._settle(
                             job, worker_id, operation_id,
@@ -1378,6 +1396,22 @@ class DeepResearchCoordinator:
                                 retryable=False,
                             ) from error
                         lease.pulse()
+                        if self.require_provider_success and evaluated.fallback_used:
+                            self._settle(
+                                job, worker_id, evaluation_id,
+                                status="failed",
+                                actual_cost_usd=evaluated.actual_cost_usd,
+                                error_code="r2c_fallback_rejected",
+                                result_ref=_provider_result_ref(
+                                    evaluated.request_ids, evaluated.usage,
+                                    evaluated.finish_reasons,
+                                ),
+                            )
+                            raise GatewayError(
+                                "deep_provider_fallback_rejected",
+                                "R2C fallback cannot satisfy a provider-required run",
+                                retryable=False,
+                            )
                         if self._deadline_exhausted(self._load(job, worker_id)):
                             self._settle(
                                 job, worker_id, evaluation_id,

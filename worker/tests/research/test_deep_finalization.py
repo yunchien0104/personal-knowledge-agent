@@ -50,9 +50,11 @@ class QueueClient:
     def __init__(self, outputs: list[dict]) -> None:
         self.outputs = [deepcopy(value) for value in outputs]
         self.calls = 0
+        self.requests: list[dict] = []
 
-    def generate_with_metadata(self, **_kwargs) -> StructuredLLMResult:
+    def generate_with_metadata(self, **kwargs) -> StructuredLLMResult:
         self.calls += 1
+        self.requests.append(deepcopy(kwargs))
         return StructuredLLMResult(
             output=self.outputs.pop(0),
             provider=self.provider,
@@ -299,6 +301,40 @@ def test_preflight_reserves_worst_case_initial_repair_and_reverification() -> No
         (slot.estimated_cost_usd for slot in preflight.slots), Decimal("0")
     )
     assert preflight.maximum_cost_usd > Decimal("0")
+
+
+def test_deep_synthesis_communicates_reserved_total_claim_limit() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    engine, generator_client, _ = finalizer(
+        draft(str(uuid4()), "source statement")
+    )
+
+    engine.synthesis_call(
+        request["originalQuestion"], plan_json(request), []
+    )
+
+    sent = generator_client.requests[0]
+    assert sent["user_input"]["executionConstraints"] == {
+        "maxTotalClaims": engine.limits.max_claims
+    }
+    assert (
+        f"no more than {engine.limits.max_claims} total claims"
+        in sent["system_prompt"]
+    )
+
+
+def test_legacy_synthesis_payload_is_unchanged_without_deep_limit() -> None:
+    request = request_json(uuid4(), uuid4())
+    client = QueueClient([draft(str(uuid4()), "source statement")])
+
+    OpenAICompatibleResearchModel(client).synthesize_with_metadata(
+        request["originalQuestion"], plan_json(request), []
+    )
+
+    sent = client.requests[0]
+    assert "executionConstraints" not in sent["user_input"]
+    assert "hard execution limit" not in sent["system_prompt"]
 
 
 @pytest.mark.parametrize(

@@ -70,8 +70,8 @@ class OpenAICompatibleResearchModel:
         self.model_name = client.model
 
     @staticmethod
-    def _synthesis_prompt() -> str:
-        return """
+    def _synthesis_prompt(max_claims: int | None = None) -> str:
+        prompt = """
 You are an evidence-grounded research analyst.
 
 Analyze the user's question using only the supplied evidence.
@@ -95,18 +95,31 @@ Rules:
 11. For insufficient evidence, explicitly state the limitation rather
     than manufacturing findings.
 """
+        if max_claims is not None:
+            prompt += (
+                "\n12. Across the entire draft, produce no more than "
+                f"{max_claims} total claims across all findings. This is a hard "
+                "execution limit; combine related observations without hiding "
+                "independently verifiable assertions.\n"
+            )
+        return prompt
 
     @staticmethod
     def _synthesis_input(
         question: str,
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
+        *,
+        max_claims: int | None = None,
     ) -> dict[str, Any]:
-        return {
+        payload = {
             "question": question,
             "plan": dict(plan),
             "evidence": [dict(row) for row in evidence],
         }
+        if max_claims is not None:
+            payload["executionConstraints"] = {"maxTotalClaims": max_claims}
+        return payload
 
     @staticmethod
     def _validated_call(result: StructuredLLMResult) -> StructuredLLMResult:
@@ -124,10 +137,14 @@ Rules:
         question: str,
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
+        *,
+        max_claims: int | None = None,
     ) -> StructuredLLMResult:
         result = self.client.generate_with_metadata(
-            system_prompt=self._synthesis_prompt(),
-            user_input=self._synthesis_input(question, plan, evidence),
+            system_prompt=self._synthesis_prompt(max_claims),
+            user_input=self._synthesis_input(
+                question, plan, evidence, max_claims=max_claims
+            ),
             output_schema=to_openai_schema(AtomicResearchDraft),
         )
         return self._validated_call(result)

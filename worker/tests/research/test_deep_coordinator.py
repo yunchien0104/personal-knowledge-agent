@@ -662,6 +662,126 @@ def test_r2b_and_r2c_reserve_before_call_and_settle_actual_cost() -> None:
     assert evaluation_metadata["usage"]["reasoningTokens"] == 20
 
 
+def test_r2b_reservation_uses_payload_preflight_without_legacy_fixed_guard() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    request["effectiveLimits"]["maxQueries"] = 1
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "direct source")
+    gateway = FakeGateway(request, None, {first["id"]: first})
+
+    class DynamicPlanner:
+        def max_operation_cost(self, _request, _context):
+            # Deliberately exceeds the retired controlled-test $0.0759 guard.
+            return Decimal("0.081234")
+
+        def plan(self, parsed_request, context, *, diagnostic_sink=None):
+            result = DeepResearchPlanner().plan(parsed_request, context)
+            if diagnostic_sink is not None:
+                for diagnostic in result.diagnostics:
+                    diagnostic_sink(diagnostic)
+            return result.__class__(
+                plan=result.plan, quality=result.quality,
+                prompt_version=result.prompt_version,
+                model_provider="fixture", model_name="fixture",
+                repaired=False, fallback_used=False,
+                actual_cost_usd=Decimal("0.012345"),
+                usage=LLMUsage(200, 100, 300),
+                request_ids=("req-dynamic-r2b",), finish_reasons=("stop",),
+            )
+
+    result = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"Compare the records": [first]}),
+        planner=DynamicPlanner(), evaluator=ProgressiveEvaluator(),
+        require_provider_success=True,
+    ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert result.status == "completed"
+    r2b_reservation = next(
+        row for row in gateway.reservations if row["cost_category"] == "r2b"
+    )
+    assert r2b_reservation["estimated_cost_usd"] == "0.081234"
+    r2b_settlement = next(
+        row for row in gateway.settlements
+        if row["operation_id"] == r2b_reservation["operation_id"]
+    )
+    assert r2b_settlement["status"] == "completed"
+    assert r2b_settlement["actual_cost_usd"] == "0.012345"
+
+
+def test_provider_required_run_rejects_r2b_fallback_after_accounting() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    gateway = FakeGateway(request, None, {})
+
+    class FallbackPlanner:
+        def max_operation_cost(self, _request, _context):
+            return Decimal("0.0400")
+
+        def plan(self, parsed_request, context, *, diagnostic_sink=None):
+            result = DeepResearchPlanner().plan(parsed_request, context)
+            if diagnostic_sink is not None:
+                for diagnostic in result.diagnostics:
+                    diagnostic_sink(diagnostic)
+            return result.__class__(
+                plan=result.plan, quality=result.quality,
+                prompt_version=result.prompt_version,
+                model_provider="fixture:fallback", model_name="fixture",
+                repaired=True, fallback_used=True,
+                actual_cost_usd=Decimal("0.0170"),
+                usage=LLMUsage(100, 50, 150),
+                request_ids=("req-r2b-fallback",), finish_reasons=("stop",),
+            )
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway, FakeRetrieval({}), planner=FallbackPlanner(),
+            require_provider_success=True,
+        ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert caught.value.code == "deep_provider_fallback_rejected"
+    assert gateway.bundle["plan"] is None
+    assert gateway.settlements[-1]["status"] == "failed"
+    assert gateway.settlements[-1]["actual_cost_usd"] == "0.0170"
+    assert gateway.settlements[-1]["error_code"] == "r2b_fallback_rejected"
+
+
+def test_provider_required_run_rejects_r2c_fallback_after_accounting() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    request["effectiveLimits"]["maxQueries"] = 1
+    plan = plan_json(request)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "direct source")
+    gateway = FakeGateway(request, plan, {first["id"]: first})
+
+    class FallbackEvaluator(ProgressiveEvaluator):
+        def max_operation_cost(self, _plan, _records, *, user_id):
+            del user_id
+            return Decimal("0.0500")
+
+        def assess(self, plan, records, *, user_id, diagnostic_sink=None):
+            result = super().assess(plan, records, user_id=user_id)
+            return EvaluationResult(
+                result.assessment, repaired=True, fallback_used=True,
+                actual_cost_usd=Decimal("0.0210"),
+                usage=LLMUsage(200, 80, 280),
+                request_ids=("req-r2c-fallback",), finish_reasons=("stop",),
+            )
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            gateway,
+            FakeRetrieval({"first record": [first]}),
+            evaluator=FallbackEvaluator(), require_provider_success=True,
+        ).process_claimed(job(run_id, user_id), "worker-1", 120)
+
+    assert caught.value.code == "deep_provider_fallback_rejected"
+    assert gateway.bundle["assessment"] is None
+    assert gateway.settlements[-1]["status"] == "failed"
+    assert gateway.settlements[-1]["actual_cost_usd"] == "0.0210"
+    assert gateway.settlements[-1]["error_code"] == "r2c_fallback_rejected"
+
+
 def test_deadline_crossed_during_r2b_settles_cost_but_discards_output() -> None:
     run_id, user_id = uuid4(), uuid4()
     request = request_json(run_id, user_id)
