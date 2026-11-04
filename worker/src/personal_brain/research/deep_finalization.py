@@ -225,6 +225,29 @@ class DeepFinalizationEngine:
     def _cost(self, input_tokens: int, output_tokens: int) -> Decimal:
         return self.pricing.cost(LLMUsage(input_tokens, output_tokens))
 
+    def maximum_cost_usd(self, claim_count: int | None = None) -> Decimal:
+        claims = self.limits.max_claims if claim_count is None else claim_count
+        if not 1 <= claims <= self.limits.max_claims:
+            raise ValueError("finalization claim count is outside the configured limit")
+        return (
+            self._cost(
+                self.limits.synthesis_input_tokens,
+                self.limits.synthesis_output_tokens,
+            )
+            + claims * self._cost(
+                self.limits.verification_input_tokens,
+                self.limits.verification_output_tokens,
+            )
+            + self._cost(
+                self.limits.repair_input_tokens,
+                self.limits.repair_output_tokens,
+            )
+            + claims * self._cost(
+                self.limits.reverification_input_tokens,
+                self.limits.reverification_output_tokens,
+            )
+        )
+
     def preflight(
         self,
         run_id: UUID,

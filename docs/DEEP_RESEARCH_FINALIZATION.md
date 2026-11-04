@@ -71,10 +71,12 @@ At $2/M input and $10/M output with the documented defaults and six claims:
 - Six R2F reverifications: 4,000 input + 768 output each = **$0.0942**.
 - Maximum Deep finalization reservation: **$0.3036**.
 
-The full run is admitted only when earlier R2B/R1/R2C/Web actual, uncertain, and
-reserved spend leaves at least $0.3036 under the $0.50 run cap. Otherwise it fails
-before R2A. This is a hard upper-bound candidate, not a Real Provider sufficiency
-claim.
+The Coordinator now writes the configured finalizer envelope as the protected
+run reserve before R2B/R2C. Earlier actual, uncertain, reserved, and protected
+spend must fit the $0.50 run cap or execution fails before the next Provider
+boundary. This is a hard upper-bound candidate, not a Real Provider sufficiency
+claim. The unrestricted six-claim, one-round full pipeline is still not feasible:
+the combined worst case is $0.5016. See `DEEP_RESEARCH_E2E_READINESS.md`.
 
 ## Verification results
 

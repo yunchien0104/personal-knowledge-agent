@@ -13,9 +13,14 @@ from personal_brain.llm_client import (
     StructuredLLMResult,
 )
 from personal_brain.research.deep_coordinator import DeepResearchCoordinator
+from personal_brain.research.deep_contracts import ResearchPlanV1
 from personal_brain.research.deep_finalization import (
     DeepFinalizationEngine,
     FinalizationLimits,
+)
+from personal_brain.research.deep_planning import (
+    DeepPlanningResult,
+    PlanQualityDecision,
 )
 from personal_brain.research.deep_llm import VerifiedPricing
 from personal_brain.research.llm import OpenAICompatibleResearchModel
@@ -60,6 +65,34 @@ class QueueClient:
         )
 
 
+class StaticPlanningProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def max_operation_cost(self, _request, _context) -> Decimal:
+        return Decimal("0.0759")
+
+    def plan(self, request, _context, *, diagnostic_sink=None):
+        del diagnostic_sink
+        self.calls += 1
+        return DeepPlanningResult(
+            plan=ResearchPlanV1.model_validate(
+                plan_json(request.model_dump(mode="json"))
+            ),
+            quality=PlanQualityDecision("acceptable", ()),
+            prompt_version="offline-full-pipeline-v1",
+            model_provider="mock-provider",
+            model_name="mock-planner",
+            repaired=False,
+            fallback_used=False,
+            usage=LLMUsage(120, 80, 200),
+            actual_cost_usd=Decimal("0.0010"),
+            latency_ms=10,
+            request_ids=("mock-r2b-request",),
+            finish_reasons=("stop",),
+        )
+
+
 class FinalizationGateway(FakeGateway):
     def __init__(self, request, plan, catalog) -> None:
         super().__init__(request, plan, catalog)
@@ -73,6 +106,22 @@ class FinalizationGateway(FakeGateway):
         self.crash_after_publication_once = False
         self.crash_before_publishing_checkpoint_once = False
         self.publication_calls = 0
+        self.final_reserve_requests: list[str] = []
+
+    def ensure_deep_research_final_reserve(
+        self, _claimed, _worker, *, required_reserve_usd
+    ):
+        self.final_reserve_requests.append(required_reserve_usd)
+        budget = {
+            "status": "protected",
+            "limitUsd": "0.5000",
+            "protectedFinalReportReserveUsd": required_reserve_usd,
+            "reservedUsd": "0",
+            "actualUsd": "0",
+            "uncertainUsd": "0",
+        }
+        self.bundle["budget"] = deepcopy(budget)
+        return budget
 
     def reserve_deep_research_finalization(self, claimed, worker, *, slots):
         operations = []
@@ -250,6 +299,125 @@ def test_preflight_reserves_worst_case_initial_repair_and_reverification() -> No
         (slot.estimated_cost_usd for slot in preflight.slots), Decimal("0")
     )
     assert preflight.maximum_cost_usd > Decimal("0")
+
+
+@pytest.mark.parametrize(
+    ("claim_count", "expected"),
+    [(1, "0.1466"), (3, "0.2094"), (6, "0.3036")],
+)
+def test_default_finalization_worst_case_by_claim_count(
+    claim_count: int, expected: str
+) -> None:
+    engine = DeepFinalizationEngine(
+        ResearchOrchestrator(
+            OpenAICompatibleResearchModel(QueueClient([])),
+            LLMClaimJudge(QueueClient([])),
+        ),
+        VerifiedPricing(Decimal("2"), Decimal("10")),
+        FinalizationLimits(6, 12000, 2560, 4000, 768, 20000, 2560, 4000, 768),
+    )
+
+    assert engine.maximum_cost_usd(claim_count) == Decimal(expected)
+
+
+def test_offline_full_pipeline_from_r2b_through_idempotent_publication() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, None, {first["id"]: first, second["id"]: second}
+    )
+    planner = StaticPlanningProvider()
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+
+    result = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        planner=planner,
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    ).process_claimed(job(run_id, user_id), "worker-full-e2e", 120)
+
+    assert result.status == "completed"
+    assert planner.calls == 1
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert len(gateway.publications) == 1
+    assert gateway.final_reserve_requests == [
+        format(engine.maximum_cost_usd(), "f")
+    ]
+    assert gateway.checkpoints[0]["budget"][
+        "protectedFinalReportReserveUsd"
+    ] == format(engine.maximum_cost_usd(), "f")
+    assert {item["cost_category"] for item in gateway.reservations} >= {
+        "r2b", "r2c", "r2a", "r2e", "r2f"
+    }
+    assert gateway.checkpoints[-1]["executionPhase"] == "publishing"
+
+
+def test_infeasible_full_envelope_blocks_before_r2b_provider_boundary() -> None:
+    class InfeasibleGateway(FinalizationGateway):
+        def ensure_deep_research_final_reserve(self, *_args, **_kwargs):
+            return {"status": "budget_exhausted"}
+
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    planner = StaticPlanningProvider()
+    engine, generator_client, verifier_client = finalizer(
+        draft(str(uuid4()), "source statement")
+    )
+
+    with pytest.raises(GatewayError) as caught:
+        DeepResearchCoordinator(
+            InfeasibleGateway(request, None, {}),
+            FakeRetrieval({}),
+            planner=planner,
+            evaluator=ProgressiveEvaluator(),
+            finalizer=engine,
+        ).process_claimed(job(run_id, user_id), "worker-budget-block", 120)
+
+    assert caught.value.code == "deep_finalization_budget_infeasible"
+    assert planner.calls == 0
+    assert generator_client.calls == 0
+    assert verifier_client.calls == 0
+
+
+def test_full_pipeline_crash_resume_does_not_repeat_any_paid_provider_call() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    first = evidence_row(uuid4(), uuid4(), uuid4(), "first source")
+    second = evidence_row(uuid4(), uuid4(), uuid4(), "second source")
+    gateway = FinalizationGateway(
+        request, None, {first["id"]: first, second["id"]: second}
+    )
+    gateway.crash_after_commit_once = True
+    planner = StaticPlanningProvider()
+    engine, generator_client, verifier_client = finalizer(
+        draft(first["id"], first["excerpt"])
+    )
+    coordinator = DeepResearchCoordinator(
+        gateway,
+        FakeRetrieval({"first record": [first], "second record": [second]}),
+        planner=planner,
+        evaluator=ProgressiveEvaluator(),
+        finalizer=engine,
+    )
+    claimed = job(run_id, user_id)
+
+    first_result = coordinator.process_claimed(claimed, "worker-crash", 120)
+    second_result = coordinator.process_claimed(
+        replace(claimed, lease_generation=8), "worker-resume", 120
+    )
+
+    assert first_result.status == "lease_lost"
+    assert second_result.status == "completed"
+    assert planner.calls == 1
+    assert generator_client.calls == 1
+    assert verifier_client.calls == 1
+    assert len(gateway.publications) == 1
 
 
 def test_deep_finalization_reserves_every_paid_boundary_and_publishes_once() -> None:

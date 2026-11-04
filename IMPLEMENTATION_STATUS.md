@@ -1033,3 +1033,16 @@
   Full Deep E2E requires fresh authorization and sufficient capacity for the
   $0.3036 default worst-case final envelope within the unchanged $0.50 run cap.
 - Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.
+
+### Full Deep E2E readiness (local, 2026-11-04)
+
+- PASS: Internal-only R2B → R1 → R2C → R2D → R2A → R2E → R2F → publication
+  ran against disposable Supabase Local with deterministic Mock Providers.
+- PASS: dynamic, lease-fenced run reserve protects the actual finalizer envelope
+  before non-final paid calls; crash/replay/publication safety regressions pass.
+- PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
+  files / 628 assertions; public-schema lint has zero errors.
+- FAIL: unrestricted budget feasibility. One round plus six claims is $0.5016,
+  above the unchanged $0.50 run cap; cross-run daily/monthly aggregate holds are
+  also not yet durable. Real Provider Full E2E remains blocked.
+- Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.

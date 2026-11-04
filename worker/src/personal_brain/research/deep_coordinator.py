@@ -302,6 +302,37 @@ class DeepResearchCoordinator:
             "approvedActionIds": [],
         })
 
+    def _ensure_finalization_reserve(
+        self,
+        job: Any,
+        worker_id: str,
+    ) -> Mapping[str, Any] | None:
+        if self.finalizer is None:
+            return None
+        required = self.finalizer.maximum_cost_usd()
+        result = self.gateway.ensure_deep_research_final_reserve(
+            job,
+            worker_id,
+            required_reserve_usd=format(required, "f"),
+        )
+        if result is None:
+            raise LeaseLostError(
+                "Worker lease expired while protecting finalization budget"
+            )
+        if result.get("status") == "budget_exhausted":
+            raise GatewayError(
+                "deep_finalization_budget_infeasible",
+                "The run cannot preserve its worst-case finalization budget",
+                retryable=False,
+            )
+        if result.get("status") != "protected":
+            raise GatewayError(
+                "invalid_finalization_budget_state",
+                "The protected finalization budget response is invalid",
+                retryable=False,
+            )
+        return result
+
     def _final_slot_payload(
         self,
         request: ResearchRequestV1,
@@ -934,6 +965,16 @@ class DeepResearchCoordinator:
                 plan = ResearchPlanV1.model_validate(bundle["plan"]) if bundle.get("plan") else None
                 records = _evidence_records(list(bundle.get("evidence") or []), request)
                 state = ResearchIterationStateV1.model_validate(bundle["state"]) if bundle.get("state") else None
+
+                if state is None or state.executionPhase in {
+                    "planning", "retrieving", "assessing", "deciding"
+                }:
+                    protected_budget = self._ensure_finalization_reserve(
+                        job, worker_id
+                    )
+                    if protected_budget is not None:
+                        bundle = dict(bundle)
+                        bundle["budget"] = protected_budget
 
                 if plan is None:
                     if self._deadline_exhausted(bundle):
