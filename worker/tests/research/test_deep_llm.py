@@ -15,12 +15,19 @@ from personal_brain.research.deep_llm import (
 )
 from personal_brain.research.deep_planning import (
     DeepResearchPlanner,
+    ProposedAssumption,
+    ProposedRequirement,
     ProposedResearchPlan,
     build_planning_context_pack,
 )
 from personal_brain.research.schema_utils import to_openai_schema
 from personal_brain.research.deep_evaluation import ProposedEvidenceAssessment
-from personal_brain.research.deep_contracts import ResearchRequestV1
+from personal_brain.research.deep_contracts import (
+    EvidenceAssessmentV1,
+    EvidenceRequirementV1,
+    ResearchAssumptionV1,
+    ResearchRequestV1,
+)
 
 
 USER_ID = "31000000-0000-4000-8000-000000000001"
@@ -184,6 +191,79 @@ def test_r2b_schema_contains_no_untyped_object_maps():
                 assert_strict_objects(value)
 
     assert_strict_objects(schema)
+
+
+def test_r2b_evidence_type_exactly_matches_authoritative_contract():
+    provider_enum = ProposedRequirement.model_json_schema()["properties"]["evidenceType"]["enum"]
+    contract_enum = EvidenceRequirementV1.model_json_schema()["properties"]["evidenceType"]["enum"]
+    assert provider_enum == contract_enum == [
+        "fact", "comparison", "trend", "counter_evidence", "primary_source", "other",
+    ]
+
+    invalid = proposal()
+    invalid["subquestions"][0]["requirements"][0]["evidenceType"] = (
+        "Internal specifications and acceptance criteria"
+    )
+    with pytest.raises(ValueError):
+        ProposedResearchPlan.model_validate(invalid)
+
+
+def test_r2b_assumption_confidence_exactly_matches_authoritative_contract():
+    provider_enum = ProposedAssumption.model_json_schema()["properties"]["confidence"]["enum"]
+    contract_enum = ResearchAssumptionV1.model_json_schema()["properties"]["confidence"]["enum"]
+    assert provider_enum == contract_enum == ["low", "medium", "high"]
+    with pytest.raises(ValueError):
+        ProposedAssumption.model_validate({"description": "A", "confidence": "certain"})
+
+
+def _keyword_paths(node, keyword, path="root"):
+    paths = set()
+    if isinstance(node, dict):
+        if keyword in node:
+            paths.add((path, str(node[keyword])))
+        for key, value in node.items():
+            paths.update(_keyword_paths(value, keyword, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            paths.update(_keyword_paths(value, keyword, f"{path}[{index}]"))
+    return paths
+
+
+@pytest.mark.parametrize("model", [ProposedResearchPlan, ProposedEvidenceAssessment])
+def test_deep_provider_schema_preserves_all_supported_contract_constraints(model):
+    raw = model.model_json_schema()
+    strict = to_openai_schema(model, preserve_strict_constraints=True)
+    for keyword in (
+        "enum", "anyOf", "minLength", "maxLength", "minItems", "maxItems",
+        "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+        "pattern", "format",
+    ):
+        assert _keyword_paths(strict, keyword) == _keyword_paths(raw, keyword)
+
+    def assert_strict_objects(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node.get("required") == list(node.get("properties", {}))
+                assert node.get("additionalProperties") is False
+            for value in node.values():
+                assert_strict_objects(value)
+        elif isinstance(node, list):
+            for value in node:
+                assert_strict_objects(value)
+
+    assert_strict_objects(strict)
+
+
+def test_r2c_response_dto_top_level_bounds_match_authoritative_contract():
+    dto = ProposedEvidenceAssessment.model_json_schema()["properties"]
+    contract = EvidenceAssessmentV1.model_json_schema()["properties"]
+    for field in (
+        "evidenceQuality", "requirementCoverage", "subquestionStatus",
+        "conflicts", "prioritizedGaps", "explanation",
+    ):
+        for keyword in ("minItems", "maxItems", "minLength", "maxLength"):
+            assert dto[field].get(keyword) == contract[field].get(keyword)
+    assert dto["overallStatus"]["enum"] == contract["overallStatus"]["enum"]
 
 
 def test_provider_schema_preserves_numeric_bounds_as_model_instructions():

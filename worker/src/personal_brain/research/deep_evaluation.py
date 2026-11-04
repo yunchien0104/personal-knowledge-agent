@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from personal_brain.research.deep_contracts import (
+    AssessmentOverallStatusV1,
     EvaluationTelemetryV1,
     EvaluationLevel,
     EvidenceAssessmentV1,
@@ -43,15 +44,15 @@ class EvidenceEvaluationModel(Protocol):
 class ProposedEvidenceAssessment(DeepStrictModel):
     """Only fields the R2C model is allowed to author."""
 
-    evidenceQuality: list[EvidenceQualityV1]
-    requirementCoverage: list[RequirementCoverageV1]
-    subquestionStatus: list[SubquestionAssessmentV1]
-    overallStatus: Literal["sufficient", "partial", "insufficient", "conflicted"]
+    evidenceQuality: list[EvidenceQualityV1] = Field(max_length=200)
+    requirementCoverage: list[RequirementCoverageV1] = Field(min_length=1, max_length=40)
+    subquestionStatus: list[SubquestionAssessmentV1] = Field(min_length=1, max_length=8)
+    overallStatus: AssessmentOverallStatusV1
     contradiction: EvaluationLevel
     independence: EvaluationLevel
-    conflicts: list[EvidenceConflictV1]
-    prioritizedGaps: list[ResearchGapV1]
-    explanation: str
+    conflicts: list[EvidenceConflictV1] = Field(max_length=50)
+    prioritizedGaps: list[ResearchGapV1] = Field(max_length=40)
+    explanation: str = Field(min_length=1, max_length=4000)
 
 
 @dataclass(frozen=True, slots=True)

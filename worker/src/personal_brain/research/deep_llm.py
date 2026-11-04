@@ -162,7 +162,7 @@ class _StructuredDeepModel:
                 system_prompt=system,
                 user_input=user_input,
                 output_schema=to_openai_schema(
-                    self.output_model, preserve_numeric_bounds=True
+                    self.output_model, preserve_strict_constraints=True
                 ),
             )
         except StructuredLLMError as error:

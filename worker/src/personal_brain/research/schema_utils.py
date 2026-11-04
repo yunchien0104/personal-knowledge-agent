@@ -7,16 +7,31 @@ from typing import Any
 from pydantic import BaseModel
 
 
-UNSUPPORTED = {
+CONSTRAINT_KEYWORDS = {
     "minLength", "maxLength",
     "minItems", "maxItems",
-    "minimum", "maximum",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
     "pattern", "format", "default",
+}
+
+# OpenAI Structured Outputs supports these JSON Schema constraints for the
+# non-fine-tuned models used by Deep Research. The fine-tuned-model exclusions
+# documented by the provider do not apply to this adapter's configured model.
+STRICT_PROVIDER_CONSTRAINTS = {
+    "minLength", "maxLength",
+    "minItems", "maxItems",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "pattern", "format",
+}
+SUPPORTED_STRING_FORMATS = {
+    "date-time", "time", "date", "duration", "email", "hostname",
+    "ipv4", "ipv6", "uuid",
 }
 
 
 def to_openai_schema(
-    model: type[BaseModel], *, preserve_numeric_bounds: bool = False
+    model: type[BaseModel], *, preserve_numeric_bounds: bool = False,
+    preserve_strict_constraints: bool = False,
 ) -> dict[str, Any]:
     schema = deepcopy(model.model_json_schema())
 
@@ -31,13 +46,22 @@ def to_openai_schema(
                 constraints.append(f"length must be at least {node['minLength']}")
             if "maxLength" in node:
                 constraints.append(f"length must be at most {node['maxLength']}")
+            if "minItems" in node:
+                constraints.append(f"array must contain at least {node['minItems']} items")
+            if "maxItems" in node:
+                constraints.append(f"array must contain at most {node['maxItems']} items")
             if constraints:
                 existing = str(node.get("description") or "").strip()
                 suffix = "Constraints: " + "; ".join(constraints) + "."
                 node["description"] = f"{existing} {suffix}".strip()
-            unsupported = UNSUPPORTED - (
-                {"minimum", "maximum"} if preserve_numeric_bounds else set()
-            )
+            preserved = set()
+            if preserve_numeric_bounds:
+                preserved.update({"minimum", "maximum"})
+            if preserve_strict_constraints:
+                preserved.update(STRICT_PROVIDER_CONSTRAINTS)
+            if node.get("format") not in SUPPORTED_STRING_FORMATS:
+                preserved.discard("format")
+            unsupported = CONSTRAINT_KEYWORDS - preserved
             for key in unsupported:
                 node.pop(key, None)
 

@@ -18,6 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 _ID_PATTERN = r"^[a-z][a-z0-9_-]{1,63}$"
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
 
+AssumptionConfidenceV1 = Literal["low", "medium", "high"]
+EvidenceTypeV1 = Literal[
+    "fact", "comparison", "trend", "counter_evidence", "primary_source", "other"
+]
+AssessmentOverallStatusV1 = Literal[
+    "sufficient", "partial", "insufficient", "conflicted"
+]
+
 
 class DeepStrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
@@ -94,7 +102,7 @@ class ResearchConstraintV1(DeepStrictModel):
 class ResearchAssumptionV1(DeepStrictModel):
     id: str = Field(pattern=_ID_PATTERN)
     description: str = Field(min_length=1, max_length=1000)
-    confidence: Literal["low", "medium", "high"]
+    confidence: AssumptionConfidenceV1
 
 
 class EvidenceRequirementV1(DeepStrictModel):
@@ -102,9 +110,7 @@ class EvidenceRequirementV1(DeepStrictModel):
     subquestionId: str = Field(pattern=_ID_PATTERN)
     description: str = Field(min_length=1, max_length=1000)
     required: bool
-    evidenceType: Literal[
-        "fact", "comparison", "trend", "counter_evidence", "primary_source", "other"
-    ]
+    evidenceType: EvidenceTypeV1
 
 
 class ResearchSubquestionV1(DeepStrictModel):
@@ -339,7 +345,7 @@ class EvidenceAssessmentV1(DeepStrictModel):
     evidenceQuality: list[EvidenceQualityV1] = Field(default_factory=list, max_length=200)
     requirementCoverage: list[RequirementCoverageV1] = Field(min_length=1, max_length=40)
     subquestionStatus: list[SubquestionAssessmentV1] = Field(min_length=1, max_length=8)
-    overallStatus: Literal["sufficient", "partial", "insufficient", "conflicted"]
+    overallStatus: AssessmentOverallStatusV1
     contradiction: EvaluationLevel
     independence: EvaluationLevel
     conflicts: list[EvidenceConflictV1] = Field(default_factory=list, max_length=50)

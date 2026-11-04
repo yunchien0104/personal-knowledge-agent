@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from typing import Any, Mapping, Protocol
+from typing import Annotated, Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import Field, ValidationError
@@ -14,9 +14,11 @@ from decimal import Decimal
 from personal_brain.llm_client import LLMUsage
 
 from personal_brain.research.deep_contracts import (
+    AssumptionConfidenceV1,
     CoverageCriterionV1,
     DeepStrictModel,
     EvidenceRequirementV1,
+    EvidenceTypeV1,
     ResearchPlanV1,
     ResearchRequestV1,
     ResearchSubquestionV1,
@@ -50,28 +52,33 @@ class PlanningContextPackV1(DeepStrictModel):
 class ProposedRequirement(DeepStrictModel):
     description: str = Field(min_length=1, max_length=1000)
     required: bool
-    evidenceType: str
+    evidenceType: EvidenceTypeV1
+
+
+PlanKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{1,31}$")]
+ConstraintDescription = Annotated[str, Field(min_length=1, max_length=1000)]
+RetrievalQuery = Annotated[str, Field(min_length=2, max_length=500)]
 
 
 class ProposedSubquestion(DeepStrictModel):
-    key: str = Field(pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    key: PlanKey
     question: str = Field(min_length=3, max_length=500)
     priority: int = Field(ge=1, le=5)
-    dependsOnKeys: list[str] = Field(default_factory=list, max_length=8)
+    dependsOnKeys: list[PlanKey] = Field(default_factory=list, max_length=8)
     requirements: list[ProposedRequirement] = Field(min_length=1, max_length=5)
-    internalQueries: list[str] = Field(default_factory=list, max_length=4)
-    webQueries: list[str] = Field(default_factory=list, max_length=4)
+    internalQueries: list[RetrievalQuery] = Field(default_factory=list, max_length=4)
+    webQueries: list[RetrievalQuery] = Field(default_factory=list, max_length=4)
 
 
 class ProposedAssumption(DeepStrictModel):
     description: str = Field(min_length=1, max_length=1000)
-    confidence: str = Field(min_length=1, max_length=32)
+    confidence: AssumptionConfidenceV1
 
 
 class ProposedResearchPlan(DeepStrictModel):
     normalizedResearchIntent: str = Field(min_length=3, max_length=1000)
     objective: str = Field(min_length=3, max_length=1000)
-    explicitConstraints: list[str] = Field(default_factory=list, max_length=20)
+    explicitConstraints: list[ConstraintDescription] = Field(default_factory=list, max_length=20)
     inferredAssumptions: list[ProposedAssumption] = Field(default_factory=list, max_length=20)
     essentialClarifications: list[str] = Field(default_factory=list, max_length=5)
     subquestions: list[ProposedSubquestion] = Field(min_length=1, max_length=8)
