@@ -56,6 +56,14 @@ test("OpenAI adapter uses Responses API output text without exposing provider de
 
 test("provider selection requires explicit configuration and never falls back", () => {
   assert.throws(() => getNotesAiProvider({}), /NOTES_AI_PROVIDER/);
+  assert.equal(
+    getNotesAiProvider({
+      NOTES_AI_PROVIDER: "openai",
+      OPENAI_API_KEY: "test-only",
+      NOTES_AI_MODEL: "configured-test-model",
+    }).name,
+    "openai",
+  );
   assert.throws(
     () => getNotesAiProvider({ NOTES_AI_PROVIDER: "openai", OPENAI_API_KEY: "key" }),
     /NOTES_AI_MODEL/,
