@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { authenticateApi, jsonError, jsonSuccess, uuidSchema, validationError } from "@/lib/api";
+import { plainTextToParagraphs } from "@/lib/note-import";
 
 const importSchema = z.object({
   note_id: uuidSchema.optional(),
@@ -26,7 +27,7 @@ type NoteSourceKind = "knowledge" | "research" | "personal";
 function plainTextDocument(text: string) {
   return {
     type: "doc",
-    content: text ? [{ type: "paragraph", content: [{ type: "text", text }] }] : [],
+    content: text ? plainTextToParagraphs(text) : [],
   };
 }
 
