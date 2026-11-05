@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, Check, Eye, EyeOff, KeyRound, Mail, ShieldCheck } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
@@ -42,7 +43,7 @@ export function LoginPage({ initialView = "login", error, status, initialEmail =
           </div>
         ) : (
           <div className="animate-page">
-            {initialView === "login" ? <h1 className="whitespace-nowrap text-center text-3xl font-semibold tracking-[-0.035em]">“Your personal knowledge agent”</h1> : <><p className="text-xs font-medium uppercase tracking-[0.2em] text-white/40">Personal Brain</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em]">{heading}</h1><p className="mt-3 text-sm leading-6 text-white/45">{description}</p></>}
+            {initialView === "login" ? <h1 className="flex justify-center"><Image src="/brand/seneca-logo.svg" alt="Seneca" width={1770} height={456} preload unoptimized className="h-auto w-full max-w-[117px] brightness-0 invert" /></h1> : <><p className="text-xs font-medium uppercase tracking-[0.2em] text-white/40">Personal Brain</p><h1 className="mt-3 text-3xl font-semibold tracking-[-0.035em]">{heading}</h1><p className="mt-3 text-sm leading-6 text-white/45">{description}</p></>}
             {(localError || error) ? <p role="alert" className="mt-6 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm leading-6 text-red-200">{localError || error}</p> : null}
             {status ? <p role="status" className="mt-6 flex items-start gap-3 rounded-lg border border-emerald-400/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200"><Check className="mt-0.5 h-4 w-4 shrink-0" />{status}</p> : null}
 
