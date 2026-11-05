@@ -1,5 +1,61 @@
 # Deep Research full E2E readiness
 
+## R2A evidence-aware payload shaping (2026-11-05)
+
+Real Run `e7789eba-5d8e-454e-ac6e-252a65077e4f` reached R2A after six
+PostgreSQL lexical queries and 13 distinct internal Evidence records, then
+failed closed because its tokenizer-independent serialized-byte upper bound was
+59,655 against the 48,000 R2A guard. Component replay showed that Evidence JSON
+was 50,653 bytes (about 85%); the compacted ResearchPlan was 7,407 bytes, the
+system prompt 1,228 bytes, and provenance metadata without excerpts 4,762
+bytes. Whitespace normalization alone saved only about 500 bytes, so raising the
+guard or deleting metadata would not have been a defensible fix.
+
+Deep-only R2A preflight now performs deterministic extractive shaping. It uses
+the accepted ResearchPlan plus the latest R2C requirement coverage, evidence
+quality, contradictions, and conflicts to select exact source spans. Every
+source viewpoint and immutable Evidence ID receives visible text; required
+coverage and counter-evidence are mandatory. The Provider payload retains the
+Evidence ID, asset/revision IDs, PDF locator, and an explicit marker that source
+text was omitted and claims may use visible text only. The unmodified Evidence
+remains in `asset_evidence` and `research_run_evidence`.
+
+The same 13-Evidence replay now has a 47,683-byte upper bound. All 13 IDs and
+all three source assets remain present; five Evidence excerpts are partial and
+none are wholly excluded. Omitted source bytes are 1,194, 1,140, 2,436, 6,024,
+and 1,197 for Evidence IDs ending `6e24`, `36c5`, `8e50`, `6b9e`, and `3136`,
+respectively. R2C requirements `req_03_02` and `req_04_02`, which had no
+assessed supporting or contradicting Evidence, remain explicitly
+`unresolved_no_assessed_evidence`; shaping does not promote them to covered.
+
+Migration `20261105090000_deep_research_r2a_payload_manifests.sql` adds a
+lease-fenced, append-only, Owner-RLS manifest. It durably records the algorithm,
+original/shaped bounds, included/partial/excluded IDs, source excerpt hashes,
+selected character ranges, selection reasons, and required-coverage impact
+before any R2A reservation or Provider call. Exact replay is idempotent;
+conflicting replay is rejected. R2A citations are still checked against the
+original Evidence. R2E receives only the cited exact quote plus as much exact
+surrounding context as fits its existing guard, so it cannot cite omitted or
+untraceable content. Legacy finalization is unchanged.
+
+At Standard pricing ($2/M input, $10/M output), the shaped R2A slot reserves
+$0.1210 instead of the configured-envelope $0.1216. The three-claim
+finalization preflight is $0.3688, while the protected worst-case final reserve
+remains $0.3694. Replaying this run's R2B and R2C envelopes ($0.1929 and
+$0.2809) gives a full sequential worst case of $0.8426; R1/R2D are zero-cost.
+The recommended next controlled configuration remains Internal-only, one round,
+at most six queries, and three claims under $1/run, $2/day, and $10/month.
+
+Free verification: actual 13-Evidence replay PASS; focused coordinator and
+finalization **56 passed, 1 Local-DB harness skip**; complete non-provider
+Worker **277 passed, 1 skipped, 9 subtests passed**. The retained 60322 stack
+accepted the additive migration and the new protocol passed 18/18. A separate
+schema-only, zero-data disposable database passed finalization, full-run budget,
+durability, real two-session concurrency, and manifest pgTAP: **121/121**. It
+was deleted after testing; the retained Run still has all 13 Evidence rows.
+Supabase bootstrap plus clean 39-migration replay was not claimed because the
+CLI could not write its sandboxed telemetry file. No paid Provider call ran.
+
 ## R2C 8192-token and required-evidence repair (2026-11-05)
 
 The three-PDF Real Provider run showed that R2C consumed its entire 3584-token

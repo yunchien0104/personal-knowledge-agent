@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from hashlib import sha256
 import json
 import os
+import re
 from typing import Any, Mapping
 from uuid import UUID
 
@@ -92,6 +94,9 @@ class FinalizationSlot:
 class FinalizationPreflight:
     slots: tuple[FinalizationSlot, ...]
     maximum_cost_usd: Decimal
+    synthesis_evidence: tuple[dict[str, Any], ...]
+    payload_manifest: dict[str, Any]
+    synthesis_input_upper_bound: int
 
 
 class FinalizationPayloadLimitError(ValueError):
@@ -189,6 +194,314 @@ def _deduplicated_evidence(
         by_id[evidence_id] = row
         rows.append(row)
     return rows
+
+
+@dataclass(frozen=True, slots=True)
+class _EvidenceSegment:
+    start: int
+    end: int
+    text: str
+    index: int
+
+
+def _semantic_terms(value: Any) -> frozenset[str]:
+    """Extract deterministic Latin tokens and CJK bigrams for payload ranking."""
+    text = json.dumps(value, ensure_ascii=False, default=str).lower()
+    terms = set(re.findall(r"[a-z0-9][a-z0-9_.+-]{1,}", text))
+    for run in re.findall(r"[\u3400-\u9fff]{2,}", text):
+        terms.update(run[index:index + 2] for index in range(len(run) - 1))
+    return frozenset(terms)
+
+
+def _split_exact_segments(text: str, *, maximum_bytes: int = 1200) -> list[_EvidenceSegment]:
+    """Split without rewriting source text, so every selected quote remains auditable."""
+    boundaries = [0]
+    for match in re.finditer(r"(?:\r?\n)+|(?<=[。！？!?；;])", text):
+        boundaries.append(match.end())
+    if boundaries[-1] != len(text):
+        boundaries.append(len(text))
+    pieces = [(boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)]
+    result: list[_EvidenceSegment] = []
+    current_start: int | None = None
+    current_end: int | None = None
+
+    def append_bounded(start: int, end: int) -> None:
+        cursor = start
+        while cursor < end:
+            stop = cursor
+            size = 0
+            while stop < end:
+                encoded = text[stop].encode("utf-8")
+                if size + len(encoded) > maximum_bytes and stop > cursor:
+                    break
+                size += len(encoded)
+                stop += 1
+            result.append(_EvidenceSegment(cursor, stop, text[cursor:stop], len(result)))
+            cursor = stop
+
+    for start, end in pieces:
+        if not text[start:end]:
+            continue
+        candidate_start = start if current_start is None else current_start
+        candidate_end = end
+        if len(text[candidate_start:candidate_end].encode("utf-8")) <= maximum_bytes:
+            current_start, current_end = candidate_start, candidate_end
+            continue
+        if current_start is not None and current_end is not None:
+            append_bounded(current_start, current_end)
+        current_start, current_end = None, None
+        append_bounded(start, end)
+    if current_start is not None and current_end is not None:
+        append_bounded(current_start, current_end)
+    return result
+
+
+def _segment_score(segment: _EvidenceSegment, terms: frozenset[str]) -> int:
+    lowered = segment.text.lower()
+    overlap = sum(1 for term in terms if term in lowered)
+    numeric = len(re.findall(r"(?:20\d{2}|\d+(?:\.\d+)?%|\d+(?:\.\d+)?[a-z]+)", lowered))
+    caution = len(re.findall(r"風險|瓶頸|限制|不足|缺乏|延遲|矛盾|替代|假設|預測", segment.text))
+    return overlap * 5 + min(numeric, 8) * 3 + min(caution, 5) * 4
+
+
+def _payload_manifest_hash(value: Mapping[str, Any]) -> str:
+    return sha256(json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str,
+    ).encode("utf-8")).hexdigest()
+
+
+def _shape_synthesis_evidence(
+    *,
+    question: str,
+    plan: Mapping[str, Any],
+    evidence: list[Mapping[str, Any]],
+    assessment: Mapping[str, Any] | None,
+    input_limit: int,
+    generator: OpenAICompatibleResearchModel,
+    max_claims: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+    """Build a bounded, extractive R2A payload with an explicit audit manifest."""
+    original = _deduplicated_evidence(evidence)
+    compact_plan = _synthesis_plan(plan)
+    prompt = generator._synthesis_prompt(max_claims)
+
+    def upper(rows: list[dict[str, Any]]) -> int:
+        return _payload_token_upper_bound(
+            generator._synthesis_input(
+                question, compact_plan, rows, max_claims=max_claims,
+            ),
+            prompt,
+        )
+
+    original_upper = upper(original)
+    if original_upper <= input_limit:
+        manifest = {
+            "schemaVersion": "r2a-payload-manifest-v1",
+            "algorithmVersion": "extractive-coverage-v1",
+            "originalInputUpperBound": original_upper,
+            "shapedInputUpperBound": original_upper,
+            "configuredInputLimit": input_limit,
+            "includedEvidenceIds": [str(row["id"]) for row in original],
+            "excludedEvidence": [],
+            "partiallyIncludedEvidence": [],
+            "coverageImpact": [],
+        }
+        manifest["manifestHash"] = _payload_manifest_hash(manifest)
+        return original, manifest, original_upper
+
+    assessment_value = dict(assessment or {})
+    requirements = {
+        str(item.get("id")): item
+        for item in plan.get("evidenceRequirements", [])
+        if isinstance(item, Mapping) and item.get("required") is True
+    }
+    coverage_rows = [
+        dict(item) for item in assessment_value.get("requirementCoverage", [])
+        if isinstance(item, Mapping)
+    ]
+    quality = {
+        str(item.get("evidenceId")): dict(item)
+        for item in assessment_value.get("evidenceQuality", [])
+        if isinstance(item, Mapping) and item.get("evidenceId")
+    }
+    conflict_ids = {
+        str(evidence_id)
+        for conflict in assessment_value.get("conflicts", [])
+        if isinstance(conflict, Mapping)
+        for evidence_id in conflict.get("evidenceIds", [])
+    }
+    contradiction_ids = {
+        str(evidence_id)
+        for item in coverage_rows
+        for evidence_id in item.get("contradictingEvidenceIds", [])
+    }
+    rows_by_id = {str(row["id"]): row for row in original}
+    segments = {
+        evidence_id: _split_exact_segments(str(row.get("excerpt") or ""))
+        for evidence_id, row in rows_by_id.items()
+    }
+    general_terms = _semantic_terms({"question": question, "plan": compact_plan})
+    selected: dict[str, set[int]] = {evidence_id: set() for evidence_id in rows_by_id}
+    reasons: dict[str, set[str]] = {evidence_id: set() for evidence_id in rows_by_id}
+    coverage_selection: dict[str, set[str]] = {key: set() for key in requirements}
+
+    def select_best(evidence_id: str, terms: frozenset[str], reason: str) -> None:
+        candidates = segments.get(evidence_id) or []
+        if not candidates:
+            return
+        best = max(candidates, key=lambda item: (
+            _segment_score(item, terms), -item.index,
+        ))
+        selected[evidence_id].add(best.index)
+        reasons[evidence_id].add(reason)
+
+    # Preserve every source viewpoint and every immutable Evidence identity.
+    for evidence_id in rows_by_id:
+        select_best(evidence_id, general_terms, "source_viewpoint")
+
+    # Required coverage and counter-evidence get mandatory, requirement-specific excerpts.
+    for item in coverage_rows:
+        requirement_id = str(item.get("requirementId") or "")
+        if requirement_id not in requirements:
+            continue
+        relevant_ids = [str(value) for value in (
+            *item.get("supportingEvidenceIds", []),
+            *item.get("contradictingEvidenceIds", []),
+        ) if str(value) in rows_by_id]
+        requirement_terms = _semantic_terms(requirements[requirement_id])
+        if relevant_ids:
+            best_id = max(relevant_ids, key=lambda evidence_id: max(
+                (_segment_score(segment, requirement_terms)
+                 for segment in segments[evidence_id]),
+                default=-1,
+            ))
+            select_best(best_id, requirement_terms, f"required_coverage:{requirement_id}")
+            coverage_selection[requirement_id].add(best_id)
+    for evidence_id in contradiction_ids | conflict_ids:
+        if evidence_id in rows_by_id:
+            select_best(evidence_id, general_terms, "contradiction_or_conflict")
+
+    def shaped_rows() -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for evidence_id, source in rows_by_id.items():
+            chosen = sorted(selected[evidence_id])
+            is_partial = len(chosen) < len(segments[evidence_id])
+            text = (
+                "\n".join(segments[evidence_id][index].text for index in chosen)
+                if is_partial else str(source["excerpt"])
+            )
+            row = {
+                key: source[key]
+                for key in ("id", "origin", "assetId", "revisionId", "locator")
+                if key in source
+            }
+            row["excerpt"] = text
+            if is_partial:
+                row["payloadScope"] = {
+                    "mode": "extractive_selection",
+                    "omittedSourceText": True,
+                    "claimsMustUseVisibleTextOnly": True,
+                }
+            output.append(row)
+        return output
+
+    mandatory_rows = shaped_rows()
+    mandatory_upper = upper(mandatory_rows)
+    if mandatory_upper > input_limit:
+        raise FinalizationPayloadLimitError(
+            "R2A synthesis",
+            observed_upper_bound=mandatory_upper,
+            configured_limit=input_limit,
+        )
+
+    candidates: list[tuple[int, int, str, int]] = []
+    for evidence_id, items in segments.items():
+        evidence_bonus = 0
+        if evidence_id in contradiction_ids or evidence_id in conflict_ids:
+            evidence_bonus += 60
+        entry = quality.get(evidence_id, {})
+        if entry.get("relevance") == "pass":
+            evidence_bonus += 25
+        if entry.get("reliability") == "pass":
+            evidence_bonus += 15
+        for segment in items:
+            if segment.index in selected[evidence_id]:
+                continue
+            byte_size = max(1, len(segment.text.encode("utf-8")))
+            score = _segment_score(segment, general_terms) + evidence_bonus
+            candidates.append((score * 1000 // byte_size, score, evidence_id, segment.index))
+    candidates.sort(reverse=True)
+    for _, _, evidence_id, index in candidates:
+        selected[evidence_id].add(index)
+        candidate_rows = shaped_rows()
+        if upper(candidate_rows) > input_limit:
+            selected[evidence_id].remove(index)
+        else:
+            reasons[evidence_id].add("relevance_and_information_density")
+
+    shaped = shaped_rows()
+    shaped_upper = upper(shaped)
+    evidence_manifest: list[dict[str, Any]] = []
+    partial: list[dict[str, Any]] = []
+    shaped_by_id = {str(row["id"]): row for row in shaped}
+    for evidence_id, source in rows_by_id.items():
+        original_bytes = len(str(source["excerpt"]).encode("utf-8"))
+        shaped_row = shaped_by_id[evidence_id]
+        included_bytes = sum(
+            len(segments[evidence_id][index].text.encode("utf-8"))
+            for index in selected[evidence_id]
+        )
+        segment_ranges = [{
+            "start": segments[evidence_id][index].start,
+            "end": segments[evidence_id][index].end,
+        } for index in sorted(selected[evidence_id])]
+        item = {
+            "evidenceId": evidence_id,
+            "sourceExcerptHash": sha256(str(source["excerpt"]).encode("utf-8")).hexdigest(),
+            "originalBytes": original_bytes,
+            "includedBytes": included_bytes,
+            "omittedBytes": original_bytes - included_bytes,
+            "selectedCharacterRanges": segment_ranges,
+            "selectionReasons": sorted(reasons[evidence_id]),
+        }
+        evidence_manifest.append(item)
+        if item["omittedBytes"] > 0:
+            partial.append(item)
+    coverage_impact = []
+    coverage_by_id = {
+        str(item.get("requirementId")): item for item in coverage_rows
+    }
+    for requirement_id in requirements:
+        assessed = coverage_by_id.get(requirement_id, {})
+        referenced = [str(value) for value in (
+            *assessed.get("supportingEvidenceIds", []),
+            *assessed.get("contradictingEvidenceIds", []),
+        )]
+        represented = sorted(coverage_selection[requirement_id])
+        coverage_impact.append({
+            "requirementId": requirement_id,
+            "assessmentStatus": assessed.get("status", "unknown"),
+            "assessedEvidenceIds": referenced,
+            "representedEvidenceIds": represented,
+            "payloadCoverage": (
+                "represented" if represented
+                else "unresolved_no_assessed_evidence"
+            ),
+        })
+    manifest = {
+        "schemaVersion": "r2a-payload-manifest-v1",
+        "algorithmVersion": "extractive-coverage-v1",
+        "originalInputUpperBound": original_upper,
+        "shapedInputUpperBound": shaped_upper,
+        "configuredInputLimit": input_limit,
+        "includedEvidenceIds": [str(row["id"]) for row in shaped],
+        "excludedEvidence": [],
+        "partiallyIncludedEvidence": partial,
+        "evidenceAudit": evidence_manifest,
+        "coverageImpact": coverage_impact,
+    }
+    manifest["manifestHash"] = _payload_manifest_hash(manifest)
+    return shaped, manifest, shaped_upper
 
 
 def _clone_client(
@@ -314,25 +627,19 @@ class DeepFinalizationEngine:
         question: str,
         plan: Mapping[str, Any],
         evidence: list[Mapping[str, Any]],
+        assessment: Mapping[str, Any] | None = None,
     ) -> FinalizationPreflight:
-        synthesis_plan = _synthesis_plan(plan)
-        synthesis_evidence = _deduplicated_evidence(evidence)
-        synthesis_input = self.generator._synthesis_input(
-            question,
-            synthesis_plan,
-            synthesis_evidence,
-            max_claims=self.limits.max_claims,
-        )
-        input_upper_bound = _payload_token_upper_bound(
-            synthesis_input,
-            self.generator._synthesis_prompt(self.limits.max_claims),
-        )
-        if input_upper_bound > self.limits.synthesis_input_tokens:
-            raise FinalizationPayloadLimitError(
-                "R2A synthesis",
-                observed_upper_bound=input_upper_bound,
-                configured_limit=self.limits.synthesis_input_tokens,
+        synthesis_evidence, payload_manifest, input_upper_bound = (
+            _shape_synthesis_evidence(
+                question=question,
+                plan=plan,
+                evidence=evidence,
+                assessment=assessment,
+                input_limit=self.limits.synthesis_input_tokens,
+                generator=self.generator,
+                max_claims=self.limits.max_claims,
             )
+        )
         slots: list[FinalizationSlot] = [FinalizationSlot(
             key="final:synthesize:v1",
             action_type="synthesize",
@@ -340,10 +647,15 @@ class DeepFinalizationEngine:
             artifact_type="draft",
             slot_index=0,
             estimated_cost_usd=self._cost(
-                self.limits.synthesis_input_tokens,
+                input_upper_bound,
                 self.limits.synthesis_output_tokens,
             ),
-            parameters={"runId": str(run_id), "stage": "synthesis"},
+            parameters={
+                "runId": str(run_id),
+                "stage": "synthesis",
+                "payloadManifestHash": payload_manifest["manifestHash"],
+                "inputUpperBound": input_upper_bound,
+            },
         )]
         for index in range(self.limits.max_claims):
             slots.append(FinalizationSlot(
@@ -386,6 +698,9 @@ class DeepFinalizationEngine:
         return FinalizationPreflight(
             tuple(slots),
             sum((slot.estimated_cost_usd for slot in slots), Decimal("0")),
+            tuple(synthesis_evidence),
+            payload_manifest,
+            input_upper_bound,
         )
 
     def validate_draft(self, value: Mapping[str, Any]) -> AtomicResearchDraft:
@@ -498,12 +813,77 @@ class DeepFinalizationEngine:
             self.limits.reverification_input_tokens
             if reverify else self.limits.verification_input_tokens
         )
-        if self.judge.input_token_upper_bound(claim, evidence) > input_limit:
+        verification_evidence = self._verification_evidence(
+            claim, evidence, input_limit
+        )
+        if self.judge.input_token_upper_bound(claim, verification_evidence) > input_limit:
             raise FinalizationPayloadLimitError(
                 "R2E verification payload exceeds its configured input limit"
             )
-        call = self.judge.verify_with_metadata(claim, evidence)
+        call = self.judge.verify_with_metadata(claim, verification_evidence)
         return call.result, call.transport
+
+    def _verification_evidence(
+        self,
+        claim: ResearchClaim,
+        evidence: list[Mapping[str, Any]],
+        input_limit: int,
+    ) -> list[dict[str, Any]]:
+        """Keep every cited quote and grow exact context only while the guard allows."""
+        rows = {str(row.get("id")): dict(row) for row in evidence}
+        citations = {citation.evidenceId: citation.quote for citation in claim.citations}
+        missing = sorted(set(citations) - set(rows))
+        if missing:
+            raise FinalizationPayloadLimitError(
+                "R2E cited Evidence is absent from the shaped R2A payload"
+            )
+
+        positions: dict[str, tuple[int, int]] = {}
+        for evidence_id, quote in citations.items():
+            excerpt = str(rows[evidence_id].get("excerpt") or "")
+            start = excerpt.find(quote)
+            if start < 0:
+                raise FinalizationPayloadLimitError(
+                    "R2E cited quotation is absent from the shaped R2A payload"
+                )
+            positions[evidence_id] = (start, start + len(quote))
+
+        def with_context(context_chars: int) -> list[dict[str, Any]]:
+            selected: list[dict[str, Any]] = []
+            for evidence_id in citations:
+                source = rows[evidence_id]
+                excerpt = str(source["excerpt"])
+                start, end = positions[evidence_id]
+                item = {
+                    "id": evidence_id,
+                    "excerpt": excerpt[
+                        max(0, start - context_chars):min(len(excerpt), end + context_chars)
+                    ],
+                }
+                if isinstance(source.get("locator"), Mapping):
+                    item["locator"] = dict(source["locator"])
+                selected.append(item)
+            return selected
+
+        minimal = with_context(0)
+        if self.judge.input_token_upper_bound(claim, minimal) > input_limit:
+            raise FinalizationPayloadLimitError(
+                "R2E cited quotations exceed the configured input limit"
+            )
+        low, high = 0, max(
+            (len(str(rows[evidence_id]["excerpt"])) for evidence_id in citations),
+            default=0,
+        )
+        best = minimal
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = with_context(middle)
+            if self.judge.input_token_upper_bound(claim, candidate) <= input_limit:
+                best = candidate
+                low = middle + 1
+            else:
+                high = middle - 1
+        return best
 
     def validate_transport(self, call: StructuredLLMResult) -> Decimal:
         if call.usage.input_tokens <= 0 or call.usage.output_tokens <= 0:

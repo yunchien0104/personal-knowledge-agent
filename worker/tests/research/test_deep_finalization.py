@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -112,6 +112,7 @@ class FinalizationGateway(FakeGateway):
         self.crash_before_publishing_checkpoint_once = False
         self.publication_calls = 0
         self.final_reserve_requests: list[str] = []
+        self.payload_manifests: dict[str, dict] = {}
 
     def ensure_deep_research_final_reserve(
         self, _claimed, _worker, *, required_reserve_usd
@@ -150,6 +151,14 @@ class FinalizationGateway(FakeGateway):
             self.final_generations.setdefault(operation_id, claimed.lease_generation)
             operations.append(result | {"idempotencyKey": slot["idempotencyKey"]})
         return {"operations": operations}
+
+    def record_deep_research_payload_manifest(
+        self, _claimed, _worker, *, stage, manifest
+    ):
+        existing = self.payload_manifests.setdefault(stage, deepcopy(manifest))
+        if existing != manifest:
+            raise ValueError("payload manifest replay conflict")
+        return {"stage": stage, "idempotent": existing is not manifest}
 
     def load_deep_research_finalization(self, *_args):
         return {
@@ -347,6 +356,133 @@ def test_r2a_preflight_reports_safe_observed_bound_and_limit() -> None:
     assert "bounded evidence" not in str(caught.value)
 
 
+def test_r2a_preflight_shapes_large_evidence_by_coverage_without_dropping_ids() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    plan = plan_json(request)
+    evidence = []
+    for index in range(13):
+        evidence.append({
+            "id": str(uuid4()),
+            "origin": "internal",
+            "assetId": str(uuid4() if index < 2 else UUID(int=index % 3 + 1)),
+            "revisionId": str(uuid4()),
+            "excerpt": (
+                f"Source {index} establishes a 2028 commercialization forecast. "
+                "The forecast depends on manufacturing yield, reliability, cost, and demand. "
+                "Counter-evidence includes delay risk and an incumbent alternative. " * 35
+            ),
+            "locator": {"kind": "pdf_page", "page_number": index + 1},
+            "unnecessaryMetadata": "must not cross the provider boundary",
+        })
+    assessment = {
+        "evidenceQuality": [{
+            "evidenceId": evidence[0]["id"],
+            "relevance": "pass", "reliability": "concern", "freshness": "pass",
+        }],
+        "requirementCoverage": [{
+            "requirementId": "req_01",
+            "status": "partial",
+            "supportingEvidenceIds": [evidence[0]["id"]],
+            "contradictingEvidenceIds": [evidence[1]["id"]],
+        }],
+        "conflicts": [{"evidenceIds": [evidence[1]["id"], evidence[2]["id"]]}],
+    }
+    engine, _, _ = finalizer(draft(evidence[0]["id"], "forecast"))
+    engine.limits = replace(engine.limits, synthesis_input_tokens=48000)
+
+    preflight = engine.preflight(
+        run_id, request["originalQuestion"], plan, evidence, assessment
+    )
+
+    manifest = preflight.payload_manifest
+    assert manifest["originalInputUpperBound"] > 48000
+    assert preflight.synthesis_input_upper_bound <= 48000
+    assert len(preflight.synthesis_evidence) == 13
+    assert manifest["excludedEvidence"] == []
+    assert manifest["partiallyIncludedEvidence"]
+    assert manifest["coverageImpact"][0]["payloadCoverage"] == "represented"
+    assert all("unnecessaryMetadata" not in row for row in preflight.synthesis_evidence)
+    assert any("payloadScope" in row for row in preflight.synthesis_evidence)
+    assert all(
+        row.get("payloadScope", {}).get("claimsMustUseVisibleTextOnly", True)
+        for row in preflight.synthesis_evidence
+    )
+    synthesis_slot = preflight.slots[0]
+    assert synthesis_slot.parameters["payloadManifestHash"] == manifest["manifestHash"]
+    assert synthesis_slot.parameters["inputUpperBound"] == preflight.synthesis_input_upper_bound
+    assert synthesis_slot.estimated_cost_usd == engine._cost(
+        preflight.synthesis_input_upper_bound,
+        engine.limits.synthesis_output_tokens,
+    )
+    assert synthesis_slot.estimated_cost_usd < engine._cost(
+        engine.limits.synthesis_input_tokens,
+        engine.limits.synthesis_output_tokens,
+    )
+
+
+def test_r2a_shaped_quotes_are_still_checked_against_original_evidence() -> None:
+    run_id, user_id = uuid4(), uuid4()
+    request = request_json(run_id, user_id)
+    evidence_id = str(uuid4())
+    original = {
+        "id": evidence_id,
+        "origin": "internal",
+        "assetId": str(uuid4()),
+        "revisionId": str(uuid4()),
+        "excerpt": "first visible sentence. omitted middle. second visible sentence.",
+        "locator": {"kind": "pdf_page", "page_number": 9},
+    }
+    engine, _, _ = finalizer(draft(evidence_id, "first visible sentence"))
+    accepted = StructuredLLMResult(
+        output=draft(evidence_id, "first visible sentence"),
+        provider="fixture-provider",
+        model="fixture-model",
+        usage=LLMUsage(100, 50, 150),
+        latency_ms=1,
+        request_id="request-shaped-citation",
+        service_tier="default",
+        finish_reason="stop",
+    )
+
+    assert engine.accept_synthesis_call(accepted, [original]).findings
+
+    invalid = replace(
+        accepted,
+        output=draft(evidence_id, "sentence.\nsecond visible"),
+    )
+    with pytest.raises(Exception, match="Deep finalization contract"):
+        engine.accept_synthesis_call(invalid, [original])
+
+
+def test_r2e_uses_quote_centered_traceable_context_within_its_guard() -> None:
+    evidence_id = str(uuid4())
+    quote = "the exact supported statement"
+    engine, _, verifier_client = finalizer(draft(evidence_id, quote))
+    claim = engine.claims(engine.validate_draft(draft(evidence_id, quote)))[0]
+    excerpt = "unrelated context. " * 500 + quote + " trailing context. " * 500
+    evidence = [{
+        "id": evidence_id,
+        "excerpt": excerpt,
+        "locator": {"kind": "pdf_page", "page_number": 7},
+    }]
+
+    result, transport = engine.verification_call(
+        claim, evidence, reverify=False
+    )
+
+    assert result.verdict == "supported"
+    assert transport is not None
+    sent = verifier_client.requests[0]["user_input"]["evidence"]
+    assert len(sent) == 1
+    assert quote in sent[0]["excerpt"]
+    assert len(sent[0]["excerpt"]) < len(excerpt)
+    assert sent[0]["locator"]["page_number"] == 7
+    assert engine.judge.input_token_upper_bound(claim, sent) <= (
+        engine.limits.verification_input_tokens
+    )
+
+
 def test_deep_synthesis_compacts_execution_metadata_and_deduplicates_evidence() -> None:
     run_id, user_id = uuid4(), uuid4()
     request = request_json(run_id, user_id)
@@ -461,6 +597,12 @@ def test_offline_full_pipeline_from_r2b_through_idempotent_publication() -> None
     assert generator_client.calls == 1
     assert verifier_client.calls == 1
     assert len(gateway.publications) == 1
+    assert gateway.payload_manifests["r2a_synthesis"][
+        "schemaVersion"
+    ] == "r2a-payload-manifest-v1"
+    assert gateway.payload_manifests["r2a_synthesis"][
+        "shapedInputUpperBound"
+    ] <= engine.limits.synthesis_input_tokens
     assert gateway.final_reserve_requests == [
         format(engine.maximum_cost_usd(), "f")
     ]

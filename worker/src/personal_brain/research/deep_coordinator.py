@@ -676,6 +676,7 @@ class DeepResearchCoordinator:
         plan: ResearchPlanV1,
         records: list[EvidenceRecordV1],
         state: ResearchIterationStateV1,
+        assessment: EvidenceAssessmentV1 | None,
     ) -> tuple[Any, ResearchIterationStateV1]:
         from personal_brain.research.contracts import VerificationResult
 
@@ -699,7 +700,19 @@ class DeepResearchCoordinator:
             request.originalQuestion,
             plan.model_dump(mode="json"),
             publication_rows,
+            assessment.model_dump(mode="json") if assessment else None,
         )
+        recorded_manifest = self.gateway.record_deep_research_payload_manifest(
+            job,
+            worker_id,
+            stage="r2a_synthesis",
+            manifest=preflight.payload_manifest,
+        )
+        if recorded_manifest is None:
+            raise LeaseLostError(
+                "Worker lease expired before R2A payload manifest persistence"
+            )
+        synthesis_rows = list(preflight.synthesis_evidence)
         statuses = self._reserve_finalization(
             job, worker_id, request, preflight.slots
         )
@@ -749,7 +762,7 @@ class DeepResearchCoordinator:
                 call = self.finalizer.synthesis_call(
                     request.originalQuestion,
                     plan.model_dump(mode="json"),
-                    publication_rows,
+                    synthesis_rows,
                 )
                 accepted = self.finalizer.accept_synthesis_call(
                     call, publication_rows
@@ -786,7 +799,7 @@ class DeepResearchCoordinator:
                     claim: Any = claim,
                 ) -> tuple[Mapping[str, Any], Any | None]:
                     result, call = self.finalizer.verification_call(
-                        claim, publication_rows, reverify=False
+                        claim, synthesis_rows, reverify=False
                     )
                     return result.model_dump(), call
 
@@ -814,7 +827,7 @@ class DeepResearchCoordinator:
                     call = self.finalizer.repair_call(
                         request.originalQuestion,
                         plan.model_dump(mode="json"),
-                        publication_rows,
+                        synthesis_rows,
                         draft,
                         results,
                     )
@@ -852,7 +865,7 @@ class DeepResearchCoordinator:
                         claim: Any = claim,
                     ) -> tuple[Mapping[str, Any], Any | None]:
                         result, call = self.finalizer.verification_call(
-                            claim, publication_rows, reverify=True
+                            claim, synthesis_rows, reverify=True
                         )
                         return result.model_dump(), call
 
@@ -1525,7 +1538,7 @@ class DeepResearchCoordinator:
                 } and records:
                     publication_rows = _publication_rows(records)
                     execution, state = self._run_finalization(
-                        job, worker_id, request, plan, records, state
+                        job, worker_id, request, plan, records, state, assessment
                     )
                     if execution.gate.can_publish:
                         draft = adapt_r2_publication(execution, publication_rows)
