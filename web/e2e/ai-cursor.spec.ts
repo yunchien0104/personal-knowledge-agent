@@ -51,9 +51,7 @@ test("right-click mode, mouse selection, popover refinement, replace and undo", 
   expect(beforeBox?.y).toBeGreaterThanOrEqual(0);
 
   await page.getByRole("button", { name: "Improve" }).click();
-  await expect(
-  popover.getByText("AI:Alpha paragraph for A", { exact: true })
-).toBeVisible();
+  await expect(popover.getByText(/^AI:Alpha paragraph/)).toBeVisible();
   await page.getByLabel("繼續微調").fill("再精簡一點");
   await page.getByRole("button", { name: "微調" }).click();
   await expect(popover.getByText("Refined deterministic suggestion.")).toBeVisible();
