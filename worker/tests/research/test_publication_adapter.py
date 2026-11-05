@@ -104,6 +104,27 @@ def test_blocked():
         raise AssertionError("Blocked draft was accepted")
 
 
+def test_template_report_preserves_verified_section_topics():
+    publication = adapt_r2_publication(
+        make_execution(True),
+        EVIDENCE,
+        analysis_spec={
+            "schemaVersion": "analysis-spec-v1",
+            "framework": "comparative",
+            "parameters": {
+                "sections": [
+                    {"title": "營收", "purpose": "比較營收", "required": True},
+                ],
+            },
+        },
+    )
+
+    assert "## 營收" in publication.body
+    assert "### Finding 1" not in publication.body
+    assert "公司未來可能破產" not in publication.body
+    assert len(publication.output_hash) == 64
+
+
 if __name__ == "__main__":
     test_success()
     test_blocked()

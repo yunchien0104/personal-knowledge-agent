@@ -20,10 +20,13 @@
   planning constraints. Deep R2A synthesis and the single bounded R2F repair
   receive the same immutable analysis specification and organize finding topics
   around supported template sections.
+- Deep publication preserves verified R2A finding topics as template section
+  headings. The adapter still publishes only gate-approved claims and recomputes
+  the output hash from the final title, body, and citation-bearing findings.
 - R1 retrieval, R2C/R2D evaluation and control, R2E verification, R2F gates,
   Legacy execution, database schema, and non-Research pages are unchanged.
 - PASS: Web TypeScript, ESLint, 11/11 Research tests; 65/65 focused Deep tests;
-  broad offline Worker 282 passed, 1 skipped, 9 subtests, plus 8/8 localhost HTTP
+  broad offline Worker 283 passed, 1 skipped, 9 subtests, plus 8/8 localhost HTTP
   tests after local socket permission. No live/provider script was collected.
 - Browser PASS on localhost:3001: Legacy is selected by default and hides the
   template studio; Deep reveals the template studio. No research was submitted.

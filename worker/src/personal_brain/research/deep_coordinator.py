@@ -1557,7 +1557,15 @@ class DeepResearchCoordinator:
                         job, worker_id, request, plan, records, state, assessment
                     )
                     if execution.gate.can_publish:
-                        draft = adapt_r2_publication(execution, publication_rows)
+                        draft = adapt_r2_publication(
+                            execution,
+                            publication_rows,
+                            analysis_spec=(
+                                request.analysisSpec.model_dump(mode="json")
+                                if request.analysisSpec is not None
+                                else None
+                            ),
+                        )
                         if state.targetOutcome == "complete":
                             publish = (
                                 self.gateway.publish_deep_research_draft
