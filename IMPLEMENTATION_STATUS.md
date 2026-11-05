@@ -1,5 +1,27 @@
 # Personal Brain Implementation Status
 
+## Research Template Deep release candidate (2026-11-05)
+
+- Built `release/research-template-deep-rc` from the latest `origin/main`
+  (`72ba8d3`), preserving the merged Notes AI workspace and Seneca branding while
+  adding the Research-only Legacy/Deep switch, template studio, and Deep adapter.
+- Legacy remains the default and keeps its original request contract. Deep sends
+  the bounded `analysis-spec-v1` snapshot into R2B planning, R2A synthesis, R2F
+  repair, and section-preserving publication; existing evidence and budget gates
+  remain authoritative.
+- PASS: Web TypeScript, ESLint, production build, 13/13 Research tests, and 74/74
+  Notes tests. PASS: 297 offline Worker tests, 1 skipped, 9 subtests, plus 8/8
+  localhost HTTP tests. Provider/live runners were excluded and no paid call ran.
+- PASS: disposable Local Supabase clean replay of 44/44 migrations and a separate
+  upgrade from current `origin/main` through the two Deep migrations. Both paths
+  passed 28 pgTAP files / 704 assertions and schema lint with zero errors.
+- PASS: localhost:3001 browser verification preserved Notes and Seneca; Legacy is
+  selected by default; Deep exposes four templates; template selection, section
+  editing, and browser-local "My Templates" all work. No research was submitted.
+- READY FOR DEPLOY REVIEW: deploy order is migrations, Worker, then Web; verify a
+  Legacy smoke test before one explicitly authorized Deep canary. No Cloud write,
+  push, merge, or deployment was performed.
+
 ## Notes import-to-editor repair (2026-11-05)
 
 - The reference sidebar now inserts the authoritative import snapshot returned
