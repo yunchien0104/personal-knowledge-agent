@@ -11,6 +11,22 @@
 - PASS: TypeScript, ESLint, production build, and 74 Notes tests, including four
   new import response/paragraph/preservation/fail-closed regressions.
 
+## Research Template UI integration (2026-11-05)
+
+- Added a Research-only template studio with four bounded presets, section editing,
+  reordering, required-section toggles, and browser-local "My Templates" storage.
+- The existing `/api/research` route, Legacy/Deep selection, Worker, R1, R2A-R2F,
+  database schema, other pages, and deployment configuration are unchanged.
+- The selected template is adapted to the existing `analysis-spec-v1` request field;
+  the current Legacy RPC intentionally ignores that field, preserving runtime behavior.
+- PASS: TypeScript, ESLint, and 10/10 focused Research tests. Browser verification
+  confirmed `/research`, template selection, existing run/history rendering, and
+  successful GET responses on localhost:3001.
+- Production build reaches compilation but is BLOCKED by the existing `next/font`
+  dependency attempting to resolve `fonts.googleapis.com` without network access.
+- No Supabase migration, hosted write, provider request, paid call, push, merge, or
+  deployment was performed.
+
 ## Deep Finalization pipeline readiness repair (2026-11-05)
 
 - Raised Deep-only R2A/R2F full-draft output ceilings to 16,384, R2E/reverify to

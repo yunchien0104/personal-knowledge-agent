@@ -8,9 +8,16 @@ import { getApi } from "./api";
 import { instagramCitation } from "@/lib/instagram";
 import { instagramReelCitation } from "@/lib/instagram-reel";
 import { isResearchTerminal, researchWorkflowProgress } from "@/lib/research";
+import {
+  cloneResearchTemplate,
+  defaultResearchTemplates,
+  templateAnalysisSpec,
+  type ResearchTemplate,
+} from "@/lib/research-template-ui";
 import { threadsCitationUrl } from "@/lib/threads";
 import type { ResearchRun, ResearchRunSummary, Topic } from "./types";
 import { PageTitle, PendingState, PrimaryButton, SourceIcon } from "./ui";
+import { ResearchTemplateStudio } from "./ResearchTemplateStudio";
 
 function researchError(code: string | null) {
   const messages: Record<string, string> = {
@@ -39,6 +46,9 @@ export function ResearchPage() {
   const [draftTopicIds, setDraftTopicIds] = useState<string[]>([]);
   const [draftNoteId, setDraftNoteId] = useState<string | null>(null);
   const [savingTopics, setSavingTopics] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<ResearchTemplate>(() => (
+    cloneResearchTemplate(defaultResearchTemplates[0])
+  ));
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -93,7 +103,11 @@ export function ResearchPage() {
       const created = await getApi<{ id: string }>("/api/research", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question, request_key: crypto.randomUUID() }),
+        body: JSON.stringify({
+          question,
+          request_key: crypto.randomUUID(),
+          analysis_spec: templateAnalysisSpec(selectedTemplate),
+        }),
       });
       await refreshRuns();
       await loadRun(created.id);
@@ -132,6 +146,7 @@ export function ResearchPage() {
   return (
     <div className="animate-page">
       <PageTitle title="研究工作區" />
+      <ResearchTemplateStudio selected={selectedTemplate} onSelect={setSelectedTemplate} />
       <form onSubmit={submit} className="mb-6 flex flex-col gap-3 rounded-[10px] border border-line bg-surface p-4 sm:flex-row sm:items-end">
         <label className="min-w-0 flex-1 text-xs font-medium text-muted">研究問題
           <textarea value={question} onChange={(event) => setQuestion(event.target.value)} minLength={3} maxLength={500} required rows={2} className="mt-2 w-full resize-none rounded-md border border-line bg-subtle px-3 py-2.5 text-sm text-ink outline-none focus:border-indigo-200" placeholder="輸入你要研究的問題…" />
