@@ -22,10 +22,12 @@ QUESTION = "What does the evidence say about revenue growth?"
 EXCERPT = "Revenue increased by 20 percent in 2025, with seasonal uncertainty."
 
 
-def claimed_job(*, scope_asset_ids=None) -> ClaimedJob:
+def claimed_job(*, scope_asset_ids=None, research_mode=None) -> ClaimedJob:
     job_input = {"researchRunId": RUN_ID, "question": QUESTION}
     if scope_asset_ids is not None:
         job_input["scopeAssetIds"] = scope_asset_ids
+    if research_mode is not None:
+        job_input["researchMode"] = research_mode
     payload = JobPayloadV1.from_dict({
         "schemaVersion": 1,
         "jobId": JOB_ID,
@@ -194,6 +196,29 @@ class FakeGateway:
 
 
 class ResearchAgentWorkerTests(unittest.TestCase):
+    def test_deep_job_routes_before_legacy_plan_validation(self):
+        gateway = FakeGateway()
+        gateway.job = claimed_job(research_mode="deep")
+
+        class DeepProcessor:
+            def process_claimed(self, job, worker_id, lease_seconds):
+                self.call = (job, worker_id, lease_seconds)
+                return SimpleNamespace(status="deep_routed", job_id=job.id)
+
+        processor = DeepProcessor()
+        model = MockResearchModel(plan={"schemaVersion": "research-plan-v1"})
+        result = ResearchAgentWorker(
+            gateway,
+            model,
+            "worker-1",
+            deep_processor=processor,
+        ).process_one()
+
+        self.assertEqual(result.status, "deep_routed")
+        self.assertEqual(processor.call[0], gateway.job)
+        self.assertEqual(model.plan_calls, 0)
+        self.assertFalse(hasattr(gateway, "plan"))
+
     def test_claim_verifier_receives_cited_locator_provenance(self):
         class CapturingClient:
             def generate(self, **request):
@@ -249,6 +274,42 @@ class ResearchAgentWorkerTests(unittest.TestCase):
 
         self.assertIs(worker.gateway, worker.retrieval.gateway)
         self.assertEqual(worker.retrieval.provider.settings.model, "multilingual-test-model")
+
+    def test_runner_injects_real_r2b_and_r2c_adapters_only_for_deep(self):
+        with patch.dict("os.environ", {
+            "WORKER_ID": "research-worker",
+            "SUPABASE_SERVER_URL": "https://example.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "sb_secret_" + "a" * 32,
+            "EMBEDDING_API_BASE_URL": "https://api.example.test/v1",
+            "EMBEDDING_API_KEY": "embedding-secret",
+            "EMBEDDING_MODEL": "multilingual-test-model",
+            "EMBEDDING_MODEL_VERSION": "test-v1",
+            "EMBEDDING_DIMENSIONS": "1536",
+            "LLM_API_BASE_URL": "https://legacy-llm.example.test/v1",
+            "LLM_API_KEY": "legacy-secret",
+            "RESEARCH_MODEL": "legacy-research-model",
+            "DEEP_RESEARCH_ENABLED": "true",
+            "R2B_R2C_API_BASE_URL": "https://deep-llm.example.test/v1",
+            "R2B_R2C_API_KEY": "deep-test-secret",
+            "R2B_MODEL": "planner-model",
+            "R2C_MODEL": "evaluator-model",
+            "R2B_PRICING_VERIFIED": "true",
+            "R2C_PRICING_VERIFIED": "true",
+            "R2B_INPUT_COST_PER_MILLION_USD": "1",
+            "R2B_OUTPUT_COST_PER_MILLION_USD": "2",
+            "R2C_INPUT_COST_PER_MILLION_USD": "1",
+            "R2C_OUTPUT_COST_PER_MILLION_USD": "2",
+            "DEEP_FINAL_PRICING_MODEL": "legacy-research-model",
+            "DEEP_FINAL_PRICING_VERIFIED": "true",
+            "DEEP_FINAL_INPUT_COST_PER_MILLION_USD": "1",
+            "DEEP_FINAL_OUTPUT_COST_PER_MILLION_USD": "2",
+        }, clear=True):
+            worker = build_research_worker()
+
+        self.assertIsNotNone(worker.deep_processor)
+        self.assertEqual(worker.deep_processor.planner.model.model_name, "planner-model")
+        self.assertEqual(worker.deep_processor.evaluator.model.model_name, "evaluator-model")
+        self.assertEqual(worker.orchestrator.generator.model_name, "legacy-research-model")
 
     def test_research_claim_accepts_null_asset_and_typed_run_input(self):
         job = claimed_job()

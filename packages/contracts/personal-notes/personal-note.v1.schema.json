@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "personal-note.v1",
+  "title": "Personal Note Document V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "noteId", "title", "content", "plainText", "bodyRevision", "topicIds"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "noteId": { "type": "string", "format": "uuid" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "content": { "type": "object" },
+    "plainText": { "type": "string", "maxLength": 1000000 },
+    "bodyRevision": { "type": "integer", "minimum": 1 },
+    "topicIds": { "type": "array", "maxItems": 20, "items": { "type": "string", "format": "uuid" }, "uniqueItems": true }
+  }
+}

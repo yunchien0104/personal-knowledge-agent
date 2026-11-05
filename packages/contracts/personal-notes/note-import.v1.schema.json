@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "note-import.v1",
+  "title": "Personal Note Import V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourceKind", "snapshotTitle", "snapshotText", "citations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sourceKind": { "enum": ["knowledge", "threads", "reels", "research", "docx", "markdown", "spreadsheet"] },
+    "sourceNoteId": { "type": ["string", "null"], "format": "uuid" },
+    "sourceAssetId": { "type": ["string", "null"], "format": "uuid" },
+    "snapshotTitle": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "snapshotText": { "type": "string", "maxLength": 1000000 },
+    "content": { "type": "object" },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceLabel", "supportingQuote", "locator", "validityStatus"],
+        "properties": {
+          "evidenceId": { "type": ["string", "null"], "format": "uuid" },
+          "sourceLabel": { "type": "string", "minLength": 1 },
+          "supportingQuote": { "type": "string" },
+          "locator": { "type": "object" },
+          "sourceUrl": { "type": ["string", "null"], "format": "uri" },
+          "validityStatus": { "enum": ["valid", "source_deleted", "unavailable", "user_modified"] }
+        }
+      }
+    }
+  }
+}

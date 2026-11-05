@@ -137,10 +137,11 @@ export type RetrievalResult = {
 
 export type ResearchCitation = {
   id: string;
+  origin: "internal" | "web";
   relationType: string;
   evidenceId: string;
-  assetId: string;
-  revisionId: string;
+  assetId: string | null;
+  revisionId: string | null;
   locator: Record<string, unknown>;
   quote: string;
   validityStatus: string;
@@ -149,6 +150,7 @@ export type ResearchCitation = {
 
 export type ResearchRun = {
   id: string;
+  mode: "legacy" | "deep";
   question: string;
   plan: Record<string, unknown> | null;
   scopeAssetIds: string[] | null;
@@ -167,6 +169,17 @@ export type ResearchRun = {
     topics: TopicChip[];
   } | null;
   citations: ResearchCitation[];
+  deepResult: {
+    status: "verified_complete" | "verified_partial" | "insufficient";
+    stopReason: string;
+    title: string | null;
+    body: string | null;
+    findings: unknown[];
+    verification: Record<string, unknown>;
+    outputHash: string | null;
+    publishedNoteId: string | null;
+    updatedAt: string;
+  } | null;
 };
 
 export type ResearchRunSummary = {

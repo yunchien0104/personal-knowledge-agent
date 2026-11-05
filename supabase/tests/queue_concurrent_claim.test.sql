@@ -50,12 +50,11 @@ create temporary table concurrent_claims (worker_id text not null, job_id uuid n
 
 do $$
 declare
-  -- Route through the published local port so PostgreSQL 17 consumes the
-  -- supplied SCRAM password; direct in-container trust auth is rejected by
-  -- dblink_connect for the non-superuser `postgres` role in Supabase Local.
+  -- Route through the database container's bridge address so PostgreSQL consumes
+  -- the supplied SCRAM password without depending on a host-published port.
   connection_string text := format(
-    'host=host.docker.internal port=54322 dbname=%L user=postgres password=postgres',
-    current_database()
+    'host=%s port=%s dbname=%L user=postgres password=postgres',
+    inet_server_addr(), inet_server_port(), current_database()
   );
 begin
   perform extensions.dblink_connect('queue_worker_one', connection_string);

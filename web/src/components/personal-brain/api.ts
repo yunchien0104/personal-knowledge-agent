@@ -97,7 +97,7 @@ export function toKnowledgeItems(assets: Asset[], notes: Note[]): KnowledgeItem[
     activeRevisionId: asset.active_revision_id,
     sourceUrl: asset.source_url,
   }));
-  const noteItems = notes.map((note): KnowledgeItem => ({
+  const noteItems = notes.filter((note) => note.note_type === "source_note").map((note): KnowledgeItem => ({
     id: note.id,
     kind: "NOTE",
     category: "note",

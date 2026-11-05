@@ -13,6 +13,11 @@
   --accent-soft: 245 245 243;
   --accent-muted: 238 238 235;
   --accent-border: 210 210 206;
+  --note-color-red: #b91c1c;
+  --note-color-orange: #b45309;
+  --note-color-green: #15803d;
+  --note-color-blue: #1d4ed8;
+  --note-color-purple: #7e22ce;
   color: rgb(var(--ink));
   background: rgb(var(--canvas));
   font-synthesis: none;
@@ -38,7 +43,8 @@
   --color-indigo-600: #262626;
   --color-indigo-700: #171717;
   --shadow-soft: 0 12px 32px rgb(0 0 0 / .08);
-  --font-sans: var(--font-geist-sans), "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 :root.dark {
@@ -54,6 +60,11 @@
   --accent-soft: 43 43 41;
   --accent-muted: 52 52 49;
   --accent-border: 89 89 84;
+  --note-color-red: #fca5a5;
+  --note-color-orange: #fcd34d;
+  --note-color-green: #86efac;
+  --note-color-blue: #93c5fd;
+  --note-color-purple: #d8b4fe;
   color-scheme: dark;
 }
 
@@ -66,7 +77,7 @@ body {
   overflow-x: hidden;
   background: rgb(var(--canvas));
   color: rgb(var(--ink));
-  font-family: var(--font-geist-sans), "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  font-family: var(--font-sans);
   transition: background-color .18s ease, color .18s ease;
 }
 button, a { -webkit-tap-highlight-color: transparent; }
@@ -90,6 +101,321 @@ button:disabled { cursor: not-allowed; }
 .dark .bg-indigo-500 { background-color: rgb(235 235 230); color: rgb(32 32 31); }
 .dark .hover\:bg-indigo-700:hover { background-color: rgb(255 255 252); }
 *:focus-visible { outline: 2px solid #555; outline-offset: 2px; }
+
+/* Personal Notes editor styles are scoped because Tailwind Typography is not installed. */
+.notes-editor .notes-editor-content {
+  margin-inline: 0;
+  max-width: none;
+  min-height: 420px;
+  width: 100%;
+  color: rgb(var(--ink));
+  font-size: 15px;
+  font-synthesis: style;
+  line-height: 1.75;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+.notes-editor .ai-cursor-mode .notes-editor-content,
+.notes-editor .ai-cursor-mode .notes-editor-content :where(p, h1, h2, h3, h4, li, blockquote, pre, code, span, strong, em, mark, a, td, th) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M4 3.5V20l4.4-4.2 3.2 5.7 3-1.7-3.1-5.5 6-.8L4 3.5Z' fill='%232563eb' stroke='white' stroke-width='1.2' stroke-linejoin='round'/%3E%3C/svg%3E") 4 3, text;
+}
+.notes-editor .ai-cursor-mode .notes-editor-content::selection,
+.notes-editor .ai-cursor-mode .notes-editor-content :where(p, h1, h2, h3, h4, li, blockquote, pre, code, span, strong, em, mark, a, td, th)::selection {
+  background: #dceeff;
+  color: inherit;
+}
+.notes-editor .ai-cursor-mode .spreadsheet-node-view,
+.notes-editor .ai-cursor-mode .spreadsheet-node-view *,
+.notes-editor .ai-cursor-mode input,
+.notes-editor .ai-cursor-mode textarea,
+.notes-editor .ai-cursor-mode button,
+.notes-editor .ai-cursor-mode [contenteditable="false"],
+.notes-editor .ai-cursor-mode [contenteditable="false"] * {
+  cursor: revert;
+}
+.notes-editor:has(.notes-editor-content:focus-visible) {
+  border-color: rgb(var(--accent-border));
+  box-shadow: 0 0 0 3px rgb(var(--accent-border) / .35);
+}
+.notes-editor .notes-editor-content > * + * { margin-top: .85rem; }
+.notes-editor .notes-editor-content h1,
+.notes-editor .notes-editor-content h2,
+.notes-editor .notes-editor-content h3,
+.notes-editor .notes-editor-content h4 {
+  color: rgb(var(--ink));
+  font-weight: 700;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+}
+.notes-editor .notes-editor-content h1 { font-size: 2rem; margin: 1.75rem 0 .75rem; }
+.notes-editor .notes-editor-content h2 { font-size: 1.5rem; margin: 1.5rem 0 .65rem; }
+.notes-editor .notes-editor-content h3 { font-size: 1.25rem; margin: 1.25rem 0 .55rem; }
+.notes-editor .notes-editor-content h4 { font-size: 1.075rem; margin: 1rem 0 .5rem; }
+.notes-editor .notes-editor-content > p,
+.notes-editor .notes-editor-content > h1,
+.notes-editor .notes-editor-content > h2,
+.notes-editor .notes-editor-content > h3,
+.notes-editor .notes-editor-content > h4,
+.notes-editor .notes-editor-content > ul,
+.notes-editor .notes-editor-content > ol,
+.notes-editor .notes-editor-content > blockquote,
+.notes-editor .notes-editor-content > pre {
+  margin-left: 0;
+  margin-right: 0;
+  max-width: none;
+}
+.notes-editor .notes-editor-content em { font-style: italic; }
+.notes-editor .notes-editor-content mark {
+  border-radius: .15em;
+  box-decoration-break: clone;
+  color: inherit;
+  padding: .05em .12em;
+  -webkit-box-decoration-break: clone;
+}
+.notes-editor .notes-editor-content ul:not([data-type="taskList"]) {
+  list-style: disc;
+  padding-left: 1.5rem;
+}
+.notes-editor .notes-editor-content ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+.notes-editor .notes-editor-content li { margin: .25rem 0; }
+.notes-editor .notes-editor-content li > p { margin: 0; }
+.notes-editor .notes-editor-content ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.notes-editor .notes-editor-content ul[data-type="taskList"] li {
+  align-items: flex-start;
+  display: flex;
+  gap: .55rem;
+}
+.notes-editor .notes-editor-content ul[data-type="taskList"] li > label {
+  margin-top: .18rem;
+  user-select: none;
+}
+.notes-editor .notes-editor-content ul[data-type="taskList"] li > div { flex: 1; }
+.notes-editor .notes-editor-content pre {
+  background: rgb(var(--subtle));
+  border: 1px solid rgb(var(--line));
+  border-radius: .5rem;
+  font-family: var(--font-mono);
+  overflow-x: auto;
+  padding: .85rem 1rem;
+}
+.notes-editor .notes-editor-content blockquote {
+  border-left: 3px solid rgb(var(--accent-border));
+  color: rgb(var(--muted));
+  padding-left: 1rem;
+}
+.notes-editor .notes-editor-content .tableWrapper { overflow-x: auto; }
+.notes-editor .notes-editor-content table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  table-layout: fixed;
+  width: 100%;
+}
+.notes-editor .notes-editor-content th,
+.notes-editor .notes-editor-content td {
+  border: 1px solid rgb(var(--line));
+  min-width: 88px;
+  padding: .55rem .65rem;
+  position: relative;
+  vertical-align: top;
+}
+.notes-editor .notes-editor-content th {
+  background: rgb(var(--subtle));
+  font-weight: 650;
+  text-align: left;
+}
+.notes-editor .notes-editor-content .selectedCell::after {
+  background: rgb(var(--accent-border) / .22);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+.notes-editor .notes-editor-content .column-resize-handle {
+  background: rgb(var(--ink));
+  bottom: -1px;
+  pointer-events: none;
+  position: absolute;
+  right: -2px;
+  top: 0;
+  width: 3px;
+}
+.notes-editor .notes-editor-content.resize-cursor { cursor: col-resize; }
+.notes-editor .notes-editor-content p.is-editor-empty:first-child::before {
+  color: rgb(var(--faint));
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+.dark .notes-editor .notes-editor-content pre,
+.dark .notes-editor .notes-editor-content th { background: rgb(var(--elevated)); }
+
+/* Spreadsheet cells use semantic backgrounds; selection and formula references
+   are borders only so transient UI state never paints over workbook styling. */
+.spreadsheet-grid {
+  margin: 0;
+  table-layout: auto;
+}
+.notes-editor .notes-editor-content .spreadsheet-grid .spreadsheet-cell,
+.spreadsheet-workspace-panel .spreadsheet-grid .spreadsheet-cell {
+  background: rgb(255 255 255);
+  border-color: rgb(212 212 216);
+  padding: .375rem;
+  vertical-align: middle;
+}
+.spreadsheet-grid .spreadsheet-cell-historical {
+  background: rgb(254 249 195);
+}
+.spreadsheet-grid .spreadsheet-cell-assumption {
+  background: rgb(219 234 254);
+}
+.spreadsheet-grid .spreadsheet-cell-formula {
+  background: rgb(220 252 231);
+}
+.spreadsheet-grid .spreadsheet-cell-not-applicable {
+  background: rgb(228 228 231);
+  color: rgb(113 113 122);
+}
+.spreadsheet-grid .spreadsheet-cell-selected,
+.spreadsheet-grid .spreadsheet-cell-editing {
+  box-shadow: inset 0 0 0 2px rgb(37 99 235);
+  z-index: 2;
+}
+.spreadsheet-grid .spreadsheet-cell-editor {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.spreadsheet-grid .spreadsheet-cell-editing .spreadsheet-cell-editor:focus-visible {
+  outline: none;
+}
+.spreadsheet-grid .spreadsheet-cell-editor::selection {
+  background: rgb(37 99 235 / .22);
+  color: inherit;
+}
+.dark .spreadsheet-grid .spreadsheet-cell-editor::selection {
+  background: rgb(96 165 250 / .32);
+}
+.spreadsheet-sheet-tab {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive,
+.spreadsheet-sheet-tab[data-state="inactive"],
+.spreadsheet-sheet-tab[aria-selected="false"],
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive:hover,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive:focus,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive:focus-visible,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive:active {
+  background: #ffffff;
+  color: #000000;
+}
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--active,
+.spreadsheet-sheet-tab[data-state="active"],
+.spreadsheet-sheet-tab[aria-selected="true"],
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--active:hover,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--active:focus,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--active:focus-visible,
+.spreadsheet-sheet-tab.spreadsheet-sheet-tab--active:active {
+  background: #171717;
+  color: #ffffff;
+}
+.spreadsheet-sheet-tab-label {
+  color: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dark .spreadsheet-sheet-tab.spreadsheet-sheet-tab--inactive,
+.dark .spreadsheet-sheet-tab[data-state="inactive"],
+.dark .spreadsheet-sheet-tab[aria-selected="false"] {
+  background: #ffffff;
+  color: #000000;
+}
+.dark .spreadsheet-sheet-tab.spreadsheet-sheet-tab--active,
+.dark .spreadsheet-sheet-tab[data-state="active"],
+.dark .spreadsheet-sheet-tab[aria-selected="true"] {
+  background: #171717;
+  color: #ffffff;
+}
+.spreadsheet-grid .spreadsheet-cell-fill-target {
+  box-shadow: inset 0 0 0 2px rgb(96 165 250);
+}
+.spreadsheet-grid .spreadsheet-cell-formula-reference {
+  box-shadow: inset 0 0 0 2px var(--formula-reference-color);
+  z-index: 1;
+}
+.dark .spreadsheet-grid .spreadsheet-cell {
+  background: rgb(24 24 27);
+  border-color: rgb(63 63 70);
+}
+.dark .spreadsheet-grid .spreadsheet-cell-historical {
+  background: rgb(113 63 18 / .42);
+}
+.dark .spreadsheet-grid .spreadsheet-cell-assumption {
+  background: rgb(30 58 138 / .42);
+}
+.dark .spreadsheet-grid .spreadsheet-cell-formula {
+  background: rgb(20 83 45 / .42);
+}
+.dark .spreadsheet-grid .spreadsheet-cell-not-applicable {
+  background: rgb(63 63 70);
+  color: rgb(161 161 170);
+}
+
+/* Portaled above AppShell so editor workspace modes are viewport-relative. */
+.spreadsheet-workspace-layer {
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+}
+
+.spreadsheet-workspace-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgb(0 0 0 / 0.28);
+  backdrop-filter: blur(1px);
+}
+
+.spreadsheet-workspace-panel {
+  position: fixed;
+  inset-block: 0;
+  right: 0;
+  z-index: 1;
+  width: 100vw;
+  max-width: 100vw;
+  transition: width 160ms ease-out;
+}
+
+@media (min-width: 768px) {
+  .spreadsheet-workspace-panel[data-mode="drawer"] {
+    width: 65vw;
+  }
+}
+
+.spreadsheet-workspace-panel[data-mode="fullscreen"] {
+  width: 100vw;
+}
+
+@media (min-width: 768px) {
+  .notes-editor .notes-editor-content { min-height: 520px; }
+}
+
+@media (min-width: 1024px) {
+  .notes-editor .notes-editor-content {
+    min-height: max(600px, calc(100dvh - 250px));
+  }
+}
+
+@media print {
+  .notes-editor { border: 0; box-shadow: none; }
+  .notes-editor .notes-editor-content { min-height: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }

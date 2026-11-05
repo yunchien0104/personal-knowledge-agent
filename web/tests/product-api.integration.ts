@@ -261,6 +261,7 @@ test("invalid bodies, ids, and pagination return consistent client errors", asyn
   assert.equal((await postAsset(userA, { source_type: "unknown" })).status, 400);
   assert.equal((await appRequest("/api/assets?limit=101", {}, userA.jar)).status, 400);
   assert.equal((await appRequest("/api/notes?offset=-1", {}, userA.jar)).status, 400);
+  assert.equal((await appRequest("/api/notes?scope=personal", {}, userA.jar)).status, 400);
   assert.equal((await appRequest("/api/assets/not-a-uuid", {}, userA.jar)).status, 400);
   assert.equal((await appRequest("/api/notes/not-a-uuid", {}, userA.jar)).status, 400);
 });
@@ -274,7 +275,7 @@ test("manual Threads URL submission canonicalizes, enqueues once, and rejects du
     asset: Asset & { source_url: string; source_external_id: string };
     job: { status: string };
   }>;
-  assert.equal(firstPayload.data.asset.source_url, `https://www.threads.net/t/${postId}`);
+  assert.equal(firstPayload.data.asset.source_url, `https://www.threads.net/@account/post/${postId}`);
   assert.equal(firstPayload.data.asset.source_external_id, postId);
   assert.equal(firstPayload.data.job.status, "queued");
   createdAssets.push({ id: firstPayload.data.asset.id, owner: "a" });
@@ -337,4 +338,9 @@ test("RLS hides assets and notes across accounts", async () => {
   assert.equal(notes.status, 200);
   assert.deepEqual(payload.data.map((note) => note.id), [noteA.id]);
   assert(payload.data.every((note) => note.user_id === userA.id));
+
+  const knowledgeNotes = await appRequest("/api/notes?scope=knowledge", {}, userA.jar);
+  const knowledgePayload = await knowledgeNotes.json() as ApiEnvelope<Note[]>;
+  assert.equal(knowledgeNotes.status, 200);
+  assert.deepEqual(knowledgePayload.data, [], "manual notes must not enter Knowledge-scoped lists");
 });

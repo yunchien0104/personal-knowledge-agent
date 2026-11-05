@@ -31,3 +31,75 @@ services:
         sync: false
       - key: RESEARCH_MODEL
         sync: false
+      - key: R2B_R2C_API_BASE_URL
+        sync: false
+      - key: R2B_R2C_API_KEY
+        sync: false
+      - key: R2B_R2C_PROVIDER
+        sync: false
+      - key: R2B_R2C_SERVICE_TIER
+        sync: false
+      - key: R2B_R2C_PROMPT_CACHE_MODE
+        sync: false
+      - key: R2B_MODEL
+        sync: false
+      - key: R2C_MODEL
+        sync: false
+      - key: R2B_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: R2C_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: R2B_TIMEOUT_SECONDS
+        sync: false
+      - key: R2C_TIMEOUT_SECONDS
+        sync: false
+      - key: R2B_REASONING_EFFORT
+        sync: false
+      - key: R2C_REASONING_EFFORT
+        sync: false
+      - key: R2B_PRICING_VERIFIED
+        sync: false
+      - key: R2C_PRICING_VERIFIED
+        sync: false
+      - key: R2B_INPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2B_OUTPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2C_INPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: R2C_OUTPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: DEEP_FINAL_PRICING_MODEL
+        sync: false
+      - key: DEEP_FINAL_PRICING_VERIFIED
+        sync: false
+      - key: DEEP_FINAL_INPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: DEEP_FINAL_OUTPUT_COST_PER_MILLION_USD
+        sync: false
+      - key: DEEP_FINAL_SERVICE_TIER
+        sync: false
+      - key: DEEP_FINAL_PROMPT_CACHE_MODE
+        sync: false
+      - key: DEEP_FINAL_REASONING_EFFORT
+        sync: false
+      - key: DEEP_FINAL_TIMEOUT_SECONDS
+        sync: false
+      - key: DEEP_FINAL_MAX_CLAIMS
+        sync: false
+      - key: DEEP_R2A_MAX_INPUT_TOKENS
+        sync: false
+      - key: DEEP_R2A_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: DEEP_R2E_MAX_INPUT_TOKENS
+        sync: false
+      - key: DEEP_R2E_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: DEEP_R2F_REPAIR_MAX_INPUT_TOKENS
+        sync: false
+      - key: DEEP_R2F_REPAIR_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: DEEP_R2F_VERIFY_MAX_INPUT_TOKENS
+        sync: false
+      - key: DEEP_R2F_VERIFY_MAX_OUTPUT_TOKENS
+        sync: false

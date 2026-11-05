@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+  "noteType": "source_note",
+  "title": "Harness Engineering 基礎",
+  "body": "Synthetic knowledge text describing a fictional agent harness.",
+  "topics": [{ "id": "dddddddd-dddd-4ddd-8ddd-ddddddddddd1", "name": "AI 系統" }],
+  "citationIds": ["ffffffff-ffff-4fff-8fff-fffffffffff1"]
+}

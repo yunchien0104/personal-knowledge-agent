@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "sourceKind": "reels",
+  "sourceUrl": "https://www.instagram.com/reel/SYNTHETIC01/",
+  "externalId": "SYNTHETIC01",
+  "caption": "Synthetic Reel caption for import tests.",
+  "transcript": [{ "startSeconds": 0, "endSeconds": 5, "text": "Synthetic transcript segment." }],
+  "keyframes": [{ "mediaId": "frame-001", "timestampSeconds": 2, "description": "Synthetic spreadsheet displayed on screen." }]
+}

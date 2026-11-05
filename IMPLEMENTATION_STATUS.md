@@ -1,5 +1,177 @@
 # Personal Brain Implementation Status
 
+## Deep Research R2C ceiling and evidence-sufficiency repair (2026-11-05)
+
+- Raised only R2C's default completion ceiling from 3584 to 8192; R2B remains
+  8192 and R2A/E/F, model, tier, reasoning, timeout, repair, and Ledger behavior
+  are unchanged.
+- R2B rejects all-optional evidence plans. At least one core requirement must be
+  required; supplemental requirements may remain optional.
+- R2C and R2D now require all required coverage to be satisfied/pass, allow
+  genuinely optional gaps, and still reject critical gaps and material
+  contradictions. R2D rechecks required coverage after checkpoint resume.
+- Conservative three-PDF worst case is now `$0.8171` for one round/six claims,
+  `$0.9947` for two rounds/one claim, and fail-closed at `$1.0575` / `$1.1517`
+  for two rounds with three/six claims under the unchanged `$1.00` run cap.
+- PASS: 67 focused R2B/R2C/R2D tests; complete non-provider Worker 269 passed,
+  1 skipped, 9 subtests passed; clean disposable Local Supabase 38/38 migration
+  replay and 23 pgTAP files / 632 assertions. No paid call or hosted access.
+
+## Notes Editor + AI Cursor integration (2026-11-05)
+
+- Integrated the isolated Notes workspace onto the committed Deep Research branch without replacing Research, Auth, shared API, Supabase, or Worker implementations.
+- Added the Tiptap editor, spreadsheet workbooks/formulas, PDF export, autosave/OCC, inline AI cursor/popover, and explicit OpenAI/Gemini provider adapters.
+- Added the Personal Notes baseline and two additive reference-separation migrations for review only; no hosted or production migration was executed.
+- PASS: TypeScript, ESLint, production build, 70 Notes tests, 34 existing Web unit regressions, 18 local Auth/API/PDF integration tests, and 261 final-HEAD offline Worker tests plus 9 subtests (1 skipped).
+- BLOCKED: Playwright reaches the production test server but macOS sandbox policy denies Chromium Mach Port registration before assertions. Real AI providers and hosted Supabase were not called.
+- Next: review the three additive Notes migrations, then replay them and pgTAP in a disposable database before any staging or production migration decision.
+
+## Deep Research per-run budget cap (2026-11-05)
+
+- Raised only the Deep Research per-run hard cap from US$0.50 to US$1.00.
+  Daily US$2, monthly US$10, the US$0.50/day automatic-opportunity budget,
+  final-stage protection, atomic reservations, lease fencing, and publication
+  safety are unchanged.
+- Additive migration `20261104171531_increase_deep_research_run_budget_cap.sql`
+  updates the account-setting default/constraint, upgrades rows still using the
+  former product default, and replaces the current start, reservation, and
+  final-reserve RPC definitions. Explicit lower account limits remain lower.
+- Web and Worker request contracts now reject `maxCostUsd > 1.00`; no per-run
+  environment override exists, so the database setting/RPC remains the
+  authoritative runtime policy.
+- PASS: 262 non-paid Worker tests, 1 skipped, and 9 subtests; focused Web 7/7,
+  TypeScript, and ESLint.
+- PASS: disposable Supabase Local stacks. Clean 38/38 migration replay,
+  23 pgTAP files / 632 assertions, public-schema lint with zero errors, and a
+  separate upgrade-path check proving `0.5000 -> 1.0000` while an explicit
+  `0.4000` account limit remains unchanged. No hosted/production access or paid
+  Provider call occurred.
+
+## Full Deep Research Real Provider E2E (2026-11-04)
+
+- PASS on `feat/deep-research-llm-integration`: Internal-only GPT-6.1 Sol
+  completed R2B → R1 → R2C → R2D → R2A → R2E → R2F gate → Publication.
+- Removed the controlled runner's fixed `$0.0759` R2B guard. Production
+  payload-aware preflight reserved `$0.0787`; R2C reserved `$0.1452`; the
+  configured three-claim finalization envelope remained `$0.2094`.
+- Added fail-closed Provider-required mode so R2B/R2C fallback cannot be
+  reported as a successful real-provider run.
+- Fixed the real R2A contract mismatch by communicating the already-enforced
+  Deep total-claim limit to the model. The optional limit is absent from Legacy
+  calls, preserving Legacy prompt and payload behavior.
+- Successful run actual cost: `$0.0615` across 6 calls; `$0` reserved and `$0`
+  uncertain at completion. The isolated account ledger, including the preceding
+  contract-failure run, reconciled to `$0.1207` actual.
+- Result: 3 claims, 3/3 R2E supported, R2F gate passed without repair, 4
+  citations from 3 internal assets, and one report
+  `ee254517-e097-45da-acfe-93d3059c3bbc`.
+- PASS: Worker 261 passed, 1 skipped, 9 subtests; isolated Local PostgreSQL
+  37/37 migrations; pgTAP 628/628; DB lint 0 errors; Web 34/34; TypeScript and
+  ESLint.
+- Canonical evidence: `docs/DEEP_RESEARCH_E2E_READINESS.md`.
+
+## Deep Research R2B/R2C LLM integration (2026-11-04)
+
+- Current branch: `feat/deep-research-llm-integration` from baseline `00d3c15`.
+- Execution-layer P0 repair now admits a paid boundary only after this worker
+  successfully transitions a reserved operation to running. Existing running
+  operations require reconciliation; completed/failed/cancelled/abandoned/
+  outcome-unknown operations cannot silently re-enter a provider call.
+- Structured transport classifies length exhaustion, refusal, content filter,
+  empty content, invalid JSON, timeout, and unknown outcomes before JSON parsing,
+  preserving usage, reasoning tokens, request ID, finish reason, and priced cost.
+- Bounded repair is now error-directed: one repair for contract validation only;
+  no automatic retry for length/refusal/filter/timeout/unknown outcomes.
+- R2B uses a single four-item typed query boundary without silent slicing. R2C
+  blocks above 80 evidence records instead of truncating. R2B now reserves 8192
+  completion tokens per initial/repair call after a real length-exhaustion
+  diagnostic; R2C is now also 8192 after its own real length-exhaustion
+  diagnostic. Both ceilings include reasoning tokens.
+- Production R2B/R2C adapters now use the shared structured transport, strict
+  module-owned schemas, bounded repair, authoritative usage metadata, and
+  verified per-model pricing; the Deep Worker injects them without changing
+  Legacy Planner/R1/R2A/R2E/R2F behavior.
+- R2B/R2C reserve worst-case cost atomically before provider calls and settle
+  actual usage afterward. Unknown provider outcomes retain the full reservation
+  as uncertain. Additive database enforcement covers $1.00/run, $2/day, and
+  $10/month with the existing protected final-stage reserve.
+- Three-PDF conservative preflight is $0.1921 for R2B,
+  $0.3214/$0.3346/$0.3669 for R2C rounds, and $0.3036 for six-claim
+  finalization. One round/six claims fits at $0.8171; two rounds/six claims
+  fail closed at $1.1517 under the unchanged $1.00 run cap.
+- PASS (FREE): 83 focused R2B/R2C/Coordinator/Finalization tests; complete
+  non-provider Worker 263 passed, 1 skipped, 9 subtests; clean 38-migration
+  Local Supabase replay and all 23 pgTAP files / 632 assertions.
+- PASS (MOCK): 70 focused execution-layer tests; 211 broad Worker tests and 9
+  subtests with sandbox-blocked HTTP/provider script modules excluded.
+- PASS (LOCAL_DB): clean 33-migration replay, 19 pgTAP files and 508 assertions,
+  including 15 dedicated R2B/R2C ledger assertions; DB lint has zero errors.
+- BLOCKED (REAL_PROVIDER): one bounded request each exposed an R2B untyped-map
+  schema rejection and an R2C numeric-bound validation failure. Both schemas were
+  repaired offline, but the full $0.0993 test cap remains conservatively uncertain,
+  so neither request was retried and authoritative usage/cost is unavailable.
+- R2A/R2E/R2F Ledger/checkpoint integration is now implemented and Local-DB
+  verified; controlled Real Provider finalization remains unverified.
+- Remaining crash-recovery blocker: reconcile the ambiguous interval after a
+  provider response but before output/cost metadata becomes durable. It is now
+  fail-closed and cannot produce a duplicate call.
+- Canonical detail: `docs/DEEP_RESEARCH_LLM_INTEGRATION.md`.
+
+## Deep Research infrastructure repair (2026-11-04)
+
+- Current branch: `fix/deep-research-infrastructure` from baseline `7c0a4ea`.
+- Restored the two authentic missing historical migrations and added additive
+  durability/state repair migrations.
+- Implemented abandoned-reservation lease recovery, original-period/idempotent
+  settlement, explicit release accounting, durable deadlines/query limits,
+  truthful partial/timeout states, publication replay, and authenticated Deep/Web
+  read mapping without changing Legacy, R1, R2A, R2E, or R2F.
+- PASS: 157 offline Worker tests; 34 offline Web tests; TypeScript; ESLint.
+- RESOLVED by the local database verification below: clean migration replay,
+  pgTAP, RLS/RPC checks, and real two-session budget tests now pass.
+- BLOCKED by environment: eight Worker HTTP tests cannot bind loopback; Next build
+  cannot resolve Google Fonts. These failures occurred before product assertions
+  or a completed production bundle.
+- No hosted resource, provider, deployment, push, merge, or paid call was used.
+- Canonical current detail: `docs/DEEP_RESEARCH_INFRA_REPAIR.md` and
+  `docs/DEEP_RESEARCH_IMPLEMENTATION.md`. Older sections below are historical and
+  do not override the current verification matrix.
+
+## Deep Research real local database verification (2026-11-04)
+
+- PASS: clean isolated replay of all 32 migrations on PostgreSQL 15.19.
+- PASS: all 18 pgTAP files, 490/490 assertions, including 93 Deep-specific checks.
+- PASS: actual two-session reservation and duplicate-settlement serialization.
+- PASS: real database container restart retained deadline and checkpoint state;
+  lease generation 2 recovered both while stale generation 1 was fenced.
+- Fixed a generic Job trigger that overwrote `partial_ready` with `failed`; the
+  additive follow-up migration preserves Deep terminal states without changing
+  Legacy status mapping.
+- Fixed concurrency tests to use the database bridge address instead of a hard-coded
+  host port, preventing accidental connection to another local stack.
+- PASS: DB lint with zero errors (five warnings across four functions), Worker
+  157/157, Web Research 7/7, TypeScript, and ESLint.
+- Detailed evidence: `docs/DEEP_RESEARCH_LOCAL_DB_VERIFICATION.md`.
+
+## Deep Research R2B/R2C/R2D implementation (2026-11-03)
+
+- Phase 1 Contracts & Compatibility is complete on local branch
+  `feat/deep-research-r2b-r2d`; see `docs/DEEP_RESEARCH_IMPLEMENTATION.md`.
+- Phase 2 R2B is complete locally: bounded Context Pack, strict Deep Planner,
+  quality/repair/fallback path, and fenced versioned plan persistence.
+- Phase 3 R2C is complete locally: deterministic evidence pre-check, lineage and
+  independence handling, full Requirement Coverage, conflicts/gaps, conservative
+  fallback, telemetry, and fenced assessment/gap persistence.
+- Phase 4 is in progress: deterministic R2D action selection, internal-first
+  ordering, query deduplication, coverage-based information gain, and truthful
+  stop decisions are implemented; durable coordinator/budget/resume remain.
+- Added strict Deep Research contracts, separate Deep/Legacy routing, a
+  disabled-by-default feature flag, and an additive Local-validated migration.
+- PASS: 149 offline Worker regressions, 4 Web Research tests, TypeScript,
+  ESLint, and transactional Local migration apply/rollback.
+- No Cloud, production, hosted database, Storage, Worker, deployment, or paid
+  model operation was performed.
+
 ## 2026-10-30 Ask Knowledge Base integration
 
 - PASS locally: `/ask` now reuses the authenticated Research pipeline instead of
@@ -922,6 +1094,95 @@
 - The E2E also exposed and fixed a PDF cleanup clock-skew edge case between the
   host and local database. No Cloud migration, Production deploy, or paid
   external provider call was performed.
+
+### Deep Research R2B–R2F continuation (local implementation, 2026-11-04)
+
+- Completed durable R2D coordination on `feat/deep-research-r2b-r2d`: cumulative
+  multi-round Evidence, checkpoint CAS, operation idempotency, atomic account/run
+  budgets, append-only ledger, lease fencing, crash/resume, and conservative
+  uncertain paid-operation handling. Existing Legacy Research remains unchanged.
+- Added Web `disabled`/`suggest`/`auto` enforcement, run-scoped fetched Web
+  Evidence, source supersede/delete handling, verified partial results, and a
+  separate mixed internal/Web citation publication path behind the existing
+  all-claims-supported R2E/R2F gate.
+- PASS locally: Worker offline 161/161; Deep durability pgTAP 23/23; Web lifecycle/
+  publication pgTAP 27/27; Web offline 31/31; TypeScript, ESLint, Next production
+  build, migration transactional apply/rollback, Golden fixture/scorer wiring,
+  Python compilation, and `git diff --check`.
+- Local commits: `e93590a` (durable coordinator) and `1d1a015` (Web Evidence and
+  publication). No push, merge, deployment, hosted Supabase access, production
+  secret access, or paid provider call was performed.
+- Next action: isolated Staging/provider verification only—full historical pgTAP,
+  true multi-session budget contention, browser E2E, provider quality, redirect/
+  DNS enforcement, corpus/load latency, and capped real cost measurements.
+
+### Deep Research R2B durable validation diagnostics (local, 2026-11-04)
+
+- Added fenced, append-only R2B attempt diagnostics with owner-scoped forced RLS;
+  no Prompt, Evidence, secret, or raw model output is persisted or returned.
+- Initial, repair, provider-terminal, backend-contract, quality-gate, accepted,
+  and fallback outcomes now have distinct safe codes, paths, rules, and usage.
+- Aligned the Prompt with exact objective preservation, dynamic total query limits,
+  Web authorization, and clarification gate behavior. Duplicate/unknown dependency
+  keys are rejected instead of overwritten or discarded; comparison quality uses
+  the authoritative objective.
+- PASS: Worker offline 215 tests plus 9 subtests; focused 67/67; clean 34-migration
+  Local replay; complete pgTAP 20 files / 540 assertions; diagnostics 32/32;
+  relevant replay/Ledger/concurrency 78/78; public schema lint 0 errors.
+- No paid Provider call, Hosted Supabase access, push, merge, or deploy. Historical
+  rejected raw outputs were not durable, so their exact validation rules remain
+  UNKNOWN. Next real verification requires a new explicit budget authorization.
+
+### Deep Research R2C diagnostics and quality semantics (local, 2026-11-04)
+
+- Extended the existing append-only validation diagnostics protocol to R2C while
+  preserving R2B payload compatibility, owner-scoped forced RLS, service-role-only
+  writes, lease-generation fencing, attempt replay checks, and Ledger behavior.
+- R2C initial, repair, Provider terminal, DTO/contract rejection, accepted, and
+  fallback outcomes now persist safe per-attempt metadata, usage, cost, and latency;
+  Prompt, raw Evidence, secrets, and raw model output are not stored.
+- Aligned Contract, Prompt, and R2D: `sufficient` means evidence can answer the
+  question, including a supported negative answer, rather than proving a claim.
+  It requires satisfied requirements, passing sufficiency checks, and no critical
+  gap; only unresolved material contradictions block the quality target.
+- PASS: six offline research-quality cases; focused R2B/R2C/R2D 75/75; Research
+  offline 100/100; full non-provider Worker 232 tests plus 9 subtests; clean 35-
+  migration Local replay; focused pgTAP 138/138, including R2C diagnostics 28/28.
+- No paid call or hosted/production access occurred. Paid R2A/R2E/R2F Ledger and
+  checkpoint integration remains a blocker for unrestricted full Deep E2E.
+
+### Deep paid finalization integration (local, 2026-11-04)
+
+- R2A synthesis, per-claim R2E, one R2F repair, and per-claim reverification now
+  use immutable Deep operation identities, atomic reserve-before-call, exact
+  settlement/release/uncertain accounting, and lease-generation fencing.
+- Accepted structured outputs and usage are append-only durable artifacts under
+  forced Owner RLS. Crash/restart reuses only completed artifacts; ambiguous
+  running operations require reconciliation and are never automatically replayed.
+- Durable checkpoints cover synthesizing, verifying, repairing, and publishing;
+  the strict citation/verification gate and idempotent publication path remain
+  unchanged. Legacy Research keeps its prior execution path.
+- PASS (LOCAL_DB): 36 migrations and all 22 pgTAP files / 608 assertions on a new
+  disposable stack, including 40 dedicated finalization assertions.
+- BLOCKED (REAL_PROVIDER): no paid R2A/E/F call was authorized or run. A controlled
+  Full Deep E2E requires fresh authorization and sufficient capacity for the
+  $0.3036 default worst-case final envelope within the current $1.00 run cap.
+- Canonical detail: `docs/DEEP_RESEARCH_FINALIZATION.md`.
+
+### Full Deep E2E readiness (local, 2026-11-04)
+
+- PASS: Internal-only R2B → R1 → R2C → R2D → R2A → R2E → R2F → publication
+  ran against disposable Supabase Local with deterministic Mock Providers.
+- PASS: dynamic, lease-fenced run reserve protects the actual finalizer envelope
+  before non-final paid calls; crash/replay/publication safety regressions pass.
+- PASS: 256 non-paid Worker tests plus 9 subtests; 37 clean migrations; 23 pgTAP
+  files / 628 assertions; public-schema lint has zero errors.
+- PASS: configured budget feasibility remains fail-closed for the current
+  three-PDF payload: one round/six claims is $0.8171 and two rounds/one claim is
+  $0.9947; two rounds with three/six claims exceed the $1.00 run cap at
+  $1.0575/$1.1517. Cross-run daily/monthly
+  aggregate holds remain a separate durability limitation.
+- Canonical detail: `docs/DEEP_RESEARCH_E2E_READINESS.md`.
 
 ### Hosted Instagram Reel URL-only E2E (2026-10-30)
 
