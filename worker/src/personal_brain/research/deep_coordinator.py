@@ -765,7 +765,9 @@ class DeepResearchCoordinator:
                     synthesis_rows,
                 )
                 accepted = self.finalizer.accept_synthesis_call(
-                    call, publication_rows
+                    call,
+                    synthesis_rows,
+                    original_evidence=publication_rows,
                 )
                 return accepted.model_dump(), call
 
@@ -832,7 +834,11 @@ class DeepResearchCoordinator:
                         results,
                     )
                     accepted = self.finalizer.accept_repair_call(
-                        call, draft, results, publication_rows
+                        call,
+                        draft,
+                        results,
+                        synthesis_rows,
+                        original_evidence=publication_rows,
                     )
                     return accepted.model_dump(), call
 

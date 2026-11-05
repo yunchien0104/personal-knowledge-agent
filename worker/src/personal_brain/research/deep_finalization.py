@@ -18,7 +18,10 @@ from personal_brain.research.contracts import (
     VerificationResult,
 )
 from personal_brain.research.deep_llm import VerifiedPricing
-from personal_brain.research.evidence import validate_atomic_citations
+from personal_brain.research.evidence import (
+    normalize_atomic_citation_quotes,
+    validate_atomic_citations,
+)
 from personal_brain.research.gate import GateDecision, evaluate_gate
 from personal_brain.research.llm import OpenAICompatibleResearchModel
 from personal_brain.research.orchestrator import ResearchExecution, ResearchOrchestrator
@@ -739,10 +742,20 @@ class DeepFinalizationEngine:
         self,
         call: StructuredLLMResult,
         evidence: list[Mapping[str, Any]],
+        *,
+        original_evidence: list[Mapping[str, Any]] | None = None,
     ) -> AtomicResearchDraft:
         try:
             draft = self.validate_draft(call.output)
-            self.validate_citations(draft, evidence)
+            draft = normalize_atomic_citation_quotes(
+                draft, evidence, original_evidence
+            )
+            self.validate_citations(
+                draft,
+                original_evidence
+                if original_evidence is not None
+                else evidence,
+            )
             return draft
         except (ValueError, KeyError) as error:
             raise FinalizationContractValidationError(
@@ -790,11 +803,21 @@ class DeepFinalizationEngine:
         original: AtomicResearchDraft,
         results: list[VerificationResult],
         evidence: list[Mapping[str, Any]],
+        *,
+        original_evidence: list[Mapping[str, Any]] | None = None,
     ) -> AtomicResearchDraft:
         try:
             repaired = self.validate_draft(call.output)
+            repaired = normalize_atomic_citation_quotes(
+                repaired, evidence, original_evidence
+            )
             self.validate_repair(original, repaired, results)
-            self.validate_citations(repaired, evidence)
+            self.validate_citations(
+                repaired,
+                original_evidence
+                if original_evidence is not None
+                else evidence,
+            )
             return repaired
         except (ValueError, KeyError) as error:
             raise FinalizationContractValidationError(

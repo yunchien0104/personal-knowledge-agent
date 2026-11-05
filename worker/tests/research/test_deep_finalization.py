@@ -455,6 +455,44 @@ def test_r2a_shaped_quotes_are_still_checked_against_original_evidence() -> None
         engine.accept_synthesis_call(invalid, [original])
 
 
+def test_r2a_uniquely_normalizes_quote_then_r2e_uses_exact_shaped_text() -> None:
+    evidence_id = str(uuid4())
+    exact_quote = "CPO  將於\n2028 年進入量產。"
+    shaped = {
+        "id": evidence_id,
+        "excerpt": f"保留脈絡。{exact_quote}風險仍存在。",
+        "locator": {"kind": "pdf_page", "page_number": 2},
+    }
+    original = {
+        **shaped,
+        "excerpt": f"原始前文。{exact_quote}風險仍存在。原始後文。",
+    }
+    model_quote = "CPO 將於 2028 年進入量產。"
+    engine, _, verifier_client = finalizer(draft(evidence_id, model_quote))
+    call = StructuredLLMResult(
+        output=draft(evidence_id, model_quote),
+        provider="fixture-provider",
+        model="fixture-model",
+        usage=LLMUsage(100, 50, 150),
+        latency_ms=1,
+        request_id="request-normalized-citation",
+        service_tier="default",
+        finish_reason="stop",
+    )
+
+    accepted = engine.accept_synthesis_call(
+        call, [shaped], original_evidence=[original]
+    )
+    claim = engine.claims(accepted)[0]
+    assert claim.citations[0].quote == exact_quote
+
+    result, _ = engine.verification_call(claim, [shaped], reverify=False)
+
+    assert result.verdict == "supported"
+    sent = verifier_client.requests[0]["user_input"]["evidence"]
+    assert exact_quote in sent[0]["excerpt"]
+
+
 def test_r2e_uses_quote_centered_traceable_context_within_its_guard() -> None:
     evidence_id = str(uuid4())
     quote = "the exact supported statement"

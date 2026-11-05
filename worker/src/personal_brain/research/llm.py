@@ -94,10 +94,15 @@ Rules:
 10. Do not hide additional factual claims in the summary.
 11. For insufficient evidence, explicitly state the limitation rather
     than manufacturing findings.
+12. Every citation quote must be one continuous, verbatim substring copied
+    from the cited evidence excerpt. Preserve its characters, punctuation,
+    and whitespace; do not paraphrase, normalize, join separated passages,
+    or add ellipses. When an excerpt says source text was omitted, cite only
+    text that is visibly present in that excerpt.
 """
         if max_claims is not None:
             prompt += (
-                "\n12. Across the entire draft, produce no more than "
+                "\n13. Across the entire draft, produce no more than "
                 f"{max_claims} total claims across all findings. This is a hard "
                 "execution limit; combine related observations without hiding "
                 "independently verifiable assertions.\n"
