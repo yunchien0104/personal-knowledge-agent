@@ -50,6 +50,48 @@ def configured_reasoning_client():
     )
 
 
+def test_transport_accepts_audited_finalization_headroom():
+    value = response()
+    captured = {}
+
+    def fake_urlopen(request, **kwargs):
+        captured.update(json.loads(request.data))
+        captured["timeout"] = kwargs["timeout"]
+        return FakeResponse(value)
+
+    audited = StructuredLLMClient(
+        "https://api.openai.com/v1", "secret", "gpt-6.1-sol",
+        max_output_tokens=16_384, timeout_seconds=180,
+        provider="openai", reasoning_effort="low", service_tier="default",
+    )
+    with patch("personal_brain.llm_client.urlopen", side_effect=fake_urlopen):
+        audited.generate_with_metadata("system", {}, {"type": "object"})
+
+    assert captured["max_completion_tokens"] == 16_384
+    assert captured["timeout"] == 180
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"max_output_tokens": 32_769}, "max_output_tokens"),
+        ({"timeout_seconds": 301}, "timeout_seconds"),
+    ],
+)
+def test_transport_rejects_values_beyond_audited_bounds(overrides, message):
+    values = {
+        "max_output_tokens": 16_384,
+        "timeout_seconds": 180,
+    }
+    values.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        StructuredLLMClient(
+            "https://api.openai.com/v1", "secret", "gpt-6.1-sol",
+            provider="openai", reasoning_effort="low", service_tier="default",
+            **values,
+        )
+
+
 def test_generate_with_metadata_and_legacy_generate_are_compatible():
     with patch("personal_brain.llm_client.urlopen", return_value=FakeResponse(response())):
         result = client().generate_with_metadata("system", {"input": True}, {"type": "object"})

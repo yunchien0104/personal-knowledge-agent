@@ -1552,7 +1552,7 @@ class DeepResearchCoordinator:
                             publish = (
                                 self.gateway.publish_deep_research_draft
                                 if any(item.origin == "web" for item in records)
-                                else self.gateway.publish_research_draft
+                                else self.gateway.publish_internal_deep_research_draft
                             )
                             published = publish(
                                 job, worker_id, model_provider=self.finalizer.provider,

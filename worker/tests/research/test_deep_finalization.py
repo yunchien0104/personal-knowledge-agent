@@ -111,6 +111,7 @@ class FinalizationGateway(FakeGateway):
         self.crash_after_publication_once = False
         self.crash_before_publishing_checkpoint_once = False
         self.publication_calls = 0
+        self.internal_publication_calls = 0
         self.final_reserve_requests: list[str] = []
         self.payload_manifests: dict[str, dict] = {}
 
@@ -219,6 +220,10 @@ class FinalizationGateway(FakeGateway):
         return {"noteId": publication["noteId"]}
 
     publish_deep_research_draft = publish_research_draft
+
+    def publish_internal_deep_research_draft(self, *args, **kwargs):
+        self.internal_publication_calls += 1
+        return self.publish_research_draft(*args, **kwargs)
 
     def commit_deep_research_checkpoint(self, claimed, worker, **kwargs):
         if (
@@ -592,7 +597,7 @@ def test_legacy_synthesis_payload_is_unchanged_without_deep_limit() -> None:
 
 @pytest.mark.parametrize(
     ("claim_count", "expected"),
-    [(1, "0.3066"), (3, "0.3694"), (6, "0.4636")],
+    [(1, "0.6498"), (3, "0.8458"), (6, "1.1398")],
 )
 def test_default_finalization_worst_case_by_claim_count(
     claim_count: int, expected: str
@@ -603,10 +608,41 @@ def test_default_finalization_worst_case_by_claim_count(
             LLMClaimJudge(QueueClient([])),
         ),
         VerifiedPricing(Decimal("2"), Decimal("10")),
-        FinalizationLimits(6, 48000, 2560, 4000, 768, 64000, 2560, 4000, 768),
+        FinalizationLimits(
+            6, 48000, 16384, 4000, 4096, 64000, 16384, 4000, 4096
+        ),
     )
 
     assert engine.maximum_cost_usd(claim_count) == Decimal(expected)
+
+
+def test_default_finalization_clients_leave_reasoning_and_visible_output_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits = FinalizationLimits.from_environment()
+
+    assert limits.synthesis_output_tokens == 16384
+    assert limits.repair_output_tokens == 16384
+    assert limits.verification_output_tokens == 4096
+    assert limits.reverification_output_tokens == 4096
+
+    monkeypatch.setenv("DEEP_FINAL_PRICING_MODEL", "fixture-model")
+    monkeypatch.setenv("DEEP_FINAL_PRICING_VERIFIED", "true")
+    monkeypatch.setenv("DEEP_FINAL_INPUT_COST_PER_MILLION_USD", "2")
+    monkeypatch.setenv("DEEP_FINAL_OUTPUT_COST_PER_MILLION_USD", "10")
+    engine = DeepFinalizationEngine.from_legacy_orchestrator(
+        ResearchOrchestrator(
+            OpenAICompatibleResearchModel(QueueClient([])),
+            LLMClaimJudge(QueueClient([])),
+        )
+    )
+
+    assert engine.generator.client.max_output_tokens == 16384
+    assert engine.generator.repair_client.max_output_tokens == 16384
+    assert engine.judge.client.max_output_tokens == 4096
+    assert engine.generator.client.timeout_seconds == 180
+    assert engine.generator.repair_client.timeout_seconds == 180
+    assert engine.judge.client.timeout_seconds == 180
 
 
 def test_offline_full_pipeline_from_r2b_through_idempotent_publication() -> None:
@@ -635,6 +671,7 @@ def test_offline_full_pipeline_from_r2b_through_idempotent_publication() -> None
     assert generator_client.calls == 1
     assert verifier_client.calls == 1
     assert len(gateway.publications) == 1
+    assert gateway.internal_publication_calls == 1
     assert gateway.payload_manifests["r2a_synthesis"][
         "schemaVersion"
     ] == "r2a-payload-manifest-v1"

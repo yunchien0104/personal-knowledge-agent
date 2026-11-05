@@ -42,6 +42,18 @@ from personal_brain.supabase_gateway import GatewayError
 SOURCE_RUN_DEFAULT = UUID("e7789eba-5d8e-454e-ac6e-252a65077e4f")
 REQUIRED_MODEL = "gpt-6.1-sol"
 REQUIRED_API_HOST = "api.openai.com"
+REQUIRED_FINALIZATION_SETTINGS = {
+    "DEEP_FINAL_TIMEOUT_SECONDS": 180,
+    "DEEP_FINAL_MAX_CLAIMS": 3,
+    "DEEP_R2A_MAX_INPUT_TOKENS": 48_000,
+    "DEEP_R2A_MAX_OUTPUT_TOKENS": 16_384,
+    "DEEP_R2E_MAX_INPUT_TOKENS": 4_000,
+    "DEEP_R2E_MAX_OUTPUT_TOKENS": 4_096,
+    "DEEP_R2F_REPAIR_MAX_INPUT_TOKENS": 64_000,
+    "DEEP_R2F_REPAIR_MAX_OUTPUT_TOKENS": 16_384,
+    "DEEP_R2F_VERIFY_MAX_INPUT_TOKENS": 4_000,
+    "DEEP_R2F_VERIFY_MAX_OUTPUT_TOKENS": 4_096,
+}
 
 
 class ForbiddenEarlierStage:
@@ -95,8 +107,22 @@ def _assert_local_policy(*, paid: bool) -> None:
         raise RuntimeError("Only the approved Standard service tier is allowed")
     if os.getenv("DEEP_FINAL_REASONING_EFFORT") != "low":
         raise RuntimeError("Only the approved low reasoning effort is allowed")
-    if int(os.getenv("DEEP_FINAL_MAX_CLAIMS", "0")) != 3:
-        raise RuntimeError("This replay is restricted to at most three claims")
+    for name, expected in REQUIRED_FINALIZATION_SETTINGS.items():
+        raw_value = os.getenv(name)
+        if raw_value is None:
+            if name == "DEEP_FINAL_MAX_CLAIMS":
+                raise RuntimeError(
+                    "DEEP_FINAL_MAX_CLAIMS=3 must be explicit for a paid replay"
+                )
+            raw_value = str(expected)
+        try:
+            actual = int(raw_value)
+        except ValueError as exc:
+            raise RuntimeError(f"{name} must be an integer") from exc
+        if actual != expected:
+            raise RuntimeError(
+                f"{name}={actual} does not match the audited replay value {expected}"
+            )
     if paid and os.getenv("FINALIZATION_REPLAY_REAL_PROVIDER_AUTHORIZED") != "true":
         raise RuntimeError("Explicit finalization replay authorization marker is missing")
 

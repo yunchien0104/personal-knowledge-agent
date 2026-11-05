@@ -102,10 +102,10 @@ class StructuredLLMClient:
                  reasoning_effort: str | None = None,
                  service_tier: str | None = None,
                  prompt_cache_mode: str | None = None):
-        if not 256 <= max_output_tokens <= 8192:
-            raise ValueError("max_output_tokens must be between 256 and 8192")
-        if not 1 <= timeout_seconds <= 90:
-            raise ValueError("timeout_seconds must be between 1 and 90")
+        if not 256 <= max_output_tokens <= 32_768:
+            raise ValueError("max_output_tokens must be between 256 and 32768")
+        if not 1 <= timeout_seconds <= 300:
+            raise ValueError("timeout_seconds must be between 1 and 300")
         if reasoning_effort not in {None, "low", "medium", "high", "xhigh", "max"}:
             raise ValueError("reasoning_effort is unsupported")
         if service_tier not in {None, "default"}:

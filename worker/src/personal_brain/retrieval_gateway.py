@@ -598,3 +598,23 @@ class RetrievalSupabaseGateway(SupabaseGateway):
             },
         )
         return result if isinstance(result, dict) else None
+
+    def publish_internal_deep_research_draft(
+        self, job: ClaimedJob, worker_id: str, **payload: Any
+    ) -> dict[str, Any] | None:
+        result = self._rpc(
+            "publish_internal_deep_research_draft",
+            {
+                "p_job_id": job.id,
+                "p_worker_id": worker_id,
+                "p_lease_generation": job.lease_generation,
+                "p_model_provider": payload["model_provider"],
+                "p_model_name": payload["model_name"],
+                "p_prompt_version": payload["prompt_version"],
+                "p_output_hash": payload["output_hash"],
+                "p_title": payload["title"],
+                "p_body": payload["body"],
+                "p_findings": payload["findings"],
+            },
+        )
+        return result if isinstance(result, dict) else None

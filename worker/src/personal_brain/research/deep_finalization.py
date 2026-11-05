@@ -59,7 +59,7 @@ class FinalizationLimits:
             self.repair_output_tokens,
             self.reverification_output_tokens,
         ):
-            if not 256 <= value <= 8192:
+            if not 256 <= value <= 32_768:
                 raise ValueError("Deep finalization output limits are invalid")
         if self.reverification_output_tokens != self.verification_output_tokens:
             raise ValueError(
@@ -72,13 +72,13 @@ class FinalizationLimits:
         return cls(
             max_claims=int(os.getenv("DEEP_FINAL_MAX_CLAIMS", "6")),
             synthesis_input_tokens=int(os.getenv("DEEP_R2A_MAX_INPUT_TOKENS", "48000")),
-            synthesis_output_tokens=int(os.getenv("DEEP_R2A_MAX_OUTPUT_TOKENS", "2560")),
+            synthesis_output_tokens=int(os.getenv("DEEP_R2A_MAX_OUTPUT_TOKENS", "16384")),
             verification_input_tokens=int(os.getenv("DEEP_R2E_MAX_INPUT_TOKENS", "4000")),
-            verification_output_tokens=int(os.getenv("DEEP_R2E_MAX_OUTPUT_TOKENS", "768")),
+            verification_output_tokens=int(os.getenv("DEEP_R2E_MAX_OUTPUT_TOKENS", "4096")),
             repair_input_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_INPUT_TOKENS", "64000")),
-            repair_output_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_OUTPUT_TOKENS", "2560")),
+            repair_output_tokens=int(os.getenv("DEEP_R2F_REPAIR_MAX_OUTPUT_TOKENS", "16384")),
             reverification_input_tokens=int(os.getenv("DEEP_R2F_VERIFY_MAX_INPUT_TOKENS", "4000")),
-            reverification_output_tokens=int(os.getenv("DEEP_R2F_VERIFY_MAX_OUTPUT_TOKENS", "768")),
+            reverification_output_tokens=int(os.getenv("DEEP_R2F_VERIFY_MAX_OUTPUT_TOKENS", "4096")),
         )
 
 
@@ -560,7 +560,7 @@ class DeepFinalizationEngine:
                 "DEEP_FINAL_PRICING_MODEL must exactly match RESEARCH_MODEL"
             )
         pricing = VerifiedPricing.from_environment("DEEP_FINAL")
-        timeout = int(os.getenv("DEEP_FINAL_TIMEOUT_SECONDS", "60"))
+        timeout = int(os.getenv("DEEP_FINAL_TIMEOUT_SECONDS", "180"))
         reasoning = os.getenv("DEEP_FINAL_REASONING_EFFORT", "low").strip()
         service_tier = os.getenv("DEEP_FINAL_SERVICE_TIER", "default").strip()
         cache_mode = os.getenv("DEEP_FINAL_PROMPT_CACHE_MODE", "explicit").strip()

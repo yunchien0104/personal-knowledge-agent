@@ -700,9 +700,9 @@ def test_three_pdf_query_and_claim_budget_matrix_fails_closed_at_one_dollar():
         8: Decimal("0.4873"),
     }
     finalization = {
-        1: Decimal("0.3066"),
-        3: Decimal("0.3694"),
-        6: Decimal("0.4636"),
+        1: Decimal("0.6498"),
+        3: Decimal("0.8458"),
+        6: Decimal("1.1398"),
     }
     matrix = {
         (queries, claims): r2b + r2c + final_cost
@@ -710,15 +710,9 @@ def test_three_pdf_query_and_claim_budget_matrix_fails_closed_at_one_dollar():
         for claims, final_cost in finalization.items()
     }
 
-    assert matrix[(1, 6)] == Decimal("0.9995")
-    assert matrix[(2, 6)] == Decimal("1.0140")
-    assert matrix[(6, 3)] == Decimal("0.9391")
-    assert matrix[(7, 3)] == Decimal("0.9982")
-    assert matrix[(8, 1)] == Decimal("0.9860")
-    assert matrix[(8, 3)] == Decimal("1.0488")
-    assert matrix[(8, 6)] == Decimal("1.1430")
-    assert matrix[(1, 6)] <= Decimal("1.00")
-    assert matrix[(2, 6)] > Decimal("1.00")
-    assert matrix[(6, 3)] <= Decimal("1.00")
-    assert matrix[(8, 3)] > Decimal("1.00")
+    assert matrix[(1, 1)] == Decimal("1.1857")
+    assert matrix[(1, 3)] == Decimal("1.3817")
+    assert matrix[(6, 3)] == Decimal("1.4155")
+    assert matrix[(8, 6)] == Decimal("1.8192")
+    assert min(matrix.values()) > Decimal("1.00")
     assert matrix[(8, 6)] <= Decimal("2.00") < Decimal("10.00")

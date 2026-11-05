@@ -4,10 +4,65 @@ Date: 2026-11-04
 
 Branch: `feat/deep-research-llm-integration`
 
-Status: **IMPLEMENTED AND VERIFIED OFFLINE/LOCAL_DB; REAL_PROVIDER FULL DEEP E2E NOT RUN**
+Status: **FINALIZATION READY OFFLINE/LOCAL_DB; REAL R2A/E/F REPLAY NOT YET PASSING**
 
 No paid Provider request, hosted Supabase access, push, merge, or deployment was
 performed for this change.
+
+## 2026-11-05 Finalization readiness repair
+
+The retained 13-Evidence replay proved that the old 2,560-token R2A completion
+limit could be consumed entirely by reasoning (`finish_reason=length`, 2,560
+reasoning tokens, zero visible JSON). Deep-only defaults are now 16,384 output
+tokens for R2A and the full-draft R2F repair, and 4,096 for each compact R2E/R2F
+verification result. The common transport accepts these limits and the final-stage
+timeout is 180 seconds. Legacy clients and execution remain unchanged.
+
+At verified GPT-6.1 Sol Standard pricing ($2/M input, $10/M output), conservative
+per-operation rounding gives:
+
+| Final claims | R2A | Initial R2E | R2F repair | R2F reverify | Final worst case |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | $0.2599 | $0.0490 | $0.2919 | $0.0490 | **$0.6498** |
+| 3 | $0.2599 | $0.1470 | $0.2919 | $0.1470 | **$0.8458** |
+| 6 | $0.2599 | $0.2940 | $0.2919 | $0.2940 | **$1.1398** |
+
+The retained shaped payload is 47,713 conservative input units and dynamically
+reserves **$0.8452** for three claims. Thus a finalization-only, three-claim replay
+fits the $1 run cap; six claims do not. Including current R2B/R2C worst cases, even
+the smallest recorded full-run matrix entry is $1.1857, while the recommended
+six-query/three-claim shape is $1.4155. Full Deep execution must raise the run cap
+explicitly or fail closed; finalization quality is not reduced to fit $1.
+
+The Local-Supabase mock harness reuses the saved ResearchPlan, all 13 Evidence,
+R2C assessment, and R2D checkpoint through the production coordinator. The saved
+`qualified_partial` decision produced one verified partial result with seven
+durable final artifacts and no false Note. A test-only `complete` outcome then
+exercised formal publication: three initial claims, one insufficient R2E verdict,
+one bounded R2F repair, two supported reverifications, one Note, two Claims, two
+Claim-Evidence rows, and two immutable research citations. Idempotent replay kept
+the counts unchanged. Owner RLS read 1/2/2 rows; another user read 0/0/0.
+
+Migration `20261105044742_persist_research_publication_claims.sql` adds a
+service-role-only Deep internal publication wrapper. It composes the existing
+fenced/idempotent citation-validating RPC and atomically persists verified Claims
+and their Evidence relations without changing Legacy publication behavior.
+
+Verification: focused finalization/transport **110 passed**; complete non-live
+Worker **288 passed, 1 skipped, 9 subtests passed**; new publication/RLS pgTAP
+**5/5 PASS**; real 13-Evidence mock replay **PASS** for both truthful partial and
+formal publication paths. The complete pgTAP suite could not be rerun against the
+retained data DB because older tests assume globally empty tables; a schema-only
+clone lacks the seeded private Storage bucket. This environmental limitation is
+not represented as a full-suite PASS.
+
+Remaining real-provider risk: 16,384 is materially above the observed exhaustion
+but is not a guarantee against adaptive reasoning use. R2E and R2F have not yet
+been exercised against the real Provider. Length, refusal, content-filter,
+timeout, contract failure, and ambiguous outcome remain fail-closed with no
+automatic paid replay. The controlled replay harness now also refuses to cross
+the Provider boundary unless the audited 16,384/4,096/16,384/4,096 output
+ceilings, 180-second timeout, and explicit three-claim bound are in effect.
 
 ## Paid Provider boundary inventory
 

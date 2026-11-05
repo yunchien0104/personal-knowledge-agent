@@ -268,3 +268,12 @@ configuration. The current `$1.00` run cap does not replace explicit paid-test
 authorization. Acceptance requires all
 request IDs and usage, exact Ledger reconciliation, strict R2E/R2F gate outcome,
 one publication, and zero automatic replay of an uncertain operation.
+# Finalization ceiling supersession (2026-11-05)
+
+The budget tables below describe the former 2,560/768 final-stage ceilings and
+are retained as historical audit evidence. Current Deep-only defaults are R2A
+16,384, R2E 4,096, R2F repair 16,384, and R2F reverify 4,096. Current finalization
+worst cases are $0.6498/$0.8458/$1.1398 for 1/3/6 claims. Consequently the former
+`$0.9391` six-query/three-claim full-run recommendation is no longer admissible
+under the $1 run cap; its conservative current total is **$1.4155**. See
+`docs/DEEP_RESEARCH_FINALIZATION.md` for the authoritative readiness result.

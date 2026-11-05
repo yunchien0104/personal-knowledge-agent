@@ -11,6 +11,22 @@
 - PASS: TypeScript, ESLint, production build, and 74 Notes tests, including four
   new import response/paragraph/preservation/fail-closed regressions.
 
+## Deep Finalization pipeline readiness repair (2026-11-05)
+
+- Raised Deep-only R2A/R2F full-draft output ceilings to 16,384, R2E/reverify to
+  4,096, and timeout to 180 seconds; Legacy behavior and strict gates are unchanged.
+- Finalization worst case is now $0.6498/$0.8458/$1.1398 for 1/3/6 claims. A
+  three-claim finalization replay fits $1; six claims and all current full-run
+  worst-case configurations fail closed above $1.
+- The retained 13-Evidence Local-Supabase mock E2E passed R2A, R2E, one bounded
+  R2F repair, reverification, partial-result safety, formal publication,
+  idempotency, provenance, and owner/cross-user RLS.
+- Additive migration `20261105044742_persist_research_publication_claims.sql`
+  atomically persists formal Deep report Claims and Claim-Evidence rows alongside
+  existing Notes and research citations.
+- PASS: focused 110; complete non-live Worker 288 passed, 1 skipped, 9 subtests;
+  publication/RLS pgTAP 5/5. No paid call, hosted access, push, merge, or deploy.
+
 ## Deep Research PDF synthesis payload and query scheduling repair (2026-11-05)
 
 - Clarified that the R2A input guard uses serialized UTF-8 bytes as a conservative
