@@ -1016,3 +1016,11 @@
 - Linked Cloud dry-run showed only the new projection migration; migration
   `20261030144112` was applied successfully and subsequent migration history
   verification shows Local and Remote aligned. No table data was rewritten.
+
+### Seneca brand logo (local, 2026-11-05)
+
+- Replaced the login headline and authenticated shell's Personal Brain wordmark
+  with the supplied Seneca logo asset, preserving the black login background and
+  rendering the mark in white there. The login mark renders at 30% of its initial
+  replacement size; the theme-aware shell marks render at 60%.
+- No backend, schema, authentication behavior, or hosted environment was changed.

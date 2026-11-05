@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowLeft, Bell, BookOpen, FolderKanban, Home, LogOut, Menu, MessageCircleQuestion, Moon, Newspaper, Plus, Search, Settings2, Sun, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type PropsWithChildren } from "react";
@@ -51,7 +52,7 @@ export function AppShell({ children, userEmail }: PropsWithChildren<{ userEmail:
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[212px] flex-col border-r border-line bg-sidebar px-3 py-4 lg:flex">
-        <div className="flex h-10 items-center px-2"><p className="text-[14px] font-semibold tracking-[-0.02em] text-ink">Personal Brain</p></div>
+        <div className="flex h-10 items-center px-1"><Image src="/brand/seneca-logo.png" alt="Seneca" width={1770} height={456} unoptimized className="h-auto w-[96px] brightness-0 dark:invert" /></div>
         <nav aria-label="主要導覽" className="mt-7 space-y-1">
           {nav.map(({ href, label, icon: Icon }) => <Link key={href} href={href} className={navClass(href)}><Icon className="h-4 w-4" strokeWidth={1.7} />{label}</Link>)}
         </nav>
@@ -59,7 +60,7 @@ export function AppShell({ children, userEmail }: PropsWithChildren<{ userEmail:
 
       <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center border-b border-line bg-canvas/95 px-4 lg:left-[212px] lg:px-6">
         <button type="button" aria-label={mobileMenu ? "關閉選單" : "開啟選單"} onClick={() => setMobileMenu((open) => !open)} className="mr-3 rounded-md p-2 text-muted transition hover:bg-elevated hover:text-ink lg:hidden">{mobileMenu ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button>
-        <div className="flex items-center gap-2 lg:hidden"><span className="text-sm font-semibold tracking-[-0.02em]">Personal Brain</span></div>
+        <div className="flex items-center lg:hidden"><Image src="/brand/seneca-logo.png" alt="Seneca" width={1770} height={456} unoptimized className="h-auto w-[72px] brightness-0 dark:invert" /></div>
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
           <form action="/ask" method="get" className="hidden min-w-[310px] items-center gap-2 rounded-md border border-line bg-surface px-3 py-2 transition focus-within:border-indigo-200 md:flex">
             <Search className="h-3.5 w-3.5 text-muted" />
