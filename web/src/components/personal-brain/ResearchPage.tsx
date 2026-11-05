@@ -11,7 +11,7 @@ import { isResearchTerminal, researchWorkflowProgress } from "@/lib/research";
 import {
   cloneResearchTemplate,
   defaultResearchTemplates,
-  templateAnalysisSpec,
+  researchStartPayload,
   type ResearchTemplate,
 } from "@/lib/research-template-ui";
 import { threadsCitationUrl } from "@/lib/threads";
@@ -38,6 +38,7 @@ function TopicPill({ name }: { name: string }) {
 
 export function ResearchPage() {
   const params = useSearchParams();
+  const [mode, setMode] = useState<"legacy" | "deep">("legacy");
   const [question, setQuestion] = useState(params.get("q") ?? "");
   const [runs, setRuns] = useState<ResearchRunSummary[]>([]);
   const [selected, setSelected] = useState<ResearchRun | null>(null);
@@ -103,11 +104,9 @@ export function ResearchPage() {
       const created = await getApi<{ id: string }>("/api/research", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          question,
-          request_key: crypto.randomUUID(),
-          analysis_spec: templateAnalysisSpec(selectedTemplate),
-        }),
+        body: JSON.stringify(researchStartPayload(
+          mode, question, crypto.randomUUID(), selectedTemplate,
+        )),
       });
       await refreshRuns();
       await loadRun(created.id);
@@ -146,7 +145,13 @@ export function ResearchPage() {
   return (
     <div className="animate-page">
       <PageTitle title="研究工作區" />
-      <ResearchTemplateStudio selected={selectedTemplate} onSelect={setSelectedTemplate} />
+      <div className="mb-6 rounded-[10px] border border-line bg-surface p-1">
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="研究模式">
+          <button type="button" onClick={() => setMode("legacy")} aria-pressed={mode === "legacy"} className={`rounded-md px-4 py-3 text-left transition ${mode === "legacy" ? "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-100" : "text-muted hover:bg-subtle"}`}><span className="block text-sm font-semibold">Legacy</span><span className="mt-1 block text-[11px] leading-5">簡單分析，維持原本研究流程</span></button>
+          <button type="button" onClick={() => setMode("deep")} aria-pressed={mode === "deep"} className={`rounded-md px-4 py-3 text-left transition ${mode === "deep" ? "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-100" : "text-muted hover:bg-subtle"}`}><span className="block text-sm font-semibold">Deep</span><span className="mt-1 block text-[11px] leading-5">模板研究，使用 R2B–R2F 深度流程</span></button>
+        </div>
+      </div>
+      {mode === "deep" ? <ResearchTemplateStudio selected={selectedTemplate} onSelect={setSelectedTemplate} /> : null}
       <form onSubmit={submit} className="mb-6 flex flex-col gap-3 rounded-[10px] border border-line bg-surface p-4 sm:flex-row sm:items-end">
         <label className="min-w-0 flex-1 text-xs font-medium text-muted">研究問題
           <textarea value={question} onChange={(event) => setQuestion(event.target.value)} minLength={3} maxLength={500} required rows={2} className="mt-2 w-full resize-none rounded-md border border-line bg-subtle px-3 py-2.5 text-sm text-ink outline-none focus:border-indigo-200" placeholder="輸入你要研究的問題…" />
@@ -160,7 +165,10 @@ export function ResearchPage() {
           <header className="border-b border-line px-5 py-6 sm:px-8">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <span className={`rounded px-2 py-1 text-[10px] font-medium ${progress.state === "completed" ? "bg-emerald-50 text-emerald-700" : progress.state === "failed" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"}`}>{progress.label}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded px-2 py-1 text-[10px] font-medium ${progress.state === "completed" ? "bg-emerald-50 text-emerald-700" : progress.state === "failed" ? "bg-rose-50 text-rose-700" : "bg-indigo-50 text-indigo-700"}`}>{progress.label}</span>
+                  <span className="rounded bg-elevated px-2 py-1 text-[10px] font-semibold uppercase text-muted">{selected.mode}</span>
+                </div>
                 <h2 className="mt-4 max-w-3xl text-[24px] font-semibold leading-9 tracking-[-0.025em]">{selected.question}</h2>
                 <p className="mt-2 text-sm leading-6 text-muted">建立日期：{projectDate(selected.createdAt)}</p>
               </div>

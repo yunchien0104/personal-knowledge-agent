@@ -11,6 +11,24 @@
 - PASS: TypeScript, ESLint, production build, and 74 Notes tests, including four
   new import response/paragraph/preservation/fail-closed regressions.
 
+## Legacy / Deep template execution adapter (2026-11-05)
+
+- Added an explicit Research UI mode switch. Legacy remains the default and sends
+  the original request shape; Deep alone exposes templates and sends `mode=deep`,
+  `web_policy=disabled`, and the selected `analysis-spec-v1` snapshot.
+- Deep R2B now treats the framework and required section purposes as bounded
+  planning constraints. Deep R2A synthesis and the single bounded R2F repair
+  receive the same immutable analysis specification and organize finding topics
+  around supported template sections.
+- R1 retrieval, R2C/R2D evaluation and control, R2E verification, R2F gates,
+  Legacy execution, database schema, and non-Research pages are unchanged.
+- PASS: Web TypeScript, ESLint, 11/11 Research tests; 65/65 focused Deep tests;
+  broad offline Worker 282 passed, 1 skipped, 9 subtests, plus 8/8 localhost HTTP
+  tests after local socket permission. No live/provider script was collected.
+- Browser PASS on localhost:3001: Legacy is selected by default and hides the
+  template studio; Deep reveals the template studio. No research was submitted.
+- No provider request, paid call, migration, hosted write, push, merge, or deploy.
+
 ## Research Template UI integration (2026-11-05)
 
 - Added a Research-only template studio with four bounded presets, section editing,

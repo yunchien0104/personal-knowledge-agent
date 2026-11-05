@@ -86,7 +86,7 @@ export function ResearchTemplateStudio({ selected, onSelect }: Props) {
       <div>
         <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-indigo-600">Research Template</p>
         <h2 id="research-template-title" className="mt-1 text-lg font-semibold">選擇研究架構</h2>
-        <p className="mt-1 text-xs leading-5 text-muted">模板控制本次畫面中的分析架構；研究送出與驗證仍沿用既有流程。</p>
+        <p className="mt-1 text-xs leading-5 text-muted">模板會送入 Deep 的規劃與報告生成；證據驗證與發布門檻仍沿用既有流程。</p>
       </div>
       <button type="button" onClick={() => setManagerOpen((value) => !value)} aria-expanded={managerOpen} className="inline-flex items-center gap-2 rounded-md border border-line bg-surface px-3 py-2 text-xs font-semibold hover:bg-subtle">
         <FolderCog className="h-4 w-4 text-indigo-600" />我的模板<span className="rounded-full bg-elevated px-1.5 py-0.5 text-[10px] text-muted">{saved.length}</span>

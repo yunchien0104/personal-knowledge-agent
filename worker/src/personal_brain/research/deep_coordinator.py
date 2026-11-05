@@ -59,6 +59,15 @@ def _canonical_hash(value: Any) -> str:
     return sha256(encoded).hexdigest()
 
 
+def _finalization_plan(
+    request: ResearchRequestV1, plan: ResearchPlanV1,
+) -> dict[str, Any]:
+    value = plan.model_dump(mode="json")
+    if request.analysisSpec is not None:
+        value["analysisSpec"] = request.analysisSpec.model_dump(mode="json")
+    return value
+
+
 def _operation_id(run_id: UUID, key: str) -> UUID:
     return uuid5(NAMESPACE_URL, f"personal-brain:{run_id}:{key}")
 
@@ -695,10 +704,11 @@ class DeepResearchCoordinator:
                 retryable=False,
             )
         publication_rows = _publication_rows(records)
+        finalization_plan = _finalization_plan(request, plan)
         preflight = self.finalizer.preflight(
             request.runId,
             request.originalQuestion,
-            plan.model_dump(mode="json"),
+            finalization_plan,
             publication_rows,
             assessment.model_dump(mode="json") if assessment else None,
         )
@@ -761,7 +771,7 @@ class DeepResearchCoordinator:
             def synthesize_current() -> tuple[Mapping[str, Any], Any | None]:
                 call = self.finalizer.synthesis_call(
                     request.originalQuestion,
-                    plan.model_dump(mode="json"),
+                    finalization_plan,
                     synthesis_rows,
                 )
                 accepted = self.finalizer.accept_synthesis_call(
@@ -828,7 +838,7 @@ class DeepResearchCoordinator:
                 def repair_current() -> tuple[Mapping[str, Any], Any | None]:
                     call = self.finalizer.repair_call(
                         request.originalQuestion,
-                        plan.model_dump(mode="json"),
+                        finalization_plan,
                         synthesis_rows,
                         draft,
                         results,

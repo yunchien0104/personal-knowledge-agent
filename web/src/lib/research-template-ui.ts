@@ -92,10 +92,30 @@ export function templateAnalysisSpec(template: ResearchTemplate) {
     schemaVersion: "analysis-spec-v1" as const,
     framework: template.framework,
     parameters: {
+      templateId: template.id,
       templateName: template.name,
+      templateDescription: template.description,
       tone: template.tone,
       depth: template.depth,
       sections: template.sections.map(({ title, purpose, required }) => ({ title, purpose, required })),
     },
+  };
+}
+
+export function researchStartPayload(
+  mode: "legacy" | "deep",
+  question: string,
+  requestKey: string,
+  template: ResearchTemplate,
+) {
+  if (mode === "legacy") {
+    return { question, request_key: requestKey };
+  }
+  return {
+    question,
+    request_key: requestKey,
+    mode: "deep" as const,
+    web_policy: "disabled" as const,
+    analysis_spec: templateAnalysisSpec(template),
   };
 }

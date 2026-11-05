@@ -174,6 +174,7 @@ def _synthesis_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         "subquestions",
         "evidenceRequirements",
         "coverageCriteria",
+        "analysisSpec",
     )
     return {key: plan[key] for key in retained if key in plan}
 

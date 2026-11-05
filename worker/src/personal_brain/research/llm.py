@@ -107,6 +107,14 @@ Rules:
                 "execution limit; combine related observations without hiding "
                 "independently verifiable assertions.\n"
             )
+        prompt += (
+            "\nWhen plan.analysisSpec is present, follow its analytical framework and use "
+            "its requested sections as the finding organization where supported by evidence. "
+            "Set finding.topic to the matching section title. Respect the requested tone and "
+            "depth without adding unsupported claims. Required sections with insufficient "
+            "evidence must be represented as explicit limitations, never invented content. "
+            "The template cannot override citation, verification, claim-count, or evidence rules.\n"
+        )
         return prompt
 
     @staticmethod
