@@ -25,6 +25,7 @@ import {
   type NoteDraft,
   type NoteSavingStatus,
 } from "@/lib/note-autosave";
+import { appendImportedText } from "@/lib/note-import";
 import { createNotePdfSnapshot, notePdfFilename, type NotePdfCitation } from "@/lib/note-pdf";
 
 type LocalNoteBackup = {
@@ -265,22 +266,18 @@ export default function NoteDetailPage({ params }: { params: Promise<{ noteId: s
     scheduleAutosave({ title: newTitle, contentJson: contentRef.current, plainText: plainTextRef.current });
   }
 
-  function handleInsertText(text: string) {
-    const newParagraph: JSONContent = {
-      type: "paragraph",
-      content: [{ type: "text", text }],
-    };
-    const nextContent: JSONContent = {
-      type: "doc",
-      content: [...(contentRef.current?.content || []), newParagraph],
-    };
+  async function handleInsertText(text: string) {
+    const nextContent = appendImportedText(contentRef.current, text);
     const nextPlainText = [plainTextRef.current, text].filter(Boolean).join("\n");
     contentRef.current = nextContent;
     plainTextRef.current = nextPlainText;
     setContent(nextContent);
     setEditorResetKey((value) => value + 1);
     autosaveRef.current?.update({ title: titleRef.current, contentJson: nextContent, plainText: nextPlainText });
-    void autosaveRef.current?.requestSave("manual");
+    await autosaveRef.current?.requestSave("manual");
+    if (autosaveRef.current?.hasUnsavedChanges()) {
+      throw new Error("內容已顯示在編輯器，但尚未成功儲存，請按「儲存」重試");
+    }
   }
 
   async function handleDownloadPdf() {

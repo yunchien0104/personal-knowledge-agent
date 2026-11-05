@@ -19,7 +19,7 @@
     "test:research": "node --experimental-strip-types --test tests/research.test.ts",
     "test:threads": "node --experimental-strip-types --test tests/threads-ingestion.test.ts",
     "test:instagram": "node --experimental-strip-types --test tests/instagram-ingestion.test.ts tests/instagram-reel-ingestion.test.ts",
-    "test:notes": "node --experimental-strip-types --test tests/personal-notes-contract.test.ts tests/personal-notes-editor.test.ts tests/reference-sources.test.ts tests/note-pdf.test.ts tests/ai-assistant-ui.test.ts && node --import tsx --test tests/spreadsheet-node.test.ts tests/spreadsheet-workbook.test.ts tests/note-pdf-render.test.mts tests/ai-editor-transaction.test.ts tests/notes-ai-provider.test.ts",
+    "test:notes": "node --experimental-strip-types --test tests/personal-notes-contract.test.ts tests/personal-notes-editor.test.ts tests/reference-sources.test.ts tests/note-import.test.ts tests/note-pdf.test.ts tests/ai-assistant-ui.test.ts && node --import tsx --test tests/spreadsheet-node.test.ts tests/spreadsheet-workbook.test.ts tests/note-pdf-render.test.mts tests/ai-editor-transaction.test.ts tests/notes-ai-provider.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {

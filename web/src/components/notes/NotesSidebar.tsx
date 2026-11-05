@@ -22,12 +22,13 @@ import {
   type ReferenceCategory,
   type ReferenceSource,
 } from "@/lib/reference-sources";
+import { parseNoteImportResponse } from "@/lib/note-import";
 
 export interface NotesSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   currentNoteId?: string;
-  onInsertContent?: (text: string) => void;
+  onInsertContent?: (text: string) => Promise<void> | void;
 }
 
 type ImportOperation = "reference" | "partial" | "full";
@@ -66,6 +67,7 @@ export function NotesSidebar({
   const [selectionText, setSelectionText] = useState<Record<string, string>>({});
   const [importingKey, setImportingKey] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const requestKey = `${category}:${sourceType}:${query}:${currentNoteId ?? ""}`;
   const loading = isOpen && loadedRequestKey !== requestKey;
 
@@ -151,6 +153,7 @@ export function NotesSidebar({
     const key = `${item.id}:${operation}`;
     setImportingKey(key);
     setErrorMessage("");
+    setSuccessMessage("");
     try {
       const response = await fetch("/api/personal-notes/import", {
         method: "POST",
@@ -163,20 +166,25 @@ export function NotesSidebar({
           ...(partialText ? { selection_text: partialText } : {}),
         }),
       });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json?.error?.message ?? "插入引用失敗");
+      const json: unknown = await response.json();
+      if (!response.ok) {
+        const message = (json as { error?: { message?: string } } | null)?.error?.message;
+        throw new Error(message ?? "插入引用失敗");
+      }
+      const imported = parseNoteImportResponse(json);
 
       const date = new Date(item.created_at).toLocaleDateString("zh-TW");
       const sourceLabel = item.source_type
         ? KNOWLEDGE_SOURCE_LABELS[item.source_type]
         : REFERENCE_CATEGORY_LABELS[item.category];
       if (operation === "reference") {
-        onInsertContent?.(`【${sourceLabel}：${item.title}｜${date}】`);
+        await onInsertContent?.(`【${sourceLabel}：${imported.snapshot_title}｜${date}】`);
       } else if (operation === "partial") {
-        onInsertContent?.(`${partialText}\n\n— 引用自《${item.title}》`);
+        await onInsertContent?.(`${partialText}\n\n— 引用自《${imported.snapshot_title}》`);
       } else {
-        onInsertContent?.(`${item.content}\n\n— 匯入自《${item.title}》`);
+        await onInsertContent?.(`${imported.snapshot_text}\n\n— 匯入自《${imported.snapshot_title}》`);
       }
+      setSuccessMessage("已匯入並儲存到目前筆記");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "插入引用失敗");
     } finally {
@@ -267,6 +275,11 @@ export function NotesSidebar({
         {errorMessage && (
           <p role="alert" className="mt-2 rounded bg-red-50 px-2 py-1.5 text-[11px] text-red-700 dark:bg-red-950/40 dark:text-red-300">
             {errorMessage}
+          </p>
+        )}
+        {successMessage && (
+          <p role="status" aria-live="polite" className="mt-2 rounded bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {successMessage}
           </p>
         )}
       </div>

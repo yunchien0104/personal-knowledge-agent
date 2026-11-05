@@ -1,5 +1,16 @@
 # Personal Brain Implementation Status
 
+## Notes import-to-editor repair (2026-11-05)
+
+- The reference sidebar now inserts the authoritative import snapshot returned
+  by `/api/personal-notes/import` instead of stale list data.
+- Imported multiline text and stored snapshot JSON are converted into valid
+  Tiptap paragraphs while preserving existing rich-text and spreadsheet nodes.
+- Import success is shown only after the editor update has completed its manual
+  save; failed saves remain visible as unsaved content with a retry message.
+- PASS: TypeScript, ESLint, production build, and 74 Notes tests, including four
+  new import response/paragraph/preservation/fail-closed regressions.
+
 ## Deep Research R2C ceiling and evidence-sufficiency repair (2026-11-05)
 
 - Raised only R2C's default completion ceiling from 3584 to 8192; R2B remains
